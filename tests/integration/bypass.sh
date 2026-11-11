@@ -12,6 +12,8 @@ PROJECT=${COMPOSE_PROJECT_NAME:-tallygate}
 NET=${PROJECT}_agent-net
 AGENT=${PROJECT}-agent-1
 PROBE_IMAGE=docker.io/curlimages/curl:8.17.0
+LISTENER_IMAGE=docker.io/library/busybox:1.37
+HOST_PORT=18999
 GW=172.31.10.2
 failed=0
 
@@ -44,6 +46,14 @@ for c in "$AGENT" "${PROJECT}-egress-gw-1" "${PROJECT}-control-1"; do
 done
 check "agent has no docker.sock" bash -c "! docker inspect -f '{{.HostConfig.Binds}}' '$AGENT' | grep -q docker.sock"
 
+# A web server in the host's network namespace stands in for host services listening on 0.0.0.0
+# (sshd, databases, exporters). The agent must not reach it through the bridge address of its network.
+LISTENER=$(docker run -d --rm --network host "$LISTENER_IMAGE" httpd -f -p "0.0.0.0:$HOST_PORT" 2>/dev/null)
+trap '[[ -n $LISTENER ]] && docker rm -f "$LISTENER" >/dev/null 2>&1' EXIT
+BRIDGE_IP=$(docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' "$NET")
+sleep 1
+check "host listener is up (sanity check for the next probe)" test "$(docker run --rm --network host "$PROBE_IMAGE"   -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HOST_PORT/" 2>/dev/null)" != 000
+
 echo "== egress from agent-net (independent probe container)"
 expect "direct internet by IP is blocked"     000          https://1.1.1.1/
 expect "direct internet by name is blocked"   000          https://example.com/
@@ -54,6 +64,8 @@ expect "gateway API not on agent-net"         000          "http://$GW:8081/heal
 expect "control-net not routable"             000          http://172.31.11.2:8081/health
 expect "control UI not on agent-net"          000          http://172.31.10.3:8080/healthz
 expect "mgmt-net not routable"                000          http://172.31.12.3:8080/healthz
+expect "host services via the bridge address unreachable" 000 "http://${BRIDGE_IP:-172.31.10.1}:$HOST_PORT/"
+check "agent-net gives the host no address" test "$(docker network inspect -f '{{index .Options "com.docker.network.bridge.inhibit_ipv4"}}' "$NET")" = true
 expect "IPv6 link-local of the gateway unreachable" 000     -g "http://[fe80::1%25eth0]:3128/"
 expect "unknown host is held, not connected"  '000|403|502' -x "http://$GW:3128" "https://exfil-$(date +%s).invalid/"
 expect "grant API: listing works for the agent" 200       "http://$GW:8079/v1/grants"

@@ -28,12 +28,20 @@ All notable changes to this project are documented here. The format follows
 ### Removed
 - `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
 
+### Security
+- The agent could reach services on the Docker host that listen on all interfaces through the host's
+  address on `agent-net` (`172.31.10.1`), bypassing the gateway. `agent-net` and `control-net` no longer
+  give the host an address (`com.docker.network.bridge.inhibit_ipv4`), and `bypass.sh` checks it with a
+  listener on the host (#7).
+
 ### Upgrading from 0.3.0
 Keep your existing state: in `.env`, replace `TALLYGATE_DIR=/your/dir` with
 `GATEWAY_DATA=/your/dir/gateway`, `AGENT_HOME=/your/dir/agent-home`, `WORKSPACE=/your/dir/workspace`. Your
 secrets in `.env` keep working. If you changed `config/gateway.yaml`, mount it as described in
 [docs/operations.md](docs/operations.md#with-docker-compose-recommended). Then `make up`, or switch to the
 published images with `docker compose pull && docker compose up -d`.
+Recreate the networks so the new network option takes effect: `docker compose down && docker compose up -d`
+(compose warns that the network configuration changed).
 
 ## [0.3.0] - 2026-11-11
 
