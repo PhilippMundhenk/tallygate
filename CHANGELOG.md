@@ -32,6 +32,12 @@ All notable changes to this project are documented here. The format follows
   keeps its id, so open connections survive; agent credentials are stripped on inject hosts reached
   through a grant ([#14](https://github.com/PhilippMundhenk/tallygate/issues/14)).
 
+### Fixed
+- Gateway robustness: "repeated N×" counts are no longer lost when a new event replaces an unflushed one;
+  re-applying a preset with a TTL keeps its permanent rules permanent; policy, UI grants and secrets are
+  fsynced before the atomic rename; per-connection state is released when an upstream connect fails
+  ([#15](https://github.com/PhilippMundhenk/tallygate/issues/15)).
+
 ## [0.3.0] - 2026-11-11
 
 ### Added

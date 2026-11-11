@@ -25,6 +25,7 @@ from pathlib import Path
 import yaml
 
 from egressgw.policy import ip_addr, is_ip, valid_hostname
+from egressgw.store import atomic_write
 
 log = logging.getLogger("egressgw")
 
@@ -328,9 +329,7 @@ class Grants:
             for n, g in self.defs.items()
             if g.source == "ui"
         }
-        tmp = self.ui_path.with_suffix(".tmp")
-        tmp.write_text(yaml.safe_dump(data, sort_keys=False))
-        tmp.replace(self.ui_path)
+        atomic_write(self.ui_path, yaml.safe_dump(data, sort_keys=False))
 
     def upsert_ui(self, name: str, d: dict) -> GrantDef:
         if name in self.defs and self.defs[name].source == "config":

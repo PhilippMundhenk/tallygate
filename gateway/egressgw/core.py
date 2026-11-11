@@ -261,6 +261,8 @@ class Gateway:
             if seen and now - seen[0] < DUP_WINDOW:
                 seen[1] += 1
                 return None
+            if seen and seen[1]:
+                self._emit_repeats(seen[2], seen[1])  # not flushed by housekeeping yet: don't lose the count
             self._dups[key] = [now, 0, ev]
         ev = self.events.add(ev)
         self.publish({"type": "event", "event": ev})
@@ -271,9 +273,12 @@ class Gateway:
             if now - ts >= DUP_WINDOW:
                 del self._dups[key]
                 if count:
-                    rep = {k: v for k, v in ev.items() if k not in ("id", "ts")}
-                    rep["reason"] = f"{ev.get('reason')} (repeated {count}x)"
-                    self.publish({"type": "event", "event": self.events.add(rep)})
+                    self._emit_repeats(ev, count)
+
+    def _emit_repeats(self, ev: dict, count: int) -> None:
+        rep = {k: v for k, v in ev.items() if k not in ("id", "ts")}
+        rep["reason"] = f"{ev.get('reason')} (repeated {count}x)"
+        self.publish({"type": "event", "event": self.events.add(rep)})
 
     def save_policy(self) -> None:
         self.policy.save(self.policy_path)
@@ -562,6 +567,11 @@ class Gateway:
     def server_disconnected(self, data: server_hooks.ServerConnectionHookData) -> None:
         self.orig_host.pop(data.server.id, None)
         self.conn_grant.pop(data.server.id, None)
+
+    @fail_closed
+    def server_connect_error(self, data: server_hooks.ServerConnectionHookData) -> None:
+        # an allowed connection whose upstream connect fails never gets server_disconnected
+        self.server_disconnected(data)
 
     @fail_closed
     def tls_clienthello(self, data: tls.ClientHelloData) -> None:
