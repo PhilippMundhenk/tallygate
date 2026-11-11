@@ -80,6 +80,30 @@ def _psl():
     return PublicSuffixList()  # bundled snapshot incl. the PRIVATE section (github.io, s3, ngrok, ...)
 
 
+def ip_addr(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Parsed address; IPv4-mapped IPv6 (::ffff:a.b.c.d) is normalised to IPv4, so a v4 CIDR covers it."""
+    addr = ipaddress.ip_address(value.strip("[]"))
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+        return addr.ipv4_mapped
+    return addr
+
+
+_PORT = re.compile(r"(\d{1,5})(?:-(\d{1,5}))?")
+
+
+def valid_port_spec(spec: Any) -> bool:
+    """One port item: 443, "443", "8000-8100" or "*"/"any". Rejects None, bools, floats and typos."""
+    if spec in ("*", "any") and isinstance(spec, str):
+        return True
+    if isinstance(spec, int) and not isinstance(spec, bool):
+        return 0 < spec < 65536
+    m = _PORT.fullmatch(spec) if isinstance(spec, str) else None
+    if not m:
+        return False
+    lo, hi = int(m.group(1)), int(m.group(2) or m.group(1))
+    return 0 < lo <= hi < 65536
+
+
 def is_ip(value: str) -> bool:
     try:
         ipaddress.ip_address(value.strip("[]"))
@@ -151,11 +175,9 @@ class Rule:
             raise ValueError(f"rule {self.id}: use either 'host' or 'cidr', not both")
         if self.cidr:
             ipaddress.ip_network(self.cidr, strict=False)
-        port_matches(self.port, 1)  # raises on garbage
-        for p in self.port if isinstance(self.port, (list, tuple)) else [self.port]:
-            for n in str(p).split("-") if p not in (None, "*", "any") else []:
-                if not 0 < int(n) < 65536:
-                    raise ValueError(f"rule {self.id}: port {p} out of range")
+        items = self.port if isinstance(self.port, (list, tuple)) else [self.port]
+        if not items or not all(valid_port_spec(p) for p in items):
+            raise ValueError(f'rule {self.id}: invalid port {self.port!r} (use 443, [80, 443], "8000-8100" or "*")')
 
     def expired(self, now: float | None = None) -> bool:
         return self.expires is not None and (now or time.time()) >= self.expires
@@ -166,7 +188,7 @@ class Rule:
         if self.host:
             return host_matches(self.host, host)
         net = ipaddress.ip_network(self.cidr, strict=False)
-        addrs = [ipaddress.ip_address(i) for i in ips] if ips else []
+        addrs = [ip_addr(i) for i in ips] if ips else []
         if not addrs:
             return False
         if self.action == "allow":
@@ -197,9 +219,7 @@ class Rule:
         if unknown:
             raise ValueError(f"unknown rule keys: {sorted(unknown)}")
         r = cls(**{k: v for k, v in d.items() if k in known})
-        if r.port is None:
-            r.port = "*"
-        r.validate()
+        r.validate()  # an explicit null port is rejected: it used to mean "all ports"
         return r
 
 
@@ -246,10 +266,7 @@ class Policy:
         if is_ip(host):
             candidates.append(host.strip("[]"))
         for ip in candidates:
-            addr = ipaddress.ip_address(ip)
-            # normalise IPv4-mapped IPv6
-            if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
-                addr = addr.ipv4_mapped
+            addr = ip_addr(ip)
             for n in nets:
                 if addr.version == n.version and addr in n:
                     return f"hard-deny {n} ({ip})"
@@ -370,7 +387,7 @@ def rule_for_approval(host: str, port: int, scope: str) -> Rule:
         raise ValueError(f"invalid scope {scope!r}")
     action, ttl, kind = SCOPES[scope]
     if is_ip(host):
-        pattern_rule = Rule(action=action, cidr=host.strip("[]"), port=port)
+        pattern_rule = Rule(action=action, cidr=str(ip_addr(host)), port=port)
     elif kind == "domain":
         base = registrable_domain(host)
         if not base:

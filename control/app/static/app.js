@@ -116,9 +116,16 @@ $("#logMore").onclick = guard(() => loadLog(true));
 let policy = null;
 function portText(p) { return p === undefined || p === "*" ? "*" : Array.isArray(p) ? p.join(",") : String(p); }
 function parsePort(s) {
+  // Typos must fail visibly: parseInt("https") is NaN (sent as null = all ports) and parseInt("44 3") is 44.
   s = (s || "").trim(); if (!s || s === "*") return "*";
-  if (s.includes(",")) return s.split(",").map((x) => (x.includes("-") ? x.trim() : parseInt(x, 10)));
-  return s.includes("-") ? s : parseInt(s, 10);
+  const one = (x) => {
+    x = x.trim();
+    if (/^\d{1,5}$/.test(x) && +x >= 1 && +x <= 65535) return +x;
+    const m = /^(\d{1,5})\s*-\s*(\d{1,5})$/.exec(x);
+    if (m && +m[1] >= 1 && +m[1] <= +m[2] && +m[2] <= 65535) return `${+m[1]}-${+m[2]}`;
+    throw new Error(`Invalid port "${x}": use 443, 80,443, 8000-8100 or *`);
+  };
+  return s.includes(",") ? s.split(",").map(one) : one(s);
 }
 async function loadPolicy() {
   policy = await gw("GET", "/policy");
