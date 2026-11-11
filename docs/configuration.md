@@ -29,7 +29,8 @@ All variables are optional. Secrets are created on first start when they are not
 | `TTYD_CREDENTIAL` | *(created in the `ttyd` volume)* | `user:password` shared by control and the agent's ttyd consoles. Added by control during the WebSocket handshake; the browser never sees it. |
 | `CONTROL_PASSWORD_HASH` | *(generated password)* | `scrypt:16:<salt>:<hash>` (scrypt N = 2^16), create with `python3 control/hashpw.py`. Without it (and without `CONTROL_PASSWORD`), control generates a password on first start, prints it once to its log and keeps the hash in `control-data`; change that one with `docker compose exec control python -m app.passwd`. The legacy `scrypt:<salt>:<hash>` (N = 2^14) is still accepted; regenerate it. |
 | `CONTROL_PASSWORD` | – | Plain-text password instead of a hash. Discouraged (logged as a warning). |
-| `TRUST_PROXY_AUTH_HEADER` | – | E.g. `Remote-User`: accept the user from this header set by an authenticating proxy (Authelia, oauth2-proxy). Requires `TRUSTED_PROXIES`; control refuses to start without it. |
+| `TRUST_PROXY_AUTH_HEADER` | – | E.g. `Remote-User`: accept the user from this header set by an authenticating proxy (Authelia, oauth2-proxy). Requires `TRUSTED_PROXIES`; control refuses to start without it. Trust only the proxy container's own address: see [reverse proxy](operations.md#reverse-proxy). |
+| `TRUST_PROXY_SECRET` | – | Shared secret (≥ 16 characters) that the proxy sends as `X-Tallygate-Proxy-Secret`. When set, forwarded and auth headers are believed only from `TRUSTED_PROXIES` **and** with this header (compared in constant time). Recommended with `TRUST_PROXY_AUTH_HEADER`. |
 | `RC_NAME` | `tallygate` | Remote Control session name shown in the Claude app. |
 | `RC_ENABLE` | `1` | Start `claude remote-control` automatically in the `rc` tmux session. |
 | `RC_ARGS` | – | Extra arguments for `claude remote-control`, e.g. `--spawn worktree`. |

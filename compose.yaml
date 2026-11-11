@@ -72,6 +72,7 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-1}
       TRUST_FORWARDED_FOR: ${TRUST_FORWARDED_FOR:-0}  # 1 = behind a reverse proxy that sets X-Forwarded-*
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}           # CIDRs whose X-Forwarded-*/auth headers are believed
+      TRUST_PROXY_SECRET: ${TRUST_PROXY_SECRET:-}     # empty: no secret; else required as X-Tallygate-Proxy-Secret
       SESSION_IDLE: ${SESSION_IDLE:-7200}
       PUBLIC_URL: ${PUBLIC_URL:-}                     # e.g. https://tallygate.example.org (links in notifications)
       GW_URL: http://172.31.11.2:8081

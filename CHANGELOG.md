@@ -28,6 +28,11 @@ All notable changes to this project are documented here. The format follows
 ### Removed
 - `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
 
+### Security
+- `TRUST_PROXY_SECRET`: forwarded and auth headers are believed only when the proxy also sends the
+  shared secret in `X-Tallygate-Proxy-Secret`. The docs describe the safe proxy-auth setup (proxy container
+  on `mgmt` with a fixed address, nothing else published) (#19).
+
 ### Upgrading from 0.3.0
 Keep your existing state: in `.env`, replace `TALLYGATE_DIR=/your/dir` with
 `GATEWAY_DATA=/your/dir/gateway`, `AGENT_HOME=/your/dir/agent-home`, `WORKSPACE=/your/dir/workspace`. Your

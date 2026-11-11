@@ -50,6 +50,9 @@ TRUST_FORWARDED = os.environ.get("TRUST_FORWARDED_FOR") == "1"
 TRUSTED_PROXIES = [
     ipaddress.ip_network(c.strip(), strict=False) for c in os.environ.get("TRUSTED_PROXIES", "").split(",") if c.strip()
 ]
+# Optional shared secret: when set, the proxy must also send it, or its forwarded/auth headers are ignored.
+PROXY_SECRET = os.environ.get("TRUST_PROXY_SECRET", "")
+PROXY_SECRET_HEADER = "X-Tallygate-Proxy-Secret"  # noqa: S105 (a header name)
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
 COOKIE = "tallygate_session"
 AGENT_MAX_BYTES = 1024 * 1024  # cap on anything read from the agent (status JSON, terminal frames)
@@ -85,7 +88,12 @@ def _peer_trusted(request: web.Request) -> bool:
         peer = ipaddress.ip_address(request.remote or "")
     except ValueError:
         return False
-    return any(peer in n for n in TRUSTED_PROXIES)
+    if not any(peer in n for n in TRUSTED_PROXIES):
+        return False
+    if PROXY_SECRET:  # constant-time: the header value must not leak through timing
+        sent = request.headers.get(PROXY_SECRET_HEADER, "")
+        return hmac.compare_digest(sent.encode(), PROXY_SECRET.encode())
+    return True
 
 
 def client_ip(request: web.Request) -> str:
@@ -507,6 +515,8 @@ def build_app() -> web.Application:
         bootstrap.ensure_password()
     if PROXY_AUTH_HEADER and not TRUSTED_PROXIES:
         raise SystemExit("TRUST_PROXY_AUTH_HEADER requires TRUSTED_PROXIES (CIDRs of your auth proxy)")
+    if PROXY_SECRET and len(PROXY_SECRET) < 16:
+        raise SystemExit("TRUST_PROXY_SECRET must be at least 16 characters")
     if TRUST_FORWARDED and not TRUSTED_PROXIES:
         log.warning("TRUST_FORWARDED_FOR=1 but TRUSTED_PROXIES is empty: X-Forwarded-* headers are ignored")
     if os.environ.get("CONTROL_PASSWORD") and not os.environ.get("CONTROL_PASSWORD_HASH"):
