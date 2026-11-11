@@ -54,10 +54,14 @@ def test_first_match_and_default():
     assert p.evaluate("example.org", 443, ["1.2.3.4"]).reason == "default"
 
 
-def test_cidr_allow_requires_all_ips():
+def test_cidr_allow_applies_to_ip_literals_only():
+    # #10: a name is never allowed (or asked about) because of the addresses it resolves to
     p = Policy.from_dict({"default": "deny", "rules": [{"id": "c", "action": "allow", "cidr": "140.82.112.0/20"}]})
-    assert p.evaluate("github.com", 443, ["140.82.112.3"]).action == "allow"
-    assert p.evaluate("github.com", 443, ["140.82.112.3", "8.8.8.8"]).action == "deny"
+    assert p.evaluate("140.82.112.3", 443, ["140.82.112.3"]).action == "allow"
+    assert p.evaluate("8.8.8.8", 443, ["8.8.8.8"]).action == "deny"
+    assert p.evaluate("github.com", 443, ["140.82.112.3"]).action == "deny"
+    p = Policy.from_dict({"default": "allow", "rules": [{"id": "d", "action": "deny", "cidr": "140.82.112.0/20"}]})
+    assert p.evaluate("github.com", 443, ["8.8.8.8", "140.82.112.3"]).action == "deny"  # CIDR deny: any IP
 
 
 def test_expiry_and_prune():
@@ -180,8 +184,11 @@ def test_name_first_evaluation():
     assert p.evaluate_name("x.evil.example", 443).action == "deny"
     assert p.evaluate_name("ok.example", 443).action == "allow"
     assert p.evaluate_name("new.example", 443).action == "ask"
-    p.add_rule(Rule(action="allow", cidr="140.82.112.0/20"), top=False)
-    assert p.evaluate_name("new.example", 443) is None
+    # #10: CIDR rules (e.g. an approved IP literal) never make the name phase inconclusive
+    p.add_rule(rule_for_approval("140.82.112.3", 443, "always"), top=True)
+    assert p.evaluate_name("new.example", 443).action == "ask"
+    assert p.evaluate("new.example", 443, ["140.82.112.3"]).action == "ask"
+    assert p.evaluate("140.82.112.3", 443, ["140.82.112.3"]).action == "allow"
     p.add_rule(Rule(action="deny", cidr="1.2.3.0/24"), top=True)
     assert p.evaluate_name("x.evil.example", 443).action == "deny"  # CIDR deny doesn't force a lookup
 

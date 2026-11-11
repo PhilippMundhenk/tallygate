@@ -14,12 +14,12 @@ server — even if the connection is then denied or waits for an approval that n
 
 Evaluation is split in two phases:
 
-1. **Name phase (no DNS):** validate the name syntax, then walk the rules. A matching host rule decides;
-   a CIDR *deny* rule is skipped (it can only make the result stricter later); a CIDR *allow/ask* rule
-   ends the phase undecided, because its answer depends on the IPs. Otherwise the default applies.
+1. **Name phase (no DNS):** validate the name syntax, then walk the host rules. A matching host rule
+   decides; CIDR rules are skipped. Otherwise the default applies.
    `deny` → refuse without resolving. `ask` → hold the connection and ask the human **before** resolving.
-2. **IP phase:** only for allowed/approved (or undecided) names: resolve, then the full evaluation
-   (hard deny on all resolved IPs, rules, default) and pinning as in ADR-0007.
+2. **IP phase:** only for allowed/approved names: resolve, then the hard deny on all resolved IPs, rules
+   and default, and pinning as in ADR-0007. CIDR *allow/ask* rules apply only to IP-literal destinations;
+   for names, CIDR *deny* rules (any resolved IP inside) can only make the result stricter.
 
 ## Consequences
 
@@ -27,5 +27,5 @@ Evaluation is split in two phases:
 - ✅ Approval prompts show only what the agent asked for (IPs are "not resolved yet").
 - ⚠️ A name that later turns out to resolve to a hard-denied address may be asked about first (the human's
   approval does not override the hard deny).
-- ⚠️ CIDR `allow`/`ask` rules placed above host rules re-introduce lookups for unknown names; prefer host
-  rules, or put CIDR allow rules below them.
+- ⚠️ A CIDR `allow` rule no longer allows names that resolve into the range (#10: approving an IP literal
+  created such a rule and re-opened lookups for every name on that port). Allow names with host rules.

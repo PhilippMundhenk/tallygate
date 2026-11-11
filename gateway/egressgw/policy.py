@@ -8,7 +8,9 @@ Evaluation order for a connection attempt to (host, port) resolving to ips:
   3. default action (allow | deny | ask).
 
 Hostnames are first evaluated *without* resolving them (`evaluate_name`), so names the policy
-denies or still has to ask about never reach a DNS resolver (no DNS exfiltration).
+denies or still has to ask about never reach a DNS resolver (no DNS exfiltration). CIDR allow/ask rules
+(e.g. from approving an IP literal) apply to IP-literal destinations only; for hostnames only the name
+decides, and CIDR deny rules and the hard deny can narrow that after resolution.
 """
 
 from __future__ import annotations
@@ -247,18 +249,13 @@ class Policy:
                     return f"hard-deny {n} ({ip})"
         return None
 
-    def evaluate_name(self, host: str, port: int) -> Decision | None:
-        """Decide on the *name* alone, before any DNS lookup. Returns None when a CIDR rule that
-        could allow/ask comes first, i.e. the answer genuinely depends on the resolved IPs."""
+    def evaluate_name(self, host: str, port: int) -> Decision:
+        """Decide on the *name* alone, before any DNS lookup. CIDR rules are skipped: allow/ask ones
+        never apply to hostnames, deny ones are re-checked after resolution (they can only narrow)."""
         now = time.time()
         for r in self.rules:
-            if r.expired(now) or not port_matches(r.port, port):
-                continue
-            if r.host:
-                if host_matches(r.host, host):
-                    return Decision(r.action, f"rule {r.id}" + (f" ({r.note})" if r.note else ""), r.id)
-            elif r.action != "deny":
-                return None  # CIDR allow/ask: needs IPs (CIDR deny is re-checked after resolution)
+            if r.host and not r.expired(now) and port_matches(r.port, port) and host_matches(r.host, host):
+                return Decision(r.action, f"rule {r.id}" + (f" ({r.note})" if r.note else ""), r.id)
         return Decision(self.default, "default")
 
     def evaluate(self, host: str, port: int, ips: list[str], mode: str | None = None) -> Decision:
@@ -266,9 +263,10 @@ class Policy:
         if hd:
             return Decision("deny", hd, "hard_deny")
         now = time.time()
+        name = not is_ip(host)
         for r in self.rules:
-            if r.expired(now):
-                continue
+            if r.expired(now) or (name and r.cidr and r.action != "deny"):
+                continue  # CIDR allow/ask only for IP literals: a name must never be allowed by its IPs
             if r.matches(host, port, ips):
                 return Decision(r.action, f"rule {r.id}" + (f" ({r.note})" if r.note else ""), r.id)
         return Decision(self.default, "default")
