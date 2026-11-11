@@ -28,6 +28,11 @@ All notable changes to this project are documented here. The format follows
 ### Removed
 - `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
 
+### Fixed
+- Notifications: Telegram and Matrix are sent concurrently and fail independently, so an outage of one no
+  longer hides prompts on the other. A queue decouples delivery from the gateway event stream, and chat API
+  calls time out after 15 s (#22).
+
 ### Upgrading from 0.3.0
 Keep your existing state: in `.env`, replace `TALLYGATE_DIR=/your/dir` with
 `GATEWAY_DATA=/your/dir/gateway`, `AGENT_HOME=/your/dir/agent-home`, `WORKSPACE=/your/dir/workspace`. Your
