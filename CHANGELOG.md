@@ -28,6 +28,14 @@ All notable changes to this project are documented here. The format follows
 ### Removed
 - `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
 
+### Security
+- A `CONTROL_PASSWORD_HASH` that is not an scrypt hash refuses every login instead of falling back to
+  `CONTROL_PASSWORD` (#27).
+
+### Fixed
+- e2e tests skip instead of erroring without aiohttp, and cover password hash formats, idle and absolute
+  session expiry, dropped console frames, grant deny and revoke through Telegram and Matrix (#27).
+
 ### Upgrading from 0.3.0
 Keep your existing state: in `.env`, replace `TALLYGATE_DIR=/your/dir` with
 `GATEWAY_DATA=/your/dir/gateway`, `AGENT_HOME=/your/dir/agent-home`, `WORKSPACE=/your/dir/workspace`. Your
