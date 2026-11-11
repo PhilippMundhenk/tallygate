@@ -52,4 +52,6 @@ RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/status.py /usr/local/b
 ENV HOME=/home/agent DISABLE_AUTOUPDATER=1 TERM=xterm-256color
 USER 1000:1000
 WORKDIR /workspace
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --start-interval=3s \
+  CMD python3 -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:7680/status', timeout=4)" || exit 1
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

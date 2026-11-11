@@ -4,32 +4,38 @@ Configuration lives in three places:
 
 | File | Scope | Edited by |
 |---|---|---|
-| `.env` | Secrets, host paths, agent and notification settings (read by `compose.yaml`) | `setup.sh`, then you |
-| `config/gateway.yaml` | Static gateway config: credential injection, service ports | you (restart `egress-gw` after changes) |
-| `state/gateway/policy.yaml` | Live policy: default action, rules, hard deny | UI / API (or by hand while the gateway is stopped) |
+| `.env` next to `compose.yaml` | Optional: access, state paths, agent and notification settings | you (`docker compose up -d` applies changes) |
+| `config/gateway.yaml` | Static gateway config: grants, credential injection, service ports. Built into the image as `/etc/egressgw/config.yaml`; mount your own copy over it (see [operations](operations.md#with-docker-compose-recommended)) | you (restart `egress-gw` after changes) |
+| `policy.yaml` in the `gateway-data` volume | Live policy: default action, rules, hard deny | UI / API (or by hand while the gateway is stopped) |
 
 ## `.env`
 
+All variables are optional. Secrets are created on first start when they are not set.
+
 | Variable | Default | Description |
 |---|---|---|
-| `TALLYGATE_DIR` | `./state` | Host directory for persistent state (`gateway/`, `agent-home/`, `workspace/`). |
+| `TALLYGATE_VERSION` | `latest` | Image tag of all three images, e.g. `0.4` (minor version) or `0.4.0`. |
+| `GATEWAY_DATA` | volume `gateway-data` | Gateway state. A host path makes it a bind mount (owner uid 10001, mode 700). |
+| `AGENT_HOME` | volume `agent-home` | Agent home (Claude login, settings). A host path makes it a bind mount (owner uid 1000). |
+| `WORKSPACE` | volume `workspace` | Agent workspace. A host path makes it a bind mount (owner uid 1000). |
 | `CONTROL_PUBLISH` | `127.0.0.1:8080` | Host address:port the UI is published on. Put a TLS reverse proxy in front. |
 | `PUBLIC_URL` | – | External UI URL, included in notifications. |
 | `COOKIE_SECURE` | `1` | Session cookie only over HTTPS. Set `0` only for local plain-HTTP testing. |
 | `TRUST_FORWARDED_FOR` | `0` | `1` when the UI sits behind your reverse proxy: trust `X-Forwarded-For`/`-Host`/`-Proto` for rate limiting and origin checks — **only** from peers in `TRUSTED_PROXIES`. |
-| `TRUSTED_PROXIES` | – | Comma-separated CIDRs of your reverse/auth proxy as seen by control (with a published port usually the `mgmt` bridge gateway `172.31.12.1/32`). Forwarded and auth headers from any other peer are ignored. |
+| `TRUSTED_PROXIES` | – | Comma-separated CIDRs of your reverse/auth proxy as seen by control. Forwarded and auth headers from any other peer are ignored. With a published port this is the `mgmt` bridge gateway `172.31.12.1/32`, which every local process shares: see [reverse proxy](operations.md#reverse-proxy). |
 | `SESSION_IDLE` | `7200` | UI session idle timeout in seconds (absolute lifetime: `SESSION_TTL`, 12 h). Sessions are server-side: logout and restarts end them. |
-| `GW_API_TOKEN` | *(generated)* | Bearer token between control and gateway (≥ 24 chars). |
-| `SESSION_SECRET` | *(generated)* | HMAC key that signs session ids in the cookie. |
-| `TTYD_CREDENTIAL` | *(generated)* | `user:password` shared by control and the agent's ttyd consoles. Added by control during the WebSocket handshake; the browser never sees it. |
-| `CONTROL_PASSWORD_HASH` | *(prompted)* | `scrypt:16:<salt>:<hash>` (scrypt N = 2^16), create with `make password`. The legacy `scrypt:<salt>:<hash>` (N = 2^14) is still accepted; regenerate it. |
+| `GW_API_TOKEN` | *(created in the `gw-token` volume)* | Bearer token between control and gateway (≥ 24 chars). |
+| `SESSION_SECRET` | *(created in `control-data`)* | HMAC key that signs session ids in the cookie. |
+| `TTYD_CREDENTIAL` | *(created in the `ttyd` volume)* | `user:password` shared by control and the agent's ttyd consoles. Added by control during the WebSocket handshake; the browser never sees it. |
+| `CONTROL_PASSWORD_HASH` | *(generated password)* | `scrypt:16:<salt>:<hash>` (scrypt N = 2^16), create with `python3 control/hashpw.py`. Without it (and without `CONTROL_PASSWORD`), control generates a password on first start, prints it once to its log and keeps the hash in `control-data`; change that one with `docker compose exec control python -m app.passwd`. The legacy `scrypt:<salt>:<hash>` (N = 2^14) is still accepted; regenerate it. |
+| `CONTROL_PASSWORD` | – | Plain-text password instead of a hash. Discouraged (logged as a warning). |
 | `TRUST_PROXY_AUTH_HEADER` | – | E.g. `Remote-User`: accept the user from this header set by an authenticating proxy (Authelia, oauth2-proxy). Requires `TRUSTED_PROXIES`; control refuses to start without it. |
 | `RC_NAME` | `tallygate` | Remote Control session name shown in the Claude app. |
 | `RC_ENABLE` | `1` | Start `claude remote-control` automatically in the `rc` tmux session. |
 | `RC_ARGS` | – | Extra arguments for `claude remote-control`, e.g. `--spawn worktree`. |
 | `AGENT_PERMISSION_MODE` | `bypassPermissions` | Claude Code permission mode for Remote Control and the `claude` console. Seeded into `~/.claude/settings.json` on first start. |
-| `CLAUDE_VERSION` | `2.1.304` | Claude Code npm version baked into the agent image (no auto-updater). |
-| `AGENT_EXTRA_PACKAGES` | – | Extra Debian packages for the agent image, e.g. `build-essential golang-go`. |
+| `CLAUDE_VERSION` | `2.1.304` | Only when building from source: Claude Code npm version baked into the agent image (no auto-updater). |
+| `AGENT_EXTRA_PACKAGES` | – | Only when building from source: extra Debian packages for the agent image, e.g. `build-essential golang-go`. With published images, use a [custom agent image](operations.md#custom-agent-image). |
 | `AGENT_MEM_LIMIT` | `6g` | Memory limit of the agent container. |
 | `TELEGRAM_BOT_TOKEN` | – | Bot token from @BotFather. Enables Telegram approvals together with the chat ID. |
 | `TELEGRAM_CHAT_ID` | – | Chat (user or group) that receives approval requests. |

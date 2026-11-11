@@ -1,0 +1,24 @@
+# Build the images from this checkout instead of pulling them from GHCR:
+#
+#   docker compose -f compose.yaml -f compose.build.yaml up -d --build     (or: make up)
+#
+# The local images get the same names as the published ones, tagged :local.
+
+services:
+  egress-gw:
+    image: ghcr.io/philippmundhenk/tallygate-gateway:local
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+
+  control:
+    image: ghcr.io/philippmundhenk/tallygate-control:local
+    build: ./control
+
+  agent:
+    image: ghcr.io/philippmundhenk/tallygate-agent:local
+    build:
+      context: ./agent
+      args:
+        CLAUDE_VERSION: ${CLAUDE_VERSION:-2.1.304}
+        EXTRA_PACKAGES: ${AGENT_EXTRA_PACKAGES:-}

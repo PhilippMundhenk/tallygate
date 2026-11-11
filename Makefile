@@ -1,6 +1,7 @@
 # tallygate developer & operator shortcuts. `make help` lists targets.
 SHELL := /bin/bash
-COMPOSE ?= docker compose
+# build from this checkout: compose.build.yaml adds `build:` to the published image definitions
+COMPOSE ?= docker compose -f compose.yaml -f compose.build.yaml
 PY ?= python3
 
 .PHONY: help
@@ -32,13 +33,13 @@ test: test-unit test-e2e  ## all local tests
 
 # ---------------------------------------------------------------- operations
 .PHONY: setup build up down logs ps bypass-test password
-setup:  ## first-time host setup (.env, secrets, state dirs)
-	./setup.sh
+setup:  ## optional: create .env (and host state dirs with DIR=/path)
+	./setup.sh $(DIR)
 
 build:  ## build all images
 	$(COMPOSE) build
 
-up:  ## start the stack
+up:  ## build and start the stack
 	$(COMPOSE) up -d --build
 
 down:  ## stop the stack
@@ -53,5 +54,5 @@ ps:  ## container status
 bypass-test:  ## authoritative isolation test against the running stack
 	./tests/integration/bypass.sh
 
-password:  ## generate a CONTROL_PASSWORD_HASH
-	$(PY) control/hashpw.py
+password:  ## change the web UI password (stored in the control volume)
+	$(COMPOSE) exec control python -m app.passwd

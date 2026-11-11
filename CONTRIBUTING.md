@@ -30,7 +30,7 @@ The full stack test (`make up && make bypass-test`) needs Docker; CI runs it on 
 
 ## Releasing
 
-1. Update `VERSION`, `pyproject.toml` and `CHANGELOG.md`.
-2. Tag `vX.Y.Z` and push; publish release notes from the changelog.
+See [docs/development.md#releases](docs/development.md#releases): tagging `vX.Y.Z` publishes the images and
+the GitHub release.
 
 By contributing you agree that your contributions are licensed under the MIT License.

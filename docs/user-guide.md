@@ -128,6 +128,6 @@ reaction (👍 2 min · ⏰ 1 h · ✅ always · 🌐 domain · 👎 deny · ⛔
 - **Repositories**: `gh repo clone owner/repo /workspace/repo`. git uses HTTPS; the gateway injects your token.
 - **Parallel sessions**: start more sessions on the same environment from the Claude app; set
   `RC_ARGS=--spawn worktree` to give each session its own git worktree.
-- **Skills**: put them in `state/agent-home/.claude/skills/<name>/SKILL.md` (owner uid 1000).
+- **Skills**: put them in `/home/agent/.claude/skills/<name>/SKILL.md` in the agent (the `agent-home` volume, owner uid 1000), e.g. with `docker compose cp`.
 - **Toolchains**: add Debian packages via `AGENT_EXTRA_PACKAGES` and rebuild the agent. `pip install --user`
   and `npm install` work through the proxy if the registries are allowed.

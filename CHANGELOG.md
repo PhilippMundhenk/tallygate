@@ -6,6 +6,35 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Docker Compose with prebuilt images is the recommended installation.** Multi-arch images
+  (`linux/amd64`, `linux/arm64`) `ghcr.io/philippmundhenk/tallygate-{gateway,control,agent}` are published
+  from `main` and for every release; releases attach `compose.yaml`, `.env.example`, `gateway.yaml` and
+  `bypass.sh`.
+- Zero-config first start: the gateway API token, session secret and console credential are created in
+  volumes, and a UI password is generated and printed once to the control log. Environment variables still
+  take precedence. `docker compose exec control python -m app.passwd` changes the stored password.
+- `compose.build.yaml` to build the images from a checkout (`make up`).
+- Health check for the agent; services start in order of health (`depends_on: condition: service_healthy`).
+
+### Changed
+- State lives in Docker volumes by default. `TALLYGATE_DIR` is replaced by `GATEWAY_DATA`, `AGENT_HOME` and
+  `WORKSPACE` (each a volume name or a host path); `./setup.sh /path` sets them up for host directories.
+- The default `config/gateway.yaml` is built into the gateway image; mount your own file to change it.
+- `setup.sh` runs as your normal user (sudo only for `chown`) and no longer generates secrets.
+- `TRUST_FORWARDED_FOR` defaults to `0`; docs explain that the `mgmt` bridge address is shared by every
+  process on the host.
+
+### Removed
+- `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
+
+### Upgrading from 0.3.0
+Keep your existing state: in `.env`, replace `TALLYGATE_DIR=/your/dir` with
+`GATEWAY_DATA=/your/dir/gateway`, `AGENT_HOME=/your/dir/agent-home`, `WORKSPACE=/your/dir/workspace`. Your
+secrets in `.env` keep working. If you changed `config/gateway.yaml`, mount it as described in
+[docs/operations.md](docs/operations.md#with-docker-compose-recommended). Then `make up`, or switch to the
+published images with `docker compose pull && docker compose up -d`.
+
 ## [0.3.0] - 2026-11-11
 
 ### Added
