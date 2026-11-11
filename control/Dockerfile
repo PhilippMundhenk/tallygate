@@ -1,5 +1,5 @@
 # tallygate control plane: web UI, approvals (web/Matrix/Telegram), web console proxy, setup wizard
-FROM docker.io/library/python:3.13-slim-trixie
+FROM docker.io/library/python:3.15-slim-trixie
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt \
