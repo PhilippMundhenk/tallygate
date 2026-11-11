@@ -20,16 +20,17 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     with open(a.report, encoding="utf-8") as f:
         files = json.load(f)["files"]
-    failed = 0
+    failed = checked = 0
     for name, data in sorted(files.items()):
         s = data["summary"]
         if not s["num_statements"]:
-            continue
+            continue  # empty files (__init__.py) have nothing to cover
+        checked += 1
         pct = s["percent_covered"]
         ok = pct >= a.min
         failed += not ok
         print(f"{'ok  ' if ok else 'FAIL'} {pct:6.2f} %  {name}")
-    print(f"{len(files) - failed}/{len(files)} modules at or above {a.min:g} %")
+    print(f"{checked - failed}/{checked} modules at or above {a.min:g} %")
     return 1 if failed else 0
 
 

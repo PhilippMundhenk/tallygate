@@ -84,6 +84,27 @@ curl -x http://127.0.0.1:3128 https://example.org/    # appears in Approvals at 
 | E2E | Every enforcement path, held connections, injection incl. SNI spoofing and upstream cert verification, DNS, API auth, UI auth/CSRF/origin, console websocket, Telegram/Matrix flows | `tests/e2e` | ✅ |
 | Integration | Real images and networks, started with zero configuration: first-start secrets, structural hardening and egress probes from an independent container | `tests/integration/bypass.sh` | ✅ (`integration` job) |
 
+## Coverage
+
+`make coverage` runs the unit and e2e tests under coverage.py, including the gateway (mitmdump) and control
+processes the e2e tests start, and fails when **any module** is below **95 % line coverage**
+(`tools/coverage_gate.py`). CI runs it in the `test` job and uploads the HTML report as the `coverage` artifact.
+
+Excluded: only process entry points that would replace the process or touch the real network: `main()` in
+`gateway/run.py` (it `exec`s mitmdump; `build_args()` and `ensure_api_token()` are tested) and the
+`__main__` block of `agent/status.py` (its `main()` is tested). Nothing else carries `# pragma: no cover`.
+
+Measured on 2026-11-11 (424 tests):
+
+| Module | Lines |
+|---|---|
+| `gateway/egressgw/` (addon, agentapi, api, core, grants, policy, store), `gateway/run.py` | 100 % each |
+| `control/app/main.py`, `notify.py`, `passwd.py`, `control/hashpw.py` | 100 % each |
+| `control/app/bootstrap.py` | 98.3 % |
+| `agent/status.py` | 100 % |
+| `agent/tallygate-cli.py` | 98.9 % |
+| `tools/coverage_gate.py` | 100 % |
+
 ## Code style
 
 - Python ≥ 3.12, `ruff format` (line length 120) and `ruff check` (incl. bandit-style `S` rules).

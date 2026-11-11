@@ -67,3 +67,9 @@ def test_exit_code_of_the_script(tmp_path, monkeypatch):
         with pytest.raises(SystemExit) as e:
             runpy.run_path(script, run_name="__main__")
         assert e.value.code == code
+
+
+def test_empty_files_are_neither_checked_nor_counted(gate, tmp_path, capsys):
+    assert gate([report(tmp_path, a=96.0, empty=None)]) == 0
+    out = capsys.readouterr().out
+    assert "empty.py" not in out and "1/1 modules at or above 95 %" in out
