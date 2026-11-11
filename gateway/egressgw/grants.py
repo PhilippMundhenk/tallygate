@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import fnmatch
 import ipaddress
+import logging
 import re
 import secrets as _secrets
 import time
@@ -24,6 +25,8 @@ from pathlib import Path
 import yaml
 
 from egressgw.policy import is_ip, valid_hostname
+
+log = logging.getLogger("egressgw")
 
 LEVELS = ("read", "write")
 READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -214,6 +217,12 @@ class GrantDef:
             raise ValueError(f"grant {self.name}: approval must be one of {APPROVALS}")
         if not 60 <= self.default_ttl <= self.max_ttl <= MAX_TTL:
             raise ValueError(f"grant {self.name}: need 1m <= default_ttl <= max_ttl <= 7d")
+        if self.source != "config" and (self.inject or any(not t.tls_verify for t in self.targets)):
+            # A UI session or the API token must not be able to send stored secrets to a host of its choosing.
+            raise ValueError(
+                f"grant {self.name}: credential injection and tls_verify: false are only allowed in grants "
+                "from the gateway config file"
+            )
         if self.levels == ["read"] and all(t.scheme == "tcp" for t in self.targets):
             raise ValueError(f"grant {self.name}: tcp targets cannot be read-only (no protocol visibility)")
         https_hosts = {t.host for t in self.targets if t.scheme == "https" and not t.host.startswith("*.")}
@@ -305,7 +314,10 @@ class Grants:
             for name, d in (yaml.safe_load(self.ui_path.read_text()) or {}).items():
                 if name in self.defs:
                     continue  # config wins
-                self.defs[name] = GrantDef.from_dict(name, d or {}, "ui")
+                try:
+                    self.defs[name] = GrantDef.from_dict(name, d or {}, "ui")
+                except ValueError as e:  # e.g. saved by an older version that allowed inject in UI grants
+                    log.error("UI grant %s ignored: %s", name, e)
         self.active: dict[str, Active] = {}
         self.requests: dict[str, GrantRequest] = {}
 
