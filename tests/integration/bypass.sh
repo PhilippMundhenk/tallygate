@@ -45,6 +45,7 @@ for c in "$AGENT" "${PROJECT}-egress-gw-1" "${PROJECT}-control-1"; do
     grep -q 'net.ipv6.conf.all.disable_ipv6:1' <<<"$(docker inspect -f '{{.HostConfig.Sysctls}}' "$c")"
 done
 check "agent has no docker.sock" bash -c "! docker inspect -f '{{.HostConfig.Binds}}' '$AGENT' | grep -q docker.sock"
+check "managed settings: bypass-mode prompt skipped (top-level key)" docker exec "$AGENT" python3 -c   "import json,sys; sys.exit(json.load(open('/etc/claude-code/managed-settings.json')).get('skipDangerousModePermissionPrompt') is not True)"
 
 # A web server in the host's network namespace stands in for host services listening on 0.0.0.0
 # (sshd, databases, exporters). The agent must not reach it through the bridge address of its network.
