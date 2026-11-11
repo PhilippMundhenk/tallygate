@@ -78,7 +78,7 @@ jobs:
         run: docker compose down -v
 
   images:
-    # Multi-arch images on GHCR: :main and :sha-… from main, :X.Y.Z / :X.Y / :latest from v* tags.
+    # Multi-arch images on GHCR: :main and :sha-â€¦ from main, :X.Y.Z / :X.Y / :latest from v* tags.
     if: github.event_name != 'pull_request'
     needs: [integration]
     runs-on: ubuntu-latest
