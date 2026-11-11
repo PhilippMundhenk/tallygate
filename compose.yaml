@@ -131,6 +131,7 @@ services:
       agent-net: {ipv4_address: 172.31.10.10}
     pids_limit: 1024
     mem_limit: ${AGENT_MEM_LIMIT:-6g}
+    cpus: ${AGENT_CPUS:-0}                  # 0 = no limit; e.g. 2 keeps CPU for the gateway and the host
     depends_on:
       egress-gw: {condition: service_healthy}
       control: {condition: service_healthy}
