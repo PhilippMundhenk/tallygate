@@ -37,6 +37,10 @@ All notable changes to this project are documented here. The format follows
   keeps its id, so open connections survive; agent credentials are stripped on inject hosts reached
   through a grant ([#14](https://github.com/PhilippMundhenk/tallygate/issues/14)).
 ### Added
+- **Quick actions** in the Rules tab: allow the web or all ports for 15 min / 1 h, switch what happens with
+  unknown destinations, an emergency stop, a guided path to a local-network grant, and **templates** for
+  Python, Node.js, Go, Rust, Debian/Ubuntu apt, container registries and Hugging Face. Preset rules are
+  tagged `preset:<name>`; `DELETE /presets/<name>` undoes them; `GET /presets?details=1` (#34).
 - **Docker Compose with prebuilt images is the recommended installation.** Multi-arch images
   (`linux/amd64`, `linux/arm64`) `ghcr.io/philippmundhenk/tallygate-{gateway,control,agent}` are published
   from `main` and for every release; releases attach `compose.yaml`, `.env.example`, `gateway.yaml` and

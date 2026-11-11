@@ -1,0 +1,9 @@
+# Go modules: The Go module proxy and checksum database, and Go toolchain downloads.
+# Apply on top of your policy in the UI (Rules -> Quick actions) or with POST /presets/go.
+title: "Go modules"
+category: template
+description: "The Go module proxy and checksum database, and Go toolchain downloads."
+rules:
+  - {id: go-proxy, action: allow, host: "proxy.golang.org", port: 443}
+  - {id: go-sum, action: allow, host: "sum.golang.org", port: 443}
+  - {id: go-dl, action: allow, host: "dl.google.com", port: 443, note: Go toolchains}

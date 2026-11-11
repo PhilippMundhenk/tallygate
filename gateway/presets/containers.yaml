@@ -1,0 +1,11 @@
+# Container registries (pull): Docker Hub, GitHub Container Registry and Quay, for tools like crane or skopeo.
+# Apply on top of your policy in the UI (Rules -> Quick actions) or with POST /presets/containers.
+title: "Container registries (pull)"
+category: template
+description: "Docker Hub, GitHub Container Registry and Quay, for tools like crane or skopeo."
+rules:
+  - {id: oci-dockerhub, action: allow, host: "registry-1.docker.io", port: 443}
+  - {id: oci-dockerhub-auth, action: allow, host: "auth.docker.io", port: 443}
+  - {id: oci-dockerhub-blobs, action: allow, host: "production.cloudflare.docker.com", port: 443}
+  - {id: oci-ghcr, action: allow, host: "ghcr.io", port: 443}
+  - {id: oci-quay, action: allow, host: "*.quay.io", port: 443}

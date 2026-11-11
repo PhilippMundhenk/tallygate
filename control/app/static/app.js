@@ -203,8 +203,7 @@ async function loadPolicy(keepEdits = false) {
     b.onclick = guard(async () => { await gw("DELETE", `/rules/${r.id}`); await loadPolicy(); });
     tr.lastElementChild.appendChild(b); body.appendChild(tr);
   });
-  const presets = await gw("GET", "/presets");
-  $("#presetSel").innerHTML = presets.map((p) => `<option>${esc(p)}</option>`).join("");
+  await renderQuick();
 }
 async function putPolicy(p) { await gw("PUT", "/policy", p); toast("Policy saved"); await loadPolicy(); }
 $("#saveMode").onclick = guard(() => putPolicy({ ...policy, default: $("#defaultAction").value, ask_timeout: +$("#askTimeout").value }));
@@ -226,9 +225,83 @@ $("#testBtn").onclick = guard(async () => {
   const r = await gw("POST", "/test", { host: $("#testHost").value.trim(), port: +$("#testPort").value || 443 });
   $("#testOut").textContent = `${r.action.toUpperCase()} — ${r.reason}\nIPs: ${(r.ips || []).join(", ")}`;
 });
-$("#presetBtn").onclick = guard(async () => {
-  const ttl = +$("#presetTtl").value; await gw("POST", `/presets/${$("#presetSel").value}`, ttl ? { ttl } : {});
-  toast("Preset applied"); await loadPolicy();
+
+/* ---------------- quick actions and templates ---------------- */
+let presetInfo = null;
+const presetRules = (name) => (policy ? policy.rules.filter((r) => r.source === `preset:${name}`) : []);
+const TTL_CHOICES = [["", "until undone"], ["3600", "for 1 h"], ["86400", "for 1 day"]];
+function presetExpiry(rules) {
+  const exp = rules.map((r) => r.expires).filter(Boolean);
+  return exp.length === rules.length && exp.length ? Math.max(...exp) : null;
+}
+async function applyPreset(name, ttl) {
+  await gw("POST", `/presets/${name}`, ttl ? { ttl: +ttl } : {});
+  const p = presetInfo.find((x) => x.name === name);
+  toast(`${p ? p.title : name} allowed${ttl ? ` for ${fmtLeft(Date.now() / 1000 + +ttl)}` : ""}`); await loadPolicy();
+}
+async function undoPreset(name) { await gw("DELETE", `/presets/${name}`); toast("Undone"); await loadPolicy(); }
+async function renderQuick() {
+  if (!presetInfo) presetInfo = await gw("GET", "/presets?details=1");
+  $$("#quick [data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === policy.default)));
+  // active shortcuts (internet) with their remaining time
+  const active = presetInfo.filter((p) => p.category === "internet" && presetRules(p.name).length);
+  $("#qaActive").innerHTML = active.length ? "<h4>Active</h4>" : "";
+  for (const p of active) {
+    const exp = presetExpiry(presetRules(p.name));
+    const row = document.createElement("div"); row.className = "row";
+    row.innerHTML = `<span class="tag warn">${esc(p.title)}</span><span class="muted">${exp ? `ends in ${esc(fmtLeft(exp))}` : "until undone"}</span>`;
+    const b = document.createElement("button"); b.className = "small secondary"; b.textContent = "Undo";
+    b.onclick = guard(() => undoPreset(p.name)); row.appendChild(b); $("#qaActive").appendChild(row);
+  }
+  // templates
+  const box = $("#qaTemplates"); box.innerHTML = "";
+  for (const p of presetInfo.filter((x) => x.category === "template")) {
+    const on = presetRules(p.name), exp = presetExpiry(on);
+    const el = document.createElement("div"); el.className = "tpl";
+    el.innerHTML = `<div class="row-between"><b>${esc(p.title)}</b>${on.length ? `<span class="tag">active${exp ? `, ends in ${esc(fmtLeft(exp))}` : ""}</span>` : ""}</div>
+      <p class="meta">${esc(p.description)}</p>
+      <p class="meta"><code>${p.rules.map((r) => esc(r.host || r.cidr) + (r.port && r.port !== "*" ? ":" + esc(portText(r.port)) : "")).join("</code> <code>")}</code></p>
+      <div class="btns"><select aria-label="Duration for ${esc(p.title)}">${TTL_CHOICES.map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}</select></div>`;
+    const apply = document.createElement("button"); apply.className = "small"; apply.textContent = on.length ? "Apply again" : "Apply";
+    apply.onclick = guard(() => applyPreset(p.name, $("select", el).value));
+    $(".btns", el).appendChild(apply);
+    if (on.length) {
+      const undo = document.createElement("button"); undo.className = "small secondary"; undo.textContent = "Undo";
+      undo.onclick = guard(() => undoPreset(p.name)); $(".btns", el).appendChild(undo);
+    }
+    box.appendChild(el);
+  }
+}
+$$("#quick [data-preset]").forEach((b) => (b.onclick = guard(() => applyPreset(b.dataset.preset, b.dataset.ttl))));
+$$("#quick [data-mode]").forEach((b) => (b.onclick = guard(async () => {
+  if (b.dataset.mode === "allow" && !confirm("Allow every unknown public destination (the local network stays blocked)? Everything is still logged.")) return;
+  await putPolicy({ ...policy, default: b.dataset.mode });
+})));
+$("#qaStop").onclick = guard(async () => {
+  if (!confirm("Emergency stop: block everything unknown, undo the internet shortcuts and revoke all active grants?")) return;
+  await gw("PUT", "/policy", { ...policy, default: "deny" });
+  for (const p of (presetInfo || []).filter((x) => x.category === "internet")) await gw("DELETE", `/presets/${p.name}`);
+  const g = await gw("GET", "/grants");
+  for (const a of g.active || []) await gw("DELETE", `/active-grants/${a.id}`);
+  toast("Emergency stop: unknown destinations are blocked"); await loadPolicy();
+});
+$("#qaLan").onclick = guard(async () => {
+  const g = await gw("GET", "/grants");
+  const help = $("#qaLanHelp");
+  if (!(g.lan_allow_ui || []).length) {
+    help.innerHTML = `Grants created in the UI may only reach local addresses inside <code>grants_lan_allow</code>, which is
+      empty. Add your home network to the gateway config and restart the gateway, e.g.
+      <pre>grants_lan_allow: [192.168.1.0/24]</pre> (see <i>Configuration</i> in the docs), or define the grant in the
+      config file itself.`;
+    help.classList.remove("hidden"); return;
+  }
+  help.classList.add("hidden");
+  showTab("grants");
+  openGrantEditor(null);
+  $("#geTargets").innerHTML = "";
+  $("#geTargets").appendChild(targetRow({ scheme: "http", host: "", port: 80, lan: true }));
+  $("#geDesc").value = "Device on the local network";
+  toast(`Local targets must be inside ${g.lan_allow_ui.join(", ")}`);
 });
 
 /* ---------------- grants ---------------- */

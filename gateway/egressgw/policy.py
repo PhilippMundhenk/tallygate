@@ -401,3 +401,19 @@ def rule_for_approval(host: str, port: int, scope: str) -> Rule:
         pattern_rule.expires = time.time() + ttl
     pattern_rule.validate()
     return pattern_rule
+
+
+PRESET_META = ("title", "description", "category")
+PRESET_CATEGORIES = ("policy", "internet", "template")
+
+
+def load_preset(path: Path) -> tuple[dict, Policy]:
+    """A preset is a policy file with optional metadata for the UI (title, description, category)."""
+    d = yaml.safe_load(path.read_text()) or {}
+    meta = {k: d.pop(k) for k in PRESET_META if k in d}
+    meta.setdefault("title", path.stem)
+    meta.setdefault("description", "")
+    meta.setdefault("category", "template")
+    if meta["category"] not in PRESET_CATEGORIES:
+        raise ValueError(f"preset {path.stem}: category must be one of {PRESET_CATEGORIES}")
+    return meta, Policy.from_dict(d)

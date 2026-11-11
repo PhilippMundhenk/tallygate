@@ -154,3 +154,12 @@ def test_cross_origin_login_is_refused(control):
         "POST", "/login", form={"password": CONTROL_PASSWORD}, headers={"Origin": "https://evil.example"}
     )
     assert status == 403
+
+
+def test_ui_can_apply_and_undo_templates(ui):
+    """#34: the UI relays preset details, apply and undo (DELETE /presets/<name>) to the gateway."""
+    status, details, _ = ui.call("GET", "/api/gw/presets?details=1")
+    assert status == 200 and any(p["name"] == "node" and p["category"] == "template" for p in details)
+    assert ui.call("POST", "/api/gw/presets/node", {})[0] == 200
+    status, data, _ = ui.call("DELETE", "/api/gw/presets/node")
+    assert status == 200 and "node-npm" in data["removed"]

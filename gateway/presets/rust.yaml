@@ -1,0 +1,10 @@
+# Rust (crates.io, rustup): Cargo's registry and downloads, and rustup toolchains.
+# Apply on top of your policy in the UI (Rules -> Quick actions) or with POST /presets/rust.
+title: "Rust (crates.io, rustup)"
+category: template
+description: "Cargo's registry and downloads, and rustup toolchains."
+rules:
+  - {id: rust-index, action: allow, host: "index.crates.io", port: 443}
+  - {id: rust-crates, action: allow, host: "crates.io", port: 443}
+  - {id: rust-static, action: allow, host: "static.crates.io", port: 443}
+  - {id: rust-toolchains, action: allow, host: "static.rust-lang.org", port: 443, note: rustup}

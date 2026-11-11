@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from egressgw.policy import SCOPES, Policy, Rule, is_ip, valid_hostname
+from egressgw.policy import SCOPES, Policy, Rule, is_ip, load_preset, valid_hostname
 
 if TYPE_CHECKING:
     from egressgw.core import Gateway
@@ -79,13 +79,12 @@ def build_app(gw: Gateway) -> web.Application:
         path = PRESET_DIR / f"{name}.yaml"
         if not path.exists():
             return _json({"error": "unknown preset"}, 404)
-        preset = Policy.load(path)
+        _, preset = load_preset(path)
         ttl = (await request.json()).get("ttl") if request.can_read_body else None
         added = []
         permanent = {r.id for r in gw.policy.rules if r.expires is None}
         for r in reversed(preset.rules):
-            r.source = "preset"
-            r.note = (r.note + " " if r.note else "") + f"[{name}]"
+            r.source = f"preset:{name}"  # lets DELETE /presets/<name> undo exactly these rules
             if ttl and r.id not in permanent:  # a TTL never turns a permanent rule into an expiring one
                 r.expires = time.time() + int(ttl)
             gw.policy.remove_rule(r.id)
@@ -95,11 +94,33 @@ def build_app(gw: Gateway) -> web.Application:
         gw.record(kind="admin", action="preset", reason=f"preset {name} applied ({len(added)} rules, ttl={ttl})")
         return _json({"added": added})
 
+    @routes.delete("/presets/{name}")
+    async def undo_preset(request):
+        """Remove the rules a preset added (rules tagged preset:<name>)."""
+        name = request.match_info["name"]
+        if not name.isidentifier():
+            return _json({"error": "bad preset"}, 400)
+        removed = [r.id for r in gw.policy.rules if r.source == f"preset:{name}"]
+        for rid in removed:
+            gw.policy.remove_rule(rid)
+        if removed:
+            gw.save_policy()
+        gw.record(kind="admin", action="preset", reason=f"preset {name} undone ({len(removed)} rules)")
+        return _json({"removed": removed})
+
     @routes.get("/presets")
-    async def list_presets(_):
+    async def list_presets(request):
+        """Preset names; with ?details=1 also title, description, category and rules (for the UI)."""
         from egressgw.core import PRESET_DIR
 
-        return _json(sorted(p.stem for p in PRESET_DIR.glob("*.yaml")))
+        paths = sorted(PRESET_DIR.glob("*.yaml"))
+        if request.query.get("details") != "1":
+            return _json([p.stem for p in paths])
+        out = []
+        for p in paths:
+            meta, pol = load_preset(p)
+            out.append({"name": p.stem, **meta, "default": pol.default, "rules": [r.to_dict() for r in pol.rules]})
+        return _json(out)
 
     @routes.get("/pending")
     async def pending(_):

@@ -362,3 +362,25 @@ def test_inject_host_is_intercepted_whatever_the_sni(gateway, upstream, sni):
 def test_readonly_host_is_intercepted_whatever_the_sni(gateway, upstream, sni):
     data = _tls_any_sni(gateway["ports"]["http"], f"ro.test:{upstream['https']}", sni, method="PUT")
     assert data.startswith(b"HTTP/1.1 403") and b"read-only" in data
+
+
+def test_preset_details_and_undo(gateway):
+    """#34: templates carry metadata for the UI, their rules are tagged, and undo removes exactly them."""
+    api = gateway["api"]
+    _, names, _ = api.call("GET", "/presets")
+    assert {"python", "node", "internet", "open", "baseline"} <= set(names)
+    _, details, _ = api.call("GET", "/presets?details=1")
+    py = next(p for p in details if p["name"] == "python")
+    assert py["category"] == "template" and py["title"] and {r["host"] for r in py["rules"]} >= {"pypi.org"}
+    _, before, _ = api.call("GET", "/policy")
+    status, data, _ = api.call("POST", "/presets/python", {"ttl": 600})
+    assert status == 200 and set(data["added"]) == {"py-pypi", "py-files"}
+    _, pol, _ = api.call("GET", "/policy")
+    tagged = [r for r in pol["rules"] if r.get("source") == "preset:python"]
+    assert {r["id"] for r in tagged} == {"py-pypi", "py-files"} and all(r["expires"] for r in tagged)
+    status, data, _ = api.call("DELETE", "/presets/python")
+    assert status == 200 and set(data["removed"]) == {"py-pypi", "py-files"}
+    _, after, _ = api.call("GET", "/policy")
+    assert [r["id"] for r in after["rules"]] == [r["id"] for r in before["rules"]]  # nothing else touched
+    assert api.call("DELETE", "/presets/no-such")[0] == 400
+    assert api.call("DELETE", "/presets/nosuch")[1] == {"removed": []}

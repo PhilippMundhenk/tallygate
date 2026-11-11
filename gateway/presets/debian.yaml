@@ -1,0 +1,11 @@
+# Debian and Ubuntu packages: apt mirrors for Debian and Ubuntu (port 80 too: apt verifies packages with signatures, not TLS).
+# Apply on top of your policy in the UI (Rules -> Quick actions) or with POST /presets/debian.
+title: "Debian and Ubuntu packages"
+category: template
+description: "apt mirrors for Debian and Ubuntu (port 80 too: apt verifies packages with signatures, not TLS)."
+rules:
+  - {id: deb-debian, action: allow, host: "deb.debian.org", port: [80, 443]}
+  - {id: deb-security, action: allow, host: "security.debian.org", port: [80, 443]}
+  - {id: deb-ubuntu, action: allow, host: "archive.ubuntu.com", port: [80, 443]}
+  - {id: deb-ubuntu-security, action: allow, host: "security.ubuntu.com", port: [80, 443]}
+  - {id: deb-ubuntu-ports, action: allow, host: "ports.ubuntu.com", port: [80, 443]}

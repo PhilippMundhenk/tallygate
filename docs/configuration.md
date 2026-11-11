@@ -130,14 +130,29 @@ that service port — not via the proxy or SOCKS) rather than shrinking the floo
 
 ### Presets (`gateway/presets/*.yaml`)
 
-| Preset | Content | Typical use |
-|---|---|---|
-| `baseline` | default `ask`; allow Anthropic/Claude, GitHub, npm, PyPI | initial policy |
-| `open` | allow any public host on 80/443 | temporary, **always with a TTL** (e.g. 15 min during setup) |
-| `lockdown` | default `deny`; Anthropic only | emergency: replace the policy via raw editor/API |
+| Preset | Category | Content | Typical use |
+|---|---|---|---|
+| `baseline` | policy | default `ask`; allow Anthropic/Claude, GitHub, npm, PyPI | initial policy |
+| `lockdown` | policy | default `deny`; Anthropic only | emergency: replace the policy via raw editor/API |
+| `open` | internet | any public host on 80/443 | temporary, **always with a TTL** (*Quick actions*) |
+| `internet` | internet | any public host on any port | temporary, **always with a TTL** |
+| `python`, `node`, `go`, `rust`, `debian`, `containers`, `huggingface` | template | the hosts a tool ecosystem needs | *Quick actions → Templates* |
 
-Presets are applied **on top** (their rules are inserted first, optionally with a TTL). Add your own presets
-by mounting additional YAML files into `/app/presets/`.
+Presets are applied **on top**: their rules are inserted first, optionally with a TTL, and tagged
+`preset:<name>` so they can be removed again (`DELETE /presets/<name>`). A preset file is a policy file with three
+optional keys for the UI:
+
+```yaml
+title: "Python (PyPI)"            # shown in the UI
+category: template                # policy | internet | template (where the UI lists it)
+description: "pip, uv and poetry: the Python Package Index and its file host."
+rules:
+  - {id: py-pypi, action: allow, host: "pypi.org", port: 443}     # ids must be unique across presets
+  - {id: py-files, action: allow, host: "files.pythonhosted.org", port: 443}
+```
+
+Add your own templates by mounting YAML files into the gateway's `/app/presets/`, e.g.
+`./presets/company.yaml:/app/presets/company.yaml:ro` in `compose.yaml`.
 
 ## Component environment (set by `compose.yaml`)
 

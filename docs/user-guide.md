@@ -62,12 +62,32 @@ create a rule for exactly that host:port.
 
 - **Mode**: what happens to unmatched destinations: `ask` (human in the loop), `deny` (strict allowlist) or
   `allow` (blocklist).
+- **Quick actions** (top of the tab), see below.
 - **Test a destination**: dry run against the current policy, including DNS resolution and hard deny.
-- **Presets**: apply a preset's rules on top, optionally with a TTL (e.g. `open` for 900 s during setup).
 - **Add rule**: host glob or CIDR, ports, note and optional TTL. New rules go to the top (first match wins).
 - **Hard deny**: CIDRs that are never reachable. The built-in floor is read-only here (change it only in the
   gateway config file); you can add more, e.g. your Docker host's public IP.
 - **Raw policy JSON**: edit everything at once (validated server-side).
+
+### Quick actions and templates
+
+| Action | What it does | Undo |
+|---|---|---|
+| Allow web for 15 min / 1 h | Adds the `open` preset (any public host, ports 80 and 443) with that time limit | *Active → Undo*, or wait |
+| Allow all ports for 15 min | Adds the `internet` preset (any public host and port: SSH, databases, ...) | same |
+| Unknown destinations: ask me / block / allow | Sets the mode (`ask`, `deny`, `allow`) | click another mode |
+| Emergency stop | Mode `deny`, undoes the internet shortcuts, revokes all active grants | set the mode again |
+| Allow a device on the local network | Opens the grant editor with a LAN target (see below) | delete the grant |
+| Templates | Allow what a tool ecosystem needs: Python, Node.js, Go, Rust, Debian/Ubuntu apt, container registries, Hugging Face. Until undone, for 1 h or for 1 day | *Undo* on the template |
+
+All of them create normal rules at the top of the list, tagged `preset:<name>` in the table, so you can see what
+a shortcut added. *Undo* removes exactly those rules. Rules you added yourself are never touched.
+
+**The local network** (private ranges, the Docker host, cloud metadata) is always blocked by the hard deny, and
+no rule or shortcut can open it. This is deliberate: an agent with broad access to your network is the main
+risk tallygate exists for. To let the agent reach one device, define a [grant](grants.md): exact host and port,
+read or write, a time limit, and your approval each time. Grants created in the UI may only reach addresses
+inside `grants_lan_allow` in the gateway config; the button explains what to add when that list is empty.
 
 ## Console
 
@@ -118,8 +138,9 @@ reaction (👍 2 min · ⏰ 1 h · ✅ always · 🌐 domain · 👎 deny · ⛔
 |---|---|
 | Strict allowlist, no prompts | Mode `deny`; add allow rules for what you need |
 | Everything public allowed, but log it | Mode `allow` (hard deny still protects the LAN) |
-| Allow a package ecosystem | `*.pythonhosted.org`, `pypi.org`; `registry.npmjs.org`; `proxy.golang.org`, `sum.golang.org`; `*.crates.io`, `static.crates.io` (port 443) |
-| Allow docs browsing for an hour | Preset `open` with TTL `3600` |
+| Allow a package ecosystem | *Quick actions → Templates* (Python, Node.js, Go, Rust, apt, container registries, Hugging Face) |
+| Allow docs browsing for an hour | *Quick actions → Allow web for 1 h* (preset `open` with TTL `3600`) |
+| Let the agent install Go modules today | *Templates → Go modules → for 1 day → Apply* |
 | Block a noisy telemetry host quietly | `deny` rule for the host (no more prompts) |
 | Reach a LAN database | `services:` entry with `allow_private: true` in `config/gateway.yaml` |
 | SSH to one external host | Allow `host:22`; add `openssh-client netcat-openbsd` to `AGENT_EXTRA_PACKAGES`; then `ssh -o ProxyCommand='nc -X connect -x 172.31.10.2:3128 %h %p' host` |

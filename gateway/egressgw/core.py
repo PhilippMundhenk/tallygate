@@ -37,6 +37,7 @@ from egressgw.policy import (
     Exception_,
     Policy,
     is_ip,
+    load_preset,
     parse_cidrs,
     registrable_domain,
     rule_for_approval,
@@ -136,7 +137,7 @@ class Gateway:
         self.hard_deny_floor = parse_cidrs([*builtin, *configured], "hard_deny_floor")
         if not self.policy_path.exists():
             preset = PRESET_DIR / f"{self.config.get('initial_preset', 'baseline')}.yaml"
-            self.policy = Policy.load(preset) if preset.exists() else Policy()
+            self.policy = load_preset(preset)[1] if preset.exists() else Policy()
             self.policy.save(self.policy_path)
         else:
             self.policy = Policy.load(self.policy_path)
