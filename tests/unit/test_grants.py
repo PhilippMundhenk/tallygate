@@ -73,8 +73,9 @@ def test_activation_matching_and_levels(tmp_path):
     a = g.activate("ha", "read", 99999, "check lights", "test")
     assert a.expires - a.created == 4 * 3600  # clamped to max_ttl
     assert g.match("HA.LAN.", 8123)[0].level == "read"
-    g.activate("ha", "write", 600, "", "test")
+    b = g.activate("ha", "write", 600, "", "test")
     assert len(g.active) == 1 and g.match("ha.lan", 8123)[0].level == "write"  # replaced, not stacked
+    assert b.id == a.id  # #14: same id, so open connections bound to it keep working
     with pytest.raises(ValueError):
         g.activate("ha", "admin", 60, "", "t")
 

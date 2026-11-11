@@ -547,9 +547,10 @@ class Gateway:
 
     def _grant_match(self, host: str, port: int):
         """Active grant for host:port - unless the policy already allows the name: grants only ADD
-        access, they never narrow what the rules allow."""
+        access, they never narrow what the rules allow. A LAN target is always used: the rules alone
+        can never reach it (hard deny), e.g. with the `open` preset active."""
         m = self.grants.match(host, port)
-        if m and not is_ip(host) and self.policy.evaluate_name(host, port).action == "allow":
+        if m and not m[2].lan and not is_ip(host) and self.policy.evaluate_name(host, port).action == "allow":
             return None
         return m
 
@@ -634,9 +635,10 @@ class Gateway:
         """Enforce an active grant on an HTTP request. Returns True if the request was handled."""
         b = self.conn_grant.get(flow.server_conn.id)
         if b is None and flow.request.scheme == "http" and not self.orig_host.get(flow.server_conn.id):
-            # plain-HTTP proxy request: this hook runs before the server connection exists
+            # plain-HTTP proxy request: this hook runs before the server connection exists. Any scheme:
+            # plain HTTP to an https target must be refused here, not slip through to the normal path.
             m = self._grant_match(flow.request.host.lower().rstrip("."), flow.request.port)
-            if m and m[2].scheme == "http":
+            if m:
                 b = (m[0].id, flow.request.host.lower().rstrip("."), m[2])
         if b is None:
             return False
@@ -674,8 +676,9 @@ class Gateway:
         ):
             return refuse(f"grant {g.name} is read-only")
         rules = [i for i in g.inject if i["host"] == host and t.scheme == "https"]
-        if rules:
-            for name in {*self.strip_headers, *(i["header"] for i in rules)}:
+        if rules or host in self.inject_hosts:  # never forward the agent's own credentials to these hosts
+            own = [i.get("header", "Authorization") for i in self.inject if i["host"].lower().rstrip(".") == host]
+            for name in {*self.strip_headers, *own, *(i["header"] for i in rules)}:
                 req.headers.pop(name, None)
             for i in rules:
                 value = render(i["value"], self.secrets)
