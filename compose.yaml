@@ -149,10 +149,16 @@ networks:
   agent-net:
     internal: true                        # no default route: the core isolation property
     enable_ipv6: false
+    driver_opts:
+      # No address for the host on this network. Otherwise the host's bridge IP (172.31.10.1) is reachable
+      # from the agent, and with it every host service listening on 0.0.0.0, bypassing the gateway.
+      com.docker.network.bridge.inhibit_ipv4: "true"
     ipam: {config: [{subnet: 172.31.10.0/24}]}
   control-net:
     internal: true
     enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.inhibit_ipv4: "true"
     ipam: {config: [{subnet: 172.31.11.0/24}]}
   egress:
     enable_ipv6: false
