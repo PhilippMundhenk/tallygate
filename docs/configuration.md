@@ -37,6 +37,7 @@ All variables are optional. Secrets are created on first start when they are not
 | `CLAUDE_VERSION` | pinned in `agent/Dockerfile` | Only when building from source: Claude Code npm version baked into the agent image (no auto-updater). |
 | `AGENT_EXTRA_PACKAGES` | – | Only when building from source: extra Debian packages for the agent image, e.g. `build-essential golang-go`. With published images, use a [custom agent image](operations.md#custom-agent-image). |
 | `AGENT_MEM_LIMIT` | `6g` | Memory limit of the agent container. |
+| `AGENT_CPUS` | `0` | CPU limit of the agent container (e.g. `2`); `0` means no limit. See [resource limits](operations.md#resource-limits). |
 | `TELEGRAM_BOT_TOKEN` | – | Bot token from @BotFather. Enables Telegram approvals together with the chat ID. |
 | `TELEGRAM_CHAT_ID` | – | Chat (user or group) that receives approval requests. |
 | `TELEGRAM_ALLOWED_USER_IDS` | – | **Required** for Telegram: comma-separated user IDs allowed to decide. Without it Telegram approvals stay disabled. |

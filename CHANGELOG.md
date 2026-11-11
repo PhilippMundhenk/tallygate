@@ -17,6 +17,8 @@ All notable changes to this project are documented here. The format follows
 - `compose.build.yaml` to build the images from a checkout (`make up`).
 - A weekly workflow opens a PR when a new Claude Code version is published; `agent/Dockerfile` is the
   single place that pins the version (#17).
+- `AGENT_CPUS` to limit the agent's CPU (default: no limit), and a resource-limits section in the
+  operations guide on keeping the workspace from filling the host disk (#25).
 - Health check for the agent; services start in order of health (`depends_on: condition: service_healthy`).
 
 ### Changed
@@ -27,8 +29,18 @@ All notable changes to this project are documented here. The format follows
 - `TRUST_FORWARDED_FOR` defaults to `0`; docs explain that the `mgmt` bridge address is shared by every
   process on the host.
 
+### Fixed
+- The managed setting `skipDangerousModePermissionPrompt` was nested under `permissions`, where Claude Code
+  ignores it; it is now a top-level key, so the bypass-mode confirmation no longer appears (#26).
+
 ### Removed
 - `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
+
+### Security
+- The agent could reach services on the Docker host that listen on all interfaces through the host's
+  address on `agent-net` (`172.31.10.1`), bypassing the gateway. `agent-net` and `control-net` no longer
+  give the host an address (`com.docker.network.bridge.inhibit_ipv4`), and `bypass.sh` checks it with a
+  listener on the host (#7).
 
 ### Upgrading from 0.3.0
 Keep your existing state: in `.env`, replace `TALLYGATE_DIR=/your/dir` with
@@ -36,6 +48,8 @@ Keep your existing state: in `.env`, replace `TALLYGATE_DIR=/your/dir` with
 secrets in `.env` keep working. If you changed `config/gateway.yaml`, mount it as described in
 [docs/operations.md](docs/operations.md#with-docker-compose-recommended). Then `make up`, or switch to the
 published images with `docker compose pull && docker compose up -d`.
+Recreate the networks so the new network option takes effect: `docker compose down && docker compose up -d`
+(compose warns that the network configuration changed).
 
 ## [0.3.0] - 2026-11-11
 
