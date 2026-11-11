@@ -47,7 +47,60 @@ All variables are optional. Secrets are created on first start when they are not
 | `MATRIX_ROOM_ID` | – | `!id:server` of an **unencrypted** room the bot has joined. |
 | `MATRIX_ALLOWED_USERS` | – | **Required** for Matrix: comma-separated MXIDs allowed to decide (must not include the bot). |
 
+### Examples
+
+Behind a reverse proxy on the same host, with Telegram approvals:
+
+```sh
+# .env
+PUBLIC_URL=https://tallygate.example.org
+TRUST_FORWARDED_FOR=1
+TRUSTED_PROXIES=172.31.12.1/32     # the mgmt bridge: see operations.md#reverse-proxy for what this trusts
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF…
+TELEGRAM_CHAT_ID=123456789
+TELEGRAM_ALLOWED_USER_IDS=123456789
+```
+
+State in host directories, a smaller agent, and a pinned version:
+
+```sh
+# .env (create the directories with ./setup.sh /srv/tallygate)
+TALLYGATE_VERSION=0.4
+GATEWAY_DATA=/srv/tallygate/gateway
+AGENT_HOME=/srv/tallygate/agent-home
+WORKSPACE=/srv/tallygate/workspace
+AGENT_MEM_LIMIT=4g
+AGENT_CPUS=2
+RC_NAME=homelab-agent
+```
+
+Matrix instead of Telegram:
+
+```sh
+# .env
+MATRIX_HOMESERVER=https://matrix.example.org
+MATRIX_ACCESS_TOKEN=syt_…            # of a dedicated bot account
+MATRIX_ROOM_ID=!abcdef:example.org   # unencrypted room the bot has joined
+MATRIX_ALLOWED_USERS=@you:example.org
+```
+
 ## `config/gateway.yaml`
+
+Every key with an example. The file in the repository lists them all, commented where the default applies.
+
+| Key | Default | Example | Meaning |
+|---|---|---|---|
+| `initial_preset` | `baseline` | `lockdown` | Preset that creates `policy.yaml` on the very first start. |
+| `log_keep_days` | `30` | `7` | Event log retention. |
+| `log_max_events` | `500000` | `100000` | Hard cap on stored events. |
+| `max_pending` | `10` | `5` | Open approvals at once; more unknown destinations are denied immediately. |
+| `hard_deny_floor` | built-in list | `[203.0.113.7/32]` | **Added** to the built-in hard deny (your VPS's public IP). |
+| `readonly` | `[registry.npmjs.org]` | `[registry.npmjs.org, pypi.org]` | Hosts where writes (PUT/PATCH/DELETE) are refused. |
+| `inject` | GitHub entries | see below | Credential injection per host. |
+| `inject_strip_headers` | `[Authorization, Cookie]` | `[Authorization, Cookie, X-Api-Key]` | Agent headers always removed on inject hosts. |
+| `services` | `[]` | `[{name: pg, listen: 15432, target: db.example.org:5432}]` | TCP service ports. |
+| `grants`, `grants_*`, `grant_*` | – | see [Grants](#grants) and [grants.md](grants.md) | Grants. |
+
 
 ```yaml
 initial_preset: baseline   # preset used to create policy.yaml on first start
@@ -101,6 +154,9 @@ Target fields: `host` (name, `*.domain` or IP), `port`, `scheme` (`https` defaul
 (default `true`).
 
 ## `policy.yaml`
+
+The live policy, edited in the UI. Worked examples for hosts, ports, CIDRs and ordering:
+[rules.md](rules.md).
 
 ```yaml
 default: ask               # allow | deny | ask

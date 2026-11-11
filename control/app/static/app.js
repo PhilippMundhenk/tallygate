@@ -216,15 +216,38 @@ $("#saveRaw").onclick = guard(() => {
   return putPolicy(p);
 });
 $("#nrAdd").onclick = guard(async () => {
+  checkMatch($("#nrKind").value, $("#nrMatch").value.trim());
   const rule = { action: $("#nrAction").value, [$("#nrKind").value]: $("#nrMatch").value.trim(), port: parsePort($("#nrPort").value) };
   if ($("#nrNote").value) rule.note = $("#nrNote").value;
   if (+$("#nrTtl").value > 0) rule.expires = Date.now() / 1000 + +$("#nrTtl").value;
   await gw("POST", "/rules", rule); $("#nrMatch").value = ""; await loadPolicy();
 });
+function explainTest(r) {
+  // What decided, in the order the gateway checks (docs/rules.md#how-a-connection-is-decided).
+  const idx = r.rule_id && policy ? policy.rules.findIndex((x) => x.id === r.rule_id) : -1;
+  if (idx >= 0) {
+    const rule = policy.rules[idx];
+    return `Decided by rule #${idx + 1}: ${rule.action} ${rule.host || rule.cidr} port ${portText(rule.port)}` +
+      (rule.source && rule.source !== "user" ? ` [${rule.source}]` : "") + " (the first matching rule from the top wins).";
+  }
+  if (r.rule_id === "hard_deny" || /hard-deny/.test(r.reason || ""))
+    return "Decided by the hard deny: local network, Docker host or metadata addresses are never reachable. Use a grant for one device.";
+  if (/invalid hostname/.test(r.reason || "")) return "Not a valid host name.";
+  if (/^default/.test(r.reason || "")) return `No rule matched, so the mode decided (${policy ? policy.default : "default"}).`;
+  return "";
+}
 $("#testBtn").onclick = guard(async () => {
   const r = await gw("POST", "/test", { host: $("#testHost").value.trim(), port: +$("#testPort").value || 443 });
-  $("#testOut").textContent = `${r.action.toUpperCase()} — ${r.reason}\nIPs: ${(r.ips || []).join(", ")}`;
+  const ips = (r.ips || []).length ? r.ips.join(", ") : "not resolved (decided on the name)";
+  $("#testOut").textContent = `${r.action.toUpperCase()} — ${r.reason}\n${explainTest(r)}\nIPs: ${ips}`;
 });
+function checkMatch(kind, v) {
+  if (!v) throw new Error(kind === "host" ? "Host: e.g. pypi.org, *.github.com or *" : "CIDR: e.g. 203.0.113.0/24");
+  if (kind === "host" && !/^(\*|(\*\.|\?\*\.)?[A-Za-z0-9*?]([A-Za-z0-9*?-]*[A-Za-z0-9*?])?(\.[A-Za-z0-9*?]([A-Za-z0-9*?-]*[A-Za-z0-9*?])?)*\.?)$/.test(v))
+    throw new Error(`Host "${v}" is not valid: use pypi.org, *.github.com or *`);
+  if (kind === "host" && /^\*[^.]/.test(v)) throw new Error(`"${v}" would also match look-alikes (e.g. evil${v.slice(1)}); write *.${v.slice(1).replace(/^\./, "")}`);
+  if (kind === "cidr" && !/^[0-9a-fA-F:.]+(\/\d{1,3})?$/.test(v)) throw new Error(`CIDR "${v}" is not valid: use 203.0.113.0/24 or 203.0.113.10/32`);
+}
 
 /* ---------------- quick actions and templates ---------------- */
 let presetInfo = null;
