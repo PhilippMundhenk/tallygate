@@ -43,6 +43,7 @@ for c in "$AGENT" "${PROJECT}-egress-gw-1" "${PROJECT}-control-1"; do
     grep -q 'net.ipv6.conf.all.disable_ipv6:1' <<<"$(docker inspect -f '{{.HostConfig.Sysctls}}' "$c")"
 done
 check "agent has no docker.sock" bash -c "! docker inspect -f '{{.HostConfig.Binds}}' '$AGENT' | grep -q docker.sock"
+check "managed settings: bypass-mode prompt skipped (top-level key)" docker exec "$AGENT" python3 -c   "import json,sys; sys.exit(json.load(open('/etc/claude-code/managed-settings.json')).get('skipDangerousModePermissionPrompt') is not True)"
 
 echo "== egress from agent-net (independent probe container)"
 expect "direct internet by IP is blocked"     000          https://1.1.1.1/

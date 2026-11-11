@@ -25,6 +25,10 @@ All notable changes to this project are documented here. The format follows
 - `TRUST_FORWARDED_FOR` defaults to `0`; docs explain that the `mgmt` bridge address is shared by every
   process on the host.
 
+### Fixed
+- The managed setting `skipDangerousModePermissionPrompt` was nested under `permissions`, where Claude Code
+  ignores it; it is now a top-level key, so the bypass-mode confirmation no longer appears (#26).
+
 ### Removed
 - `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
 
