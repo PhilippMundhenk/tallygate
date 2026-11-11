@@ -3,7 +3,14 @@
 set -uo pipefail
 
 log() { echo "[agent] $*"; }
-: "${TTYD_CREDENTIAL:?TTYD_CREDENTIAL (user:pass) must be set}"
+# Console credential (user:pass) shared with the control plane: from the environment, or created by
+# control on its first start in a volume mounted read-only here.
+if [[ -z "${TTYD_CREDENTIAL:-}" ]]; then
+  CRED_FILE=${TTYD_CREDENTIAL_FILE:-/run/tallygate/ttyd/credential}
+  for _ in $(seq 1 60); do [[ -s $CRED_FILE ]] && break; sleep 1; done
+  [[ -s $CRED_FILE ]] || { log "ERROR: TTYD_CREDENTIAL not set and $CRED_FILE missing (is control running?)"; exit 1; }
+  TTYD_CREDENTIAL=$(<"$CRED_FILE")
+fi
 PERMISSION_MODE=${AGENT_PERMISSION_MODE:-bypassPermissions}
 RC_NAME=${RC_NAME:-tallygate}
 

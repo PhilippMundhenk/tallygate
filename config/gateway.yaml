@@ -1,4 +1,5 @@
-# egress-gw static configuration (mounted read-only at /data/config.yaml or $GW_CONFIG).
+# egress-gw static configuration. Built into the gateway image as /etc/egressgw/config.yaml ($GW_CONFIG);
+# to change it, save a copy next to compose.yaml and mount it over that path (see docs/configuration.md).
 initial_preset: baseline   # used only when /data/policy.yaml does not exist yet
 log_keep_days: 30
 log_max_events: 500000     # hard cap on stored events (disk-fill protection)
