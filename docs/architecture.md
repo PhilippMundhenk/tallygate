@@ -154,7 +154,7 @@ sequenceDiagram
     A->>G: CONNECT api.github.com:443
     G->>G: policy allow · remember orig_host = api.github.com · pin IP · set upstream SNI
     A->>G: ClientHello SNI = api.github.com
-    G->>G: orig_host is an injection host AND SNI == orig_host → intercept
+    G->>G: orig_host is an injection host → intercept (whatever the SNI says)
     G-->>A: TLS with certificate from the tallygate CA (trusted by the agent)
     A->>G: GET /user · Authorization: token injected-by-egress-gateway
     G->>G: strip agent Authorization/Cookie · Host == orig_host → set "Bearer <real token>"
@@ -162,9 +162,11 @@ sequenceDiagram
     S-->>A: response
 ```
 
-The double check (CONNECT target **and** SNI **and** Host header must all match the configured host) means
-an agent cannot obtain the token by connecting to another server while claiming to be GitHub
-([ADR-0005](adr/0005-credential-injection-by-tls-interception.md)). This is covered by an e2e test.
+The double check (CONNECT target **and** Host header must both match the configured host) means an agent
+cannot obtain the token by connecting to another server while claiming to be GitHub
+([ADR-0005](adr/0005-credential-injection-by-tls-interception.md)). TLS to injection and read-only hosts is
+always intercepted: a missing, trailing-dot or different SNI must not turn it into an untouched passthrough
+that skips credential stripping and the read-only check. Both directions are covered by e2e tests.
 
 ### DNS
 

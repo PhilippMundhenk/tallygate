@@ -11,6 +11,9 @@ All notable changes to this project are documented here. The format follows
   connection instead of letting it through. An invalid `hard_deny_floor` entry stops the gateway at
   startup, and until a failed startup has exited every connection is refused (it used to be proxied
   without the policy for a moment) ([#8](https://github.com/PhilippMundhenk/tallygate/issues/8)).
+- TLS to injection and read-only hosts is always intercepted. A missing, trailing-dot or different SNI
+  used to pass it through untouched, skipping credential stripping and the read-only check
+  ([#9](https://github.com/PhilippMundhenk/tallygate/issues/9)).
 ### Added
 - **Docker Compose with prebuilt images is the recommended installation.** Multi-arch images
   (`linux/amd64`, `linux/arm64`) `ghcr.io/philippmundhenk/tallygate-{gateway,control,agent}` are published
