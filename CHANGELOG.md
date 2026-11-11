@@ -22,6 +22,11 @@ All notable changes to this project are documented here. The format follows
 - Health check for the agent; services start in order of health (`depends_on: condition: service_healthy`).
 
 ### Changed
+- CI: actions pinned to commit SHAs, base images pinned by digest, Dependabot groups minor/patch
+  updates, gitleaks secret scan on every PR and weekly, Trivy scan of the published images, image
+  build tested on pull requests, ttyd and tool versions pinned in one place (#18).
+- Gateway and control images on Python 3.15 (was 3.13); actions/checkout and actions/setup-python v7;
+  ruff 0.17.4 (also in pre-commit), pytest 9.2.0.
 - State lives in Docker volumes by default. `TALLYGATE_DIR` is replaced by `GATEWAY_DATA`, `AGENT_HOME` and
   `WORKSPACE` (each a volume name or a host path); `./setup.sh /path` sets them up for host directories.
 - The default `config/gateway.yaml` is built into the gateway image; mount your own file to change it.

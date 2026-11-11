@@ -1,6 +1,6 @@
 # egress-gw: policy-enforcing egress gateway (HTTP/HTTPS proxy, SOCKS5, TCP service ports, NXDOMAIN DNS)
 # Build context: the repository root (the default config lives in config/).
-FROM docker.io/library/python:3.13-slim-trixie
+FROM docker.io/library/python:3.15-slim-trixie@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 DATA_DIR=/data CA_EXPORT_DIR=/ca
 COPY gateway/requirements.txt /app/requirements.txt
