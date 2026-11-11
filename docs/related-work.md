@@ -1,8 +1,8 @@
 # Related work and comparison
 
-sluicegate draws on ideas from several projects. This page compares protections, to help decide what fits.
+tallygate draws on ideas from several projects. This page compares protections, to help decide what fits.
 
-| | sluicegate | Anthropic dev container | Docker Sandboxes (sbx) | Moat | gw0/docker-claude-code |
+| | tallygate | Anthropic dev container | Docker Sandboxes (sbx) | Moat | gw0/docker-claude-code |
 |---|---|---|---|---|---|
 | Isolation boundary | Container (+ optional gVisor) | Container | **microVM** | Container (Docker, Apple containers, gVisor) | Container (+ gVisor, seccomp profile) |
 | Egress enforcement | Gateway outside the agent; agent on an internal network | iptables inside the container | Host-side proxy | TLS-intercepting proxy | None by default (bwrap sandbox for Bash) |
@@ -25,5 +25,5 @@ Links:
 
 **When to choose what:**
 - Want the strongest isolation on a workstation and can use Docker Desktop/sbx → Docker Sandboxes.
-- Want an always-on server with Remote Control, phone approvals and a LAN you care about → sluicegate.
+- Want an always-on server with Remote Control, phone approvals and a LAN you care about → tallygate.
 - Want VS Code-integrated, per-project containers → Anthropic's dev container.

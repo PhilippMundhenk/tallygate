@@ -1,9 +1,9 @@
 [project]
-name = "sluicegate"
+name = "tallygate"
 version = "0.1.0"
 description = "Run Claude Code behind a policy-enforcing egress gateway with human-in-the-loop approvals"
 readme = "README.md"
-license = "Apache-2.0"
+license = "MIT"
 requires-python = ">=3.12"
 authors = [{ name = "Philipp Mundhenk" }]
 

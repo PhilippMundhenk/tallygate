@@ -1,4 +1,4 @@
-# sluicegate documentation
+# tallygate documentation
 
 | Document | For | Content |
 |---|---|---|

@@ -25,5 +25,5 @@ All notable changes to this project are documented here. The format follows
   isolation test (`tests/integration/bypass.sh`), CI workflow.
 - Documentation: architecture, ADRs, threat model, configuration, API, operations, user guide.
 
-[Unreleased]: https://github.com/PhilippMundhenk/sluicegate/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/PhilippMundhenk/sluicegate/releases/tag/v0.1.0
+[Unreleased]: https://github.com/PhilippMundhenk/tallygate/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/PhilippMundhenk/tallygate/releases/tag/v0.1.0

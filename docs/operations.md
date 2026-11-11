@@ -24,7 +24,7 @@
 ## Installation
 
 ```bash
-git clone https://github.com/PhilippMundhenk/sluicegate.git && cd sluicegate
+git clone https://github.com/PhilippMundhenk/tallygate.git && cd tallygate
 sudo ./setup.sh           # .env with random secrets, UI password, state dirs with correct owners
 $EDITOR .env              # RC_NAME, CONTROL_PUBLISH, PUBLIC_URL, TRUST_FORWARDED_FOR, notifications
 make up                   # docker compose up -d --build
@@ -49,7 +49,7 @@ Publish the UI only on localhost (`CONTROL_PUBLISH=127.0.0.1:8080`) and terminat
 Caddy example with forward-auth:
 
 ```caddy
-sluicegate.example.org {
+tallygate.example.org {
     forward_auth authelia:9091 {
         uri /api/authz/forward-auth
         copy_headers Remote-User
@@ -94,14 +94,14 @@ Then clone repositories in the *bash* console: `gh repo clone owner/repo /worksp
 | Component | Procedure |
 |---|---|
 | Claude Code | Set `CLAUDE_VERSION` in `.env` → `docker compose up -d --build agent`. There is no auto-updater in the agent by design. |
-| sluicegate | `git pull` → read `CHANGELOG.md` → `make up` → `make bypass-test`. |
+| tallygate | `git pull` → read `CHANGELOG.md` → `make up` → `make bypass-test`. |
 | Base images / dependencies | Rebuild regularly: `docker compose build --pull && make up`. Dependabot proposes pin updates. |
 
 Running sessions are reconnected by Remote Control after a restart if you're back within about 4 hours.
 
 ## Backup and restore
 
-Back up `${SLUICEGATE_DIR}` (default `./state`) plus `.env` and `config/`:
+Back up `${TALLYGATE_DIR}` (default `./state`) plus `.env` and `config/`:
 
 | Path | Contains | Sensitivity |
 |---|---|---|
@@ -118,7 +118,7 @@ the CA on start.
 
 - `docker compose ps` shows health checks for `egress-gw` and `control`.
 - The UI header dot shows the live event stream status.
-- Long-running: alert on `docker inspect -f '{{.State.Health.Status}}' sluicegate-egress-gw-1`.
+- Long-running: alert on `docker inspect -f '{{.State.Health.Status}}' tallygate-egress-gw-1`.
 - The event log is SQLite (`state/gateway/events.db`). Query ad hoc:
   `sqlite3 state/gateway/events.db "select datetime(ts,'unixepoch'),host,port,action,reason from events where action='deny' order by id desc limit 20"`.
 
@@ -127,7 +127,7 @@ the CA on start.
 | Symptom | Cause / fix |
 |---|---|
 | Remote Control session not visible in the app | Open the *rc* console: is it waiting for `Enable Remote Control? (y/n)`? Not logged in (`claude auth login`)? Same claude.ai account in the app? Look under **Code**, tab *Active*. |
-| `Remote Control requires feature-flag evaluation …` | A settings file or env sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_GROWTHBOOK` or (older versions) `DISABLE_TELEMETRY`. sluicegate's agent image sets none of them; check `~/.claude/settings.json` in `agent-home`. |
+| `Remote Control requires feature-flag evaluation …` | A settings file or env sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_GROWTHBOOK` or (older versions) `DISABLE_TELEMETRY`. tallygate's agent image sets none of them; check `~/.claude/settings.json` in `agent-home`. |
 | Tool fails with "could not resolve host" | It resolves locally instead of via the proxy. Use `socks5h://`, proxy-side resolution, or a service port. |
 | Tool hangs ~60 s then fails | The destination is in `ask` and nobody answered. Approve it in the UI/phone, then retry. |
 | `502 egress policy: blocked (hard-deny …)` | Destination resolves to a private range. For LAN services use a service port with `allow_private: true`. |
@@ -150,7 +150,7 @@ the CA on start.
 
 ```bash
 docker compose down -v --rmi local
-sudo rm -rf "${SLUICEGATE_DIR:-./state}"   # deletes logins, secrets, workspace!
+sudo rm -rf "${TALLYGATE_DIR:-./state}"   # deletes logins, secrets, workspace!
 ```
 
 Then revoke the GitHub PAT and sign the session out in claude.ai (Settings → sessions).

@@ -15,7 +15,7 @@ from .test_gateway import in_thread
 
 @pytest.fixture
 def ui(control):
-    api = Api(control["base"], csrf_header="X-Sluicegate")
+    api = Api(control["base"], csrf_header="X-Tallygate")
     status, _, headers = api.call("POST", "/login", form={"password": CONTROL_PASSWORD})
     assert status == 302 and headers["Location"].endswith("/")
     return api
@@ -99,13 +99,13 @@ def test_web_console_roundtrip(ui, control):
                 f"{origin.replace('http', 'ws')}/term/bash/ws", protocols=("tty",), headers={"Origin": origin}
             ) as ws:
                 await ws.send_str(json.dumps({"AuthToken": tok, "columns": 80, "rows": 24}))
-                await ws.send_bytes(b"0echo sluice-$((6*7))\r")
+                await ws.send_bytes(b"0echo tally-$((6*7))\r")
                 out = b""
-                while b"sluice-42" not in out:
+                while b"tally-42" not in out:
                     msg = await asyncio.wait_for(ws.receive(), 5)
                     data = msg.data if isinstance(msg.data, bytes) else str(msg.data).encode()
                     if data[:1] == b"0":
                         out += data[1:]
                 return out
 
-    assert b"sluice-42" in asyncio.run(run())
+    assert b"tally-42" in asyncio.run(run())

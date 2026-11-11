@@ -1,4 +1,4 @@
-# sluicegate control plane: web UI, approvals (web/Matrix/Telegram), web console proxy, setup wizard
+# tallygate control plane: web UI, approvals (web/Matrix/Telegram), web console proxy, setup wizard
 FROM docker.io/library/python:3.13-slim-trixie
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY requirements.txt /app/requirements.txt

@@ -1,4 +1,4 @@
-# sluicegate developer & operator shortcuts. `make help` lists targets.
+# tallygate developer & operator shortcuts. `make help` lists targets.
 SHELL := /bin/bash
 COMPOSE ?= docker compose
 PY ?= python3

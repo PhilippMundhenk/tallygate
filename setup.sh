@@ -16,7 +16,7 @@ if [[ -z "$(get_var CONTROL_PASSWORD_HASH)" ]]; then
 fi
 chmod 600 .env
 
-DIR=$(get_var SLUICEGATE_DIR); DIR=${DIR:-./state}
+DIR=$(get_var TALLYGATE_DIR); DIR=${DIR:-./state}
 mkdir -p "$DIR/gateway" "$DIR/agent-home" "$DIR/workspace"
 chown -R 10001:10001 "$DIR/gateway"
 chown -R 1000:1000 "$DIR/agent-home" "$DIR/workspace"

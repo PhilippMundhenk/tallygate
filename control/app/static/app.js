@@ -7,7 +7,7 @@ const fmtDate = (ts) => new Date(ts * 1000).toLocaleString();
 
 async function api(method, path, body) {
   const r = await fetch(path, {
-    method, headers: { "Content-Type": "application/json", "X-Sluicegate": "1" },
+    method, headers: { "Content-Type": "application/json", "X-Tallygate": "1" },
     body: body === undefined ? undefined : JSON.stringify(body), credentials: "same-origin",
   });
   if (r.status === 401) { location.href = "/login"; throw new Error("login required"); }
@@ -46,7 +46,7 @@ function renderPending() {
   const list = $("#pendingList"); list.innerHTML = "";
   $("#pendingEmpty").classList.toggle("hidden", pending.length > 0);
   const badge = $("#pendingCount"); badge.textContent = pending.length; badge.classList.toggle("hidden", !pending.length);
-  document.title = pending.length ? `(${pending.length}) sluicegate` : "sluicegate";
+  document.title = pending.length ? `(${pending.length}) tallygate` : "tallygate";
   for (const p of pending) {
     const el = document.createElement("div"); el.className = "pending";
     el.innerHTML = `<div class="dest">${esc(p.host)}:${esc(p.port)}</div>
@@ -204,7 +204,7 @@ function connectStream() {
     const ev = JSON.parse(m.data);
     if (ev.type === "event") { const body = $("#logBody"); body.insertBefore(logRow(ev.event), body.firstChild); while (body.children.length > 2000) body.lastChild.remove(); }
     if (ev.type === "ask" || ev.type === "resolved") loadPending().catch(() => {});
-    if (ev.type === "ask" && document.hidden && Notification?.permission === "granted") new Notification("sluicegate: approval needed", { body: `${ev.pending.host}:${ev.pending.port}` });
+    if (ev.type === "ask" && document.hidden && Notification?.permission === "granted") new Notification("tallygate: approval needed", { body: `${ev.pending.host}:${ev.pending.port}` });
     if (ev.type === "policy" && !$("#tab-rules").classList.contains("hidden")) loadPolicy().catch(() => {});
   };
 }

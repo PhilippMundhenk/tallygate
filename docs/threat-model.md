@@ -2,7 +2,7 @@
 
 ## Scope and assumptions
 
-sluicegate protects the operator's network, accounts and secrets from an AI coding agent that runs with
+tallygate protects the operator's network, accounts and secrets from an AI coding agent that runs with
 broad autonomy (`bypassPermissions`). The agent is treated as **potentially hostile**: a prompt injection in
 a repository, issue, web page or dependency can take full control of what it executes.
 
@@ -32,7 +32,7 @@ flowchart LR
         I[Internet destinations]
         TP[Prompt-injection sources:<br/>repos, issues, web, packages]
     end
-    subgraph T["Trusted (sluicegate)"]
+    subgraph T["Trusted (tallygate)"]
         G[egress-gw]
         C[control]
     end

@@ -49,7 +49,7 @@ jobs:
       - name: Prepare CI environment
         run: |
           cp .env.example .env
-          sed -i "s|^SLUICEGATE_DIR=.*|SLUICEGATE_DIR=$PWD/state|" .env
+          sed -i "s|^TALLYGATE_DIR=.*|TALLYGATE_DIR=$PWD/state|" .env
           sed -i "s|^GW_API_TOKEN=.*|GW_API_TOKEN=$(openssl rand -hex 24)|" .env
           sed -i "s|^SESSION_SECRET=.*|SESSION_SECRET=$(openssl rand -hex 24)|" .env
           sed -i "s|^TTYD_CREDENTIAL=.*|TTYD_CREDENTIAL=agent:$(openssl rand -hex 12)|" .env
@@ -63,7 +63,7 @@ jobs:
       - name: Wait for gateway health
         run: |
           for i in $(seq 1 60); do
-            [ "$(docker inspect -f '{{.State.Health.Status}}' sluicegate-egress-gw-1)" = healthy ] && exit 0; sleep 2
+            [ "$(docker inspect -f '{{.State.Health.Status}}' tallygate-egress-gw-1)" = healthy ] && exit 0; sleep 2
           done
           docker compose logs; exit 1
       - run: ./tests/integration/bypass.sh

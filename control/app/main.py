@@ -1,4 +1,4 @@
-"""sluicegate control plane: web UI, approvals, notifications, web console, setup wizard.
+"""tallygate control plane: web UI, approvals, notifications, web console, setup wizard.
 
 Talks to the gateway API (control network) and to ttyd/status on the agent (agent network).
 Never has docker.sock; never holds anything the agent could use to widen its own policy.
@@ -39,7 +39,7 @@ TERMINALS = dict(
 SESSION_SECRET = (os.environ.get("SESSION_SECRET") or secrets.token_hex(32)).encode()
 SESSION_TTL = int(os.environ.get("SESSION_TTL", str(12 * 3600)))
 PROXY_AUTH_HEADER = os.environ.get("TRUST_PROXY_AUTH_HEADER", "")  # e.g. Remote-User (only behind a trusted proxy!)
-COOKIE = "sluicegate_session"
+COOKIE = "tallygate_session"
 
 # Gateway API paths the UI may use: (method, regex)
 GW_ALLOW = [
@@ -112,7 +112,7 @@ async def security(request: web.Request, handler):
         request["user"] = user
         # CSRF: state-changing API calls must come from our JS (custom header + same origin)
         state_changing = request.method not in ("GET", "HEAD", "OPTIONS") and path.startswith("/api/")
-        if state_changing and (request.headers.get("X-Sluicegate") != "1" or not _same_origin(request)):
+        if state_changing and (request.headers.get("X-Tallygate") != "1" or not _same_origin(request)):
             return web.json_response({"error": "csrf check failed"}, status=403)
         resp = await handler(request)
     if isinstance(resp, web.StreamResponse) and not resp.prepared:

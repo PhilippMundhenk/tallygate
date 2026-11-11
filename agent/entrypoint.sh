@@ -1,11 +1,11 @@
 #!/bin/bash
-# sluicegate agent entrypoint: trust gateway CA, set placeholder credentials, start consoles + Remote Control.
+# tallygate agent entrypoint: trust gateway CA, set placeholder credentials, start consoles + Remote Control.
 set -uo pipefail
 
 log() { echo "[agent] $*"; }
 : "${TTYD_CREDENTIAL:?TTYD_CREDENTIAL (user:pass) must be set}"
 PERMISSION_MODE=${AGENT_PERMISSION_MODE:-bypassPermissions}
-RC_NAME=${RC_NAME:-sluicegate}
+RC_NAME=${RC_NAME:-tallygate}
 
 # ---------------------------------------------------------------- CA of the egress gateway
 CA=/ca/egress-gw-ca.pem
@@ -47,7 +47,7 @@ start_rc() {
 declare -A PIDS
 start_ttyd() {  # name port command...
   local name=$1 port=$2; shift 2
-  ttyd -p "$port" -W -c "$TTYD_CREDENTIAL" -b "/term/$name" -t titleFixed="sluicegate · $name" \
+  ttyd -p "$port" -W -c "$TTYD_CREDENTIAL" -b "/term/$name" -t titleFixed="tallygate · $name" \
        -t fontSize=14 -t disableLeaveAlert=true "$@" >"/tmp/ttyd-$name.log" 2>&1 &
   PIDS[$name]=$!
 }

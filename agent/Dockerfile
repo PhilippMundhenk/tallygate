@@ -1,4 +1,4 @@
-# sluicegate agent: minimal Claude Code workspace. No route to the internet - all egress via egress-gw.
+# tallygate agent: minimal Claude Code workspace. No route to the internet - all egress via egress-gw.
 FROM docker.io/library/debian:trixie-slim
 
 # Bump deliberately; there is no auto-updater inside the agent.

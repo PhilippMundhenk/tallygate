@@ -1,6 +1,6 @@
 # Architecture
 
-sluicegate runs an AI coding agent (Claude Code with Remote Control) in a container that has **no
+tallygate runs an AI coding agent (Claude Code with Remote Control) in a container that has **no
 route to anything** except one gateway. The gateway decides every outbound connection against a policy,
 can hold a connection while a human decides, and injects credentials the agent never sees. A separate
 control plane provides the UI, notifications and web consoles.
@@ -153,7 +153,7 @@ sequenceDiagram
     G->>G: policy allow · remember orig_host = api.github.com · pin IP · set upstream SNI
     A->>G: ClientHello SNI = api.github.com
     G->>G: orig_host is an injection host AND SNI == orig_host → intercept
-    G-->>A: TLS with certificate from the sluicegate CA (trusted by the agent)
+    G-->>A: TLS with certificate from the tallygate CA (trusted by the agent)
     A->>G: GET /user · Authorization: token injected-by-egress-gateway
     G->>G: Host == orig_host → replace Authorization with "Bearer <real token>"
     G->>S: TLS (verified against api.github.com) · real token
@@ -232,7 +232,7 @@ Concurrent connections to the same `host:port` share one pending request (one no
 
 | Container | PID 1 | Processes |
 |---|---|---|
-| egress-gw | `python run.py` → `exec mitmdump` | mitmproxy event loop with the sluicegate addon and the aiohttp API server on the same loop |
+| egress-gw | `python run.py` → `exec mitmdump` | mitmproxy event loop with the tallygate addon and the aiohttp API server on the same loop |
 | control | `python -m app.main` | aiohttp server, gateway SSE subscriber, Telegram long-poll, Matrix `/sync` loop |
 | agent | `tini` → `entrypoint.sh` | supervisor loop (5 s) restarting: tmux session `rc` (`claude remote-control` in a restart loop), ttyd × 3, `status.py` |
 

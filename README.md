@@ -1,18 +1,21 @@
-# sluicegate
+# tallygate
 
 **Run Claude Code unattended behind a policy-enforcing egress gateway, with you in the loop.**
 
-[![CI](https://github.com/PhilippMundhenk/sluicegate/actions/workflows/ci.yml/badge.svg)](https://github.com/PhilippMundhenk/sluicegate/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![CI](https://github.com/PhilippMundhenk/tallygate/actions/workflows/ci.yml/badge.svg)](https://github.com/PhilippMundhenk/tallygate/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Version](https://img.shields.io/badge/version-0.1.0-informational)
 
-sluicegate puts an AI coding agent (Claude Code with [Remote Control](https://code.claude.com/docs/en/remote-control))
+tallygate puts an AI coding agent (Claude Code with [Remote Control](https://code.claude.com/docs/en/remote-control))
 into a container that has **no route to anything** except a gateway. The gateway decides every outbound
 connection against your policy, **holds unknown connections until you approve them** (in the web UI, on
 Telegram or in Matrix), keeps your GitHub token out of the agent, and logs everything. A control plane gives
 you a web UI with live log, rule editor, browser consoles and a setup wizard.
 
-Like a sluice gate on a canal, nothing flows unless the gate is open, and you decide when it opens.
+**Why "tallygate"?** On a livestock farm, the tally gate is the narrow gate where animals pass one at a time
+to be counted and inspected before they are let through or sorted out. tallygate does the same with your
+agent's network traffic: every connection passes the gate singly, is checked against your rules, logged, and
+only then let through, turned back, or held for you to decide.
 
 ![Approvals](docs/images/approvals.png)
 
@@ -55,7 +58,7 @@ Details: [docs/architecture.md](docs/architecture.md) · Security: [docs/threat-
 Requirements: Linux with Docker Engine ≥ 25 and the Compose plugin, a claude.ai subscription.
 
 ```bash
-git clone https://github.com/PhilippMundhenk/sluicegate.git && cd sluicegate
+git clone https://github.com/PhilippMundhenk/tallygate.git && cd tallygate
 sudo ./setup.sh            # random secrets, UI password, state directories
 $EDITOR .env               # RC_NAME, CONTROL_PUBLISH, PUBLIC_URL, optional Telegram/Matrix
 make up                    # build and start
@@ -84,7 +87,7 @@ Full guide: [docs/operations.md](docs/operations.md)
 
 ## Limitations
 
-sluicegate is container isolation on a shared kernel, not a microVM. Allowed destinations can still be used
+tallygate is container isolation on a shared kernel, not a microVM. Allowed destinations can still be used
 to move data out, and the agent can *use* (not read) the injected token. See
 [residual risks](docs/threat-model.md#residual-risks).
 
@@ -95,5 +98,5 @@ as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
-[Apache License 2.0](LICENSE). Claude Code is installed from npm under Anthropic's terms and is not part of
+[MIT License](LICENSE). Claude Code is installed from npm under Anthropic's terms and is not part of
 this project.

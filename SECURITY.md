@@ -1,6 +1,6 @@
 # Security policy
 
-sluicegate is a security boundary: a bypass of the egress policy, a way for the agent to reach the
+tallygate is a security boundary: a bypass of the egress policy, a way for the agent to reach the
 management plane, or a leak of injected credentials is a vulnerability.
 
 ## Reporting
@@ -20,7 +20,7 @@ In scope:
 - Agent reaching the gateway API, the control UI, or other containers' management ports
 - Disclosure of injected secrets to the agent or to non-configured hosts
 - Authentication/CSRF/session flaws in the control UI; approval spoofing via Telegram/Matrix
-- Container escapes made possible by sluicegate's configuration
+- Container escapes made possible by tallygate's configuration
 
 Out of scope (documented limitations, see [docs/threat-model.md](docs/threat-model.md)):
 - Data exfiltration through destinations you have allowed

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Authoritative isolation test for a running sluicegate stack. Run on the Docker host:
+# Authoritative isolation test for a running tallygate stack. Run on the Docker host:
 #
 #   ./tests/integration/bypass.sh
 #
@@ -8,7 +8,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 2
 
-PROJECT=${COMPOSE_PROJECT_NAME:-sluicegate}
+PROJECT=${COMPOSE_PROJECT_NAME:-tallygate}
 NET=${PROJECT}_agent-net
 AGENT=${PROJECT}-agent-1
 PROBE_IMAGE=docker.io/curlimages/curl:8.17.0

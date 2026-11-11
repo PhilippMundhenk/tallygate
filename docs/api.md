@@ -65,6 +65,6 @@ Used by the bundled web UI; documented for scripting and review.
 | GET | `/api/agent/selftest` | session | Run the in-agent isolation self-test |
 | * | `/term/{name}/…` | session (+ Origin for WS) | Reverse proxy to the agent's ttyd console `name` |
 
-**CSRF rule:** non-GET requests under `/api/` must carry `X-Sluicegate: 1` and, if an `Origin` header is
+**CSRF rule:** non-GET requests under `/api/` must carry `X-Tallygate: 1` and, if an `Origin` header is
 present, it must match the host. Session cookies are `HttpOnly`, `SameSite=Strict` and `Secure` (unless
 `COOKIE_SECURE=0`).

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping! sluicegate is security-sensitive, so changes are reviewed with that lens.
+Thanks for helping! tallygate is security-sensitive, so changes are reviewed with that lens.
 
 ## Development setup
 
@@ -33,4 +33,4 @@ The full stack test (`make up && make bypass-test`) needs Docker; CI runs it on 
 1. Update `VERSION`, `pyproject.toml` and `CHANGELOG.md`.
 2. Tag `vX.Y.Z` and push; publish release notes from the changelog.
 
-By contributing you agree that your contributions are licensed under the Apache License 2.0.
+By contributing you agree that your contributions are licensed under the MIT License.

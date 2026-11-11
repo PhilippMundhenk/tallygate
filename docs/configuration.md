@@ -12,7 +12,7 @@ Configuration lives in three places:
 
 | Variable | Default | Description |
 |---|---|---|
-| `SLUICEGATE_DIR` | `./state` | Host directory for persistent state (`gateway/`, `agent-home/`, `workspace/`). |
+| `TALLYGATE_DIR` | `./state` | Host directory for persistent state (`gateway/`, `agent-home/`, `workspace/`). |
 | `CONTROL_PUBLISH` | `127.0.0.1:8080` | Host address:port the UI is published on. Put a TLS reverse proxy in front. |
 | `PUBLIC_URL` | – | External UI URL, included in notifications. |
 | `COOKIE_SECURE` | `1` | Session cookie only over HTTPS. Set `0` only for local plain-HTTP testing. |
@@ -22,7 +22,7 @@ Configuration lives in three places:
 | `TTYD_CREDENTIAL` | *(generated)* | `user:password` shared by control and the agent's ttyd consoles. |
 | `CONTROL_PASSWORD_HASH` | *(prompted)* | `scrypt:<salt>:<hash>`, create with `make password`. |
 | `TRUST_PROXY_AUTH_HEADER` | – | E.g. `Remote-User`: accept the user from this header set by an authenticating proxy (Authelia, oauth2-proxy). **Only** if the UI port is not reachable any other way. |
-| `RC_NAME` | `sluicegate` | Remote Control session name shown in the Claude app. |
+| `RC_NAME` | `tallygate` | Remote Control session name shown in the Claude app. |
 | `RC_ENABLE` | `1` | Start `claude remote-control` automatically in the `rc` tmux session. |
 | `RC_ARGS` | – | Extra arguments for `claude remote-control`, e.g. `--spawn worktree`. |
 | `AGENT_PERMISSION_MODE` | `bypassPermissions` | Claude Code permission mode for Remote Control and the `claude` console. Seeded into `~/.claude/settings.json` on first start. |

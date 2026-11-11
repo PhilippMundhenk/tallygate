@@ -13,7 +13,7 @@ labels: bug
 2.
 
 **Environment**
-- sluicegate version / commit:
+- tallygate version / commit:
 - Docker / Compose version:
 - Host OS:
 

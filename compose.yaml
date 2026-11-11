@@ -1,4 +1,4 @@
-# sluicegate: Claude Code agent behind a policy-enforcing egress gateway with human-in-the-loop.
+# tallygate: Claude Code agent behind a policy-enforcing egress gateway with human-in-the-loop.
 #
 #   internet ── egress ── [egress-gw] ── agent-net (internal, no route out) ── [agent]
 #                              │                                                │ ttyd/status
@@ -9,7 +9,7 @@
 # The agent has NO default route: its only reachable peers are egress-gw (proxy/SOCKS/DNS/service
 # ports) and nothing else (control only connects *to* the agent). Fail-closed by topology.
 
-name: sluicegate
+name: tallygate
 
 x-hardening: &hardening
   cap_drop: [ALL]
@@ -23,7 +23,7 @@ services:
   egress-gw:
     <<: *hardening
     build: ./gateway
-    image: sluicegate/egress-gw:local
+    image: tallygate/egress-gw:local
     read_only: true
     tmpfs: ["/tmp"]
     sysctls:
@@ -35,7 +35,7 @@ services:
       GW_API_TOKEN: ${GW_API_TOKEN:?set GW_API_TOKEN in .env}
       GW_CONFIG: /etc/egressgw/config.yaml
     volumes:
-      - ${SLUICEGATE_DIR:-./state}/gateway:/data
+      - ${TALLYGATE_DIR:-./state}/gateway:/data
       - ./config/gateway.yaml:/etc/egressgw/config.yaml:ro
       - ca:/ca
     networks:
@@ -48,7 +48,7 @@ services:
   control:
     <<: *hardening
     build: ./control
-    image: sluicegate/control:local
+    image: tallygate/control:local
     read_only: true
     tmpfs: ["/tmp"]
     environment:
@@ -88,7 +88,7 @@ services:
       args:
         CLAUDE_VERSION: ${CLAUDE_VERSION:-2.1.304}
         EXTRA_PACKAGES: ${AGENT_EXTRA_PACKAGES:-}
-    image: sluicegate/agent:local
+    image: tallygate/agent:local
     read_only: true
     tmpfs: ["/tmp:size=1g,uid=1000,gid=1000,mode=1777"]
     dns: [172.31.10.2]                    # gateway answers NXDOMAIN for everything: no DNS exfiltration
@@ -101,14 +101,14 @@ services:
       NO_PROXY: localhost,127.0.0.1,egress-gw,172.31.10.2
       no_proxy: localhost,127.0.0.1,egress-gw,172.31.10.2
       TTYD_CREDENTIAL: ${TTYD_CREDENTIAL}
-      RC_NAME: ${RC_NAME:-sluicegate}
+      RC_NAME: ${RC_NAME:-tallygate}
       RC_ENABLE: ${RC_ENABLE:-1}
       RC_ARGS: ${RC_ARGS:-}                   # extra args for `claude remote-control`, e.g. --spawn worktree
       AGENT_PERMISSION_MODE: ${AGENT_PERMISSION_MODE:-bypassPermissions}
       SELFTEST_BLOCKED_PROBES: 172.31.10.2:8081,172.31.11.2:8081,172.31.10.3:8080,172.31.12.3:8080
     volumes:
-      - ${SLUICEGATE_DIR:-./state}/agent-home:/home/agent
-      - ${SLUICEGATE_DIR:-./state}/workspace:/workspace
+      - ${TALLYGATE_DIR:-./state}/agent-home:/home/agent
+      - ${TALLYGATE_DIR:-./state}/workspace:/workspace
       - ca:/ca:ro
     networks:
       agent-net: {ipv4_address: 172.31.10.10}

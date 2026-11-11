@@ -86,7 +86,7 @@ decided. Taps from users not in the allowlist are answered with "Not authorised"
 
 ## Matrix approvals
 
-1. Create a dedicated bot user on your homeserver (e.g. `@sluicegate:example.org`) and get an access token
+1. Create a dedicated bot user on your homeserver (e.g. `@tallygate:example.org`) and get an access token
    (log in once with any client and copy the token, or use the login API).
 2. Create an **unencrypted** room, invite the bot and join with the bot user.
 3. In `.env`: `MATRIX_HOMESERVER`, `MATRIX_ACCESS_TOKEN`, `MATRIX_ROOM_ID` (`!…:example.org`),
