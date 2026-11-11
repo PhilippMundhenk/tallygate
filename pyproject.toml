@@ -1,0 +1,37 @@
+[project]
+name = "sluicegate"
+version = "0.1.0"
+description = "Run Claude Code behind a policy-enforcing egress gateway with human-in-the-loop approvals"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+authors = [{ name = "Philipp Mundhenk" }]
+
+# Not an installable package: three container components (gateway/, control/, agent/).
+# This file holds shared tooling configuration.
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["state"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "BLE", "SIM", "RUF"]
+ignore = [
+  "S101",   # assert in tests
+  "S104",   # binding to 0.0.0.0 is intentional (container-internal, network-scoped)
+  "S603", "S607",  # subprocess with fixed argv
+  "RUF001", "RUF003",  # unicode in strings/comments (emoji in notifications)
+  "E501",   # line length is handled by `ruff format`
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S108", "S310", "BLE001", "B017", "SIM115"]
+"agent/status.py" = ["S310"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["egressgw", "app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit", "tests/e2e"]
+addopts = "-ra"

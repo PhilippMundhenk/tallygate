@@ -1,0 +1,19 @@
+# Baseline policy: deny-by-default with human-in-the-loop for anything unknown.
+default: ask          # allow | deny | ask  (ask = human-in-the-loop, deny on timeout)
+ask_timeout: 60       # seconds a connection is held while waiting for approval
+# hard_deny: omitted -> built-in list (RFC1918, loopback, link-local, CGNAT, multicast, ULA, ...)
+rules:
+  # --- Claude / Anthropic (API, Remote Control, login, feature flags) ---
+  - {id: anthropic, action: allow, host: "*.anthropic.com", port: 443, note: Anthropic API}
+  - {id: claude-ai, action: allow, host: "*.claude.ai", port: 443, note: claude.ai login + Remote Control}
+  - {id: claude-com, action: allow, host: "*.claude.com", port: 443, note: Claude platform}
+  # --- GitHub (token is injected by the gateway for github.com / api.github.com) ---
+  - {id: github, action: allow, host: "github.com", port: 443}
+  - {id: github-api, action: allow, host: "api.github.com", port: 443}
+  - {id: github-dl, action: allow, host: "codeload.github.com", port: 443}
+  - {id: github-uc, action: allow, host: "*.githubusercontent.com", port: 443}
+  # --- package registries ---
+  - {id: npm, action: allow, host: "registry.npmjs.org", port: 443}
+  - {id: pypi, action: allow, host: "pypi.org", port: 443}
+  - {id: pypi-files, action: allow, host: "files.pythonhosted.org", port: 443}
+  # --- everything else: falls through to 'default' ---

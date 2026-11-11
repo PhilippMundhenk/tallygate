@@ -1,0 +1,12 @@
+sluicegate
+Copyright 2026 Philipp Mundhenk
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party components (installed at build time, not vendored):
+  - mitmproxy (MIT)            https://mitmproxy.org
+  - aiohttp (Apache-2.0)       https://github.com/aio-libs/aiohttp
+  - PyYAML (MIT)               https://pyyaml.org
+  - ttyd (MIT)                 https://github.com/tsl0922/ttyd
+  - GitHub CLI (MIT)           https://cli.github.com
+  - Claude Code (proprietary, Anthropic; installed from npm under its own terms)

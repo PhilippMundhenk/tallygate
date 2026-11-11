@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TTYD_VERSION: "1.7.7"
+  TTYD_SHA256: "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.13" }
+      - run: pip install ruff==0.16.9 shellcheck-py
+      - run: make lint
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.13", cache: pip, cache-dependency-path: "**/requirements*.txt" }
+      - run: pip install -r requirements-dev.txt
+      - name: Install ttyd (checksum-verified) for the web-console test
+        run: |
+          curl -fsSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"
+          echo "${TTYD_SHA256}  /usr/local/bin/ttyd" | sha256sum -c -
+          chmod +x /usr/local/bin/ttyd
+      - run: make test
+
+  integration:
+    # Builds all images, starts the real stack and runs the authoritative isolation test.
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare CI environment
+        run: |
+          cp .env.example .env
+          sed -i "s|^SLUICEGATE_DIR=.*|SLUICEGATE_DIR=$PWD/state|" .env
+          sed -i "s|^GW_API_TOKEN=.*|GW_API_TOKEN=$(openssl rand -hex 24)|" .env
+          sed -i "s|^SESSION_SECRET=.*|SESSION_SECRET=$(openssl rand -hex 24)|" .env
+          sed -i "s|^TTYD_CREDENTIAL=.*|TTYD_CREDENTIAL=agent:$(openssl rand -hex 12)|" .env
+          sed -i "s|^CONTROL_PASSWORD_HASH=.*|CONTROL_PASSWORD_HASH=scrypt:00:00|" .env
+          sed -i "s|^RC_ENABLE=.*|RC_ENABLE=0|" .env
+          mkdir -p state/gateway state/agent-home state/workspace
+          sudo chown -R 10001:10001 state/gateway
+          sudo chown -R 1000:1000 state/agent-home state/workspace
+      - run: docker compose build
+      - run: docker compose up -d
+      - name: Wait for gateway health
+        run: |
+          for i in $(seq 1 60); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' sluicegate-egress-gw-1)" = healthy ] && exit 0; sleep 2
+          done
+          docker compose logs; exit 1
+      - run: ./tests/integration/bypass.sh
+      - if: failure()
+        run: docker compose logs
+      - if: always()
+        run: docker compose down -v

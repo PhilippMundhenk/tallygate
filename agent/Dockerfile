@@ -1,0 +1,48 @@
+# sluicegate agent: minimal Claude Code workspace. No route to the internet - all egress via egress-gw.
+FROM docker.io/library/debian:trixie-slim
+
+# Bump deliberately; there is no auto-updater inside the agent.
+ARG CLAUDE_VERSION=2.1.304
+# Extra Debian packages for your toolchains, e.g. "build-essential golang-go"
+ARG EXTRA_PACKAGES=""
+# ttyd is not packaged for Debian trixie: pinned upstream static binary, checksum-verified.
+ARG TTYD_VERSION=1.7.7
+ARG TTYD_SHA256_AMD64=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
+ARG TTYD_SHA256_ARM64=b38acadd89d1d396a0f5649aa52c539edbad07f4bc7348b27b4f4b7219dd4165
+
+ARG DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+ # GitHub CLI from GitHub's signed apt repo (Debian's trixie package is outdated)
+ && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update -qq \
+ && apt-get install -y --no-install-recommends \
+      gh git jq less nano procps python3 python3-venv python3-pip ripgrep tini tmux unzip nodejs npm ${EXTRA_PACKAGES} \
+ # ttyd (web terminal for the control UI console)
+ && case "$(dpkg --print-architecture)" in \
+      amd64) f=ttyd.x86_64;  sum=${TTYD_SHA256_AMD64} ;; \
+      arm64) f=ttyd.aarch64; sum=${TTYD_SHA256_ARM64} ;; \
+      *) echo "unsupported arch"; exit 1 ;; esac \
+ && curl -fsSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/${f}" \
+ && echo "${sum}  /usr/local/bin/ttyd" | sha256sum -c - \
+ && chmod 755 /usr/local/bin/ttyd \
+ # Claude Code
+ && npm install -g --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
+ && npm cache clean --force \
+ && apt-get purge -y gnupg && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/* /root/.npm \
+ && groupadd -g 1000 agent && useradd -m -u 1000 -g 1000 -s /bin/bash agent \
+ && mkdir -p /etc/claude-code /workspace && chown agent:agent /workspace \
+ && claude --version && gh --version | head -1 && ttyd --version
+
+COPY managed-settings.json /etc/claude-code/managed-settings.json
+COPY entrypoint.sh status.py /usr/local/bin/
+RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/status.py
+
+ENV HOME=/home/agent DISABLE_AUTOUPDATER=1 TERM=xterm-256color
+USER 1000:1000
+WORKDIR /workspace
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

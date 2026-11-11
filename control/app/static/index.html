@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>sluicegate</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<header>
+  <span class="brand">🔐 sluicegate</span>
+  <nav id="tabs">
+    <button data-tab="approvals">Approvals <span id="pendingCount" class="badge hidden">0</span></button>
+    <button data-tab="log">Log</button>
+    <button data-tab="rules">Rules</button>
+    <button data-tab="console">Console</button>
+    <button data-tab="setup">Setup</button>
+  </nav>
+  <span id="conn" class="dot" title="event stream"></span>
+  <form method="post" action="/logout" class="logout"><button>Log out</button></form>
+</header>
+
+<main>
+  <!-- APPROVALS -->
+  <section id="tab-approvals">
+    <h2>Pending connection requests</h2>
+    <p class="hint">Connections are held until you decide or the timeout passes (then denied). Hard-denied targets (LAN etc.) never appear here.</p>
+    <div id="pendingList"></div>
+    <p id="pendingEmpty" class="muted">Nothing waiting. 🎉</p>
+  </section>
+
+  <!-- LOG -->
+  <section id="tab-log" class="hidden">
+    <div class="toolbar">
+      <input id="logFilter" placeholder="filter host / action / reason">
+      <label><input type="checkbox" id="logHideDns"> hide DNS</label>
+      <label><input type="checkbox" id="logOnlyBlocked"> only blocked</label>
+      <button id="logMore">Load older</button>
+    </div>
+    <table class="log"><thead><tr><th>Time</th><th>Kind</th><th>Proto</th><th>Destination</th><th>Action</th><th>Reason</th><th></th></tr></thead>
+      <tbody id="logBody"></tbody></table>
+  </section>
+
+  <!-- RULES -->
+  <section id="tab-rules" class="hidden">
+    <div class="grid2">
+      <div class="card">
+        <h3>Mode</h3>
+        <label>Default action for unmatched destinations
+          <select id="defaultAction"><option value="ask">ask (human-in-the-loop)</option><option value="deny">deny (allowlist)</option><option value="allow">allow (blocklist)</option></select></label>
+        <label>Approval timeout (s) <input type="number" id="askTimeout" min="5" max="3600"></label>
+        <button id="saveMode">Save</button>
+      </div>
+      <div class="card">
+        <h3>Test a destination</h3>
+        <div class="row"><input id="testHost" placeholder="host or IP"><input id="testPort" type="number" value="443" class="port"><button id="testBtn">Test</button></div>
+        <pre id="testOut" class="muted"></pre>
+        <h3>Presets</h3>
+        <div class="row"><select id="presetSel"></select><input id="presetTtl" type="number" placeholder="TTL s (optional)" class="port"><button id="presetBtn">Apply on top</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Add rule</h3>
+      <div class="row wrap">
+        <select id="nrAction"><option>allow</option><option>deny</option><option>ask</option></select>
+        <select id="nrKind"><option value="host">host</option><option value="cidr">cidr</option></select>
+        <input id="nrMatch" placeholder="*.example.com  or  203.0.113.0/24">
+        <input id="nrPort" placeholder="port(s): 443 | 80,443 | 8000-8100 | *" class="portw">
+        <input id="nrNote" placeholder="note">
+        <input id="nrTtl" type="number" placeholder="TTL s" class="port">
+        <button id="nrAdd">Add (top)</button>
+      </div>
+      <p class="hint">First match wins. <code>*.example.com</code> matches example.com and all subdomains. CIDR allow rules require <i>all</i> resolved IPs inside.</p>
+    </div>
+    <table class="rules"><thead><tr><th>#</th><th>Action</th><th>Match</th><th>Port</th><th>Note</th><th>Expires</th><th></th></tr></thead><tbody id="rulesBody"></tbody></table>
+    <details class="card"><summary>Hard deny (never reachable, never asked)</summary>
+      <textarea id="hardDeny" rows="8"></textarea><button id="saveHard">Save hard deny</button></details>
+    <details class="card"><summary>Advanced: raw policy JSON</summary>
+      <textarea id="rawPolicy" rows="16" spellcheck="false"></textarea><button id="saveRaw">Replace policy</button></details>
+  </section>
+
+  <!-- CONSOLE -->
+  <section id="tab-console" class="hidden">
+    <div class="toolbar" id="termButtons"></div>
+    <p class="hint"><b>rc</b> = the Remote Control server (tmux; answer prompts here, detach is automatic). <b>bash</b> = shell in the agent. <b>claude</b> = interactive Claude Code.</p>
+    <iframe id="termFrame" title="terminal"></iframe>
+  </section>
+
+  <!-- SETUP -->
+  <section id="tab-setup" class="hidden">
+    <h2>Setup wizard</h2>
+    <ol class="wizard">
+      <li id="st-gw"><h3>1 · Gateway</h3><div class="status">…</div></li>
+      <li id="st-gh"><h3>2 · GitHub token (stored in the gateway only)</h3>
+        <p class="hint">Use a <b>fine-grained PAT</b> limited to the repos the agent may touch (Contents, Pull requests, Issues: read/write). The agent only ever sees a placeholder; the gateway injects the real token for github.com / api.github.com.</p>
+        <div class="row"><input id="ghToken" type="password" placeholder="github_pat_…" autocomplete="off"><button id="ghSave">Validate &amp; store</button><button id="ghRemove" class="secondary">Remove</button></div>
+        <div class="status"></div></li>
+      <li id="st-claude"><h3>3 · Claude login</h3>
+        <p class="hint">Open the <b>bash</b> console and run <code>claude auth login</code>, open the shown URL, paste the code back. Needs a claude.ai subscription login (Remote Control does not work with API keys).</p>
+        <button data-term="bash">Open bash console</button><div class="status"></div></li>
+      <li id="st-git"><h3>4 · Git identity</h3>
+        <pre class="copy">git config --global user.name  "Your Name"
+git config --global user.email "id+user@users.noreply.github.com"</pre>
+        <button data-term="bash">Open bash console</button><div class="status"></div></li>
+      <li id="st-rc"><h3>5 · Remote Control</h3>
+        <p class="hint">Open the <b>rc</b> console. On first start Claude asks <code>Enable Remote Control? (y/n)</code> (and possibly to trust the workspace) — answer <b>y</b>. Afterwards the session appears in the Claude app under <i>Code</i>.</p>
+        <button data-term="rc">Open rc console</button><div class="status"></div></li>
+      <li id="st-test"><h3>6 · Isolation self-test</h3>
+        <p class="hint">Runs inside the agent: direct internet, raw TCP, UDP DNS, LAN via proxy, gateway API and control UI must all be <b>blocked</b>; the proxy path to Anthropic must work.</p>
+        <button id="selftestBtn">Run self-test</button><div class="status"></div></li>
+    </ol>
+    <div class="card"><h3>Notifications</h3><div id="notifyStatus" class="muted"></div></div>
+  </section>
+</main>
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body></html>

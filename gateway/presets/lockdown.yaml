@@ -1,0 +1,5 @@
+# Lockdown: only Anthropic, no human-in-the-loop. Replace the policy with this (PUT /policy) in emergencies.
+default: deny
+rules:
+  - {id: anthropic, action: allow, host: "*.anthropic.com", port: 443}
+  - {id: claude-ai, action: allow, host: "*.claude.ai", port: 443}

@@ -1,0 +1,136 @@
+# sluicegate: Claude Code agent behind a policy-enforcing egress gateway with human-in-the-loop.
+#
+#   internet ── egress ── [egress-gw] ── agent-net (internal, no route out) ── [agent]
+#                              │                                                │ ttyd/status
+#                         control-net (internal)                                │
+#                              │                                                │
+#   LAN/reverse proxy ── mgmt ── [control] ─────────── agent-net ───────────────┘
+#
+# The agent has NO default route: its only reachable peers are egress-gw (proxy/SOCKS/DNS/service
+# ports) and nothing else (control only connects *to* the agent). Fail-closed by topology.
+
+name: sluicegate
+
+x-hardening: &hardening
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
+services:
+  egress-gw:
+    <<: *hardening
+    build: ./gateway
+    image: sluicegate/egress-gw:local
+    read_only: true
+    tmpfs: ["/tmp"]
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "53"   # bind DNS :53 as non-root without capabilities
+    environment:
+      GW_LISTEN_HOST: 172.31.10.2        # proxy/SOCKS/DNS/service ports: agent network only
+      GW_API_HOST: 172.31.11.2           # management API: control network only
+      GW_API_PORT: "8081"
+      GW_API_TOKEN: ${GW_API_TOKEN:?set GW_API_TOKEN in .env}
+      GW_CONFIG: /etc/egressgw/config.yaml
+    volumes:
+      - ${SLUICEGATE_DIR:-./state}/gateway:/data
+      - ./config/gateway.yaml:/etc/egressgw/config.yaml:ro
+      - ca:/ca
+    networks:
+      agent-net: {ipv4_address: 172.31.10.2}
+      control-net: {ipv4_address: 172.31.11.2}
+      egress: {}
+    pids_limit: 256
+    mem_limit: 512m
+
+  control:
+    <<: *hardening
+    build: ./control
+    image: sluicegate/control:local
+    read_only: true
+    tmpfs: ["/tmp"]
+    environment:
+      CONTROL_BIND_HOST: 172.31.12.3     # UI only on the mgmt network, NOT reachable from agent-net
+      CONTROL_PORT: "8080"
+      CONTROL_PASSWORD_HASH: ${CONTROL_PASSWORD_HASH:-}
+      TRUST_PROXY_AUTH_HEADER: ${TRUST_PROXY_AUTH_HEADER:-}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      COOKIE_SECURE: ${COOKIE_SECURE:-1}
+      TRUST_FORWARDED_FOR: ${TRUST_FORWARDED_FOR:-0}  # 1 = behind a reverse proxy that sets X-Forwarded-*
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      GW_URL: http://172.31.11.2:8081
+      GW_API_TOKEN: ${GW_API_TOKEN}
+      AGENT_HOST: 172.31.10.10
+      TTYD_CREDENTIAL: ${TTYD_CREDENTIAL:?set TTYD_CREDENTIAL in .env}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS:-}
+      MATRIX_HOMESERVER: ${MATRIX_HOMESERVER:-}
+      MATRIX_ACCESS_TOKEN: ${MATRIX_ACCESS_TOKEN:-}
+      MATRIX_ROOM_ID: ${MATRIX_ROOM_ID:-}
+      MATRIX_ALLOWED_USERS: ${MATRIX_ALLOWED_USERS:-}
+    ports:
+      - "${CONTROL_PUBLISH:-127.0.0.1:8080}:8080"   # put your reverse proxy (TLS + OIDC) in front
+    networks:
+      mgmt: {ipv4_address: 172.31.12.3}
+      control-net: {ipv4_address: 172.31.11.3}
+      agent-net: {ipv4_address: 172.31.10.3}
+    pids_limit: 128
+    mem_limit: 256m
+    depends_on: [egress-gw]
+
+  agent:
+    <<: *hardening
+    build:
+      context: ./agent
+      args:
+        CLAUDE_VERSION: ${CLAUDE_VERSION:-2.1.304}
+        EXTRA_PACKAGES: ${AGENT_EXTRA_PACKAGES:-}
+    image: sluicegate/agent:local
+    read_only: true
+    tmpfs: ["/tmp:size=1g,uid=1000,gid=1000,mode=1777"]
+    dns: [172.31.10.2]                    # gateway answers NXDOMAIN for everything: no DNS exfiltration
+    environment:
+      HTTPS_PROXY: http://172.31.10.2:3128
+      HTTP_PROXY: http://172.31.10.2:3128
+      https_proxy: http://172.31.10.2:3128
+      http_proxy: http://172.31.10.2:3128
+      ALL_PROXY: socks5h://172.31.10.2:1080   # for tools that only speak SOCKS
+      NO_PROXY: localhost,127.0.0.1,egress-gw,172.31.10.2
+      no_proxy: localhost,127.0.0.1,egress-gw,172.31.10.2
+      TTYD_CREDENTIAL: ${TTYD_CREDENTIAL}
+      RC_NAME: ${RC_NAME:-sluicegate}
+      RC_ENABLE: ${RC_ENABLE:-1}
+      RC_ARGS: ${RC_ARGS:-}                   # extra args for `claude remote-control`, e.g. --spawn worktree
+      AGENT_PERMISSION_MODE: ${AGENT_PERMISSION_MODE:-bypassPermissions}
+      SELFTEST_BLOCKED_PROBES: 172.31.10.2:8081,172.31.11.2:8081,172.31.10.3:8080,172.31.12.3:8080
+    volumes:
+      - ${SLUICEGATE_DIR:-./state}/agent-home:/home/agent
+      - ${SLUICEGATE_DIR:-./state}/workspace:/workspace
+      - ca:/ca:ro
+    networks:
+      agent-net: {ipv4_address: 172.31.10.10}
+    pids_limit: 1024
+    mem_limit: ${AGENT_MEM_LIMIT:-6g}
+    depends_on: [egress-gw]
+
+volumes:
+  ca: {}
+
+networks:
+  agent-net:
+    internal: true                        # no default route: the core isolation property
+    enable_ipv6: false
+    ipam: {config: [{subnet: 172.31.10.0/24}]}
+  control-net:
+    internal: true
+    enable_ipv6: false
+    ipam: {config: [{subnet: 172.31.11.0/24}]}
+  egress:
+    enable_ipv6: false
+    ipam: {config: [{subnet: 172.31.13.0/24}]}
+  mgmt:
+    enable_ipv6: false
+    ipam: {config: [{subnet: 172.31.12.0/24}]}

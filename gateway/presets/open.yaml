@@ -1,0 +1,4 @@
+# Temporary "open" preset: allow any public HTTPS/HTTP. Apply only WITH a TTL (wizard uses 15 min).
+# hard_deny still applies, so the LAN stays unreachable.
+rules:
+  - {id: open-https, action: allow, host: "*", port: [80, 443], note: temporary open egress}
