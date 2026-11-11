@@ -1,4 +1,4 @@
 -r gateway/requirements.txt
 -r control/requirements.txt
-pytest==9.1.1
+pytest==9.2.0
 ruff==0.16.9
