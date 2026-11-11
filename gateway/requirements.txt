@@ -1,3 +1,4 @@
 mitmproxy==12.3.1
+publicsuffixlist==1.1.2.20261109
 aiohttp==3.14.5
 PyYAML==6.0.3

@@ -1,6 +1,6 @@
 """Human-in-the-loop notifications: Telegram (inline buttons) and Matrix (reactions or text replies).
 
-Telegram: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, optional TELEGRAM_ALLOWED_USER_IDS (comma list).
+Telegram: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALLOWED_USER_IDS (comma list, required).
 Matrix:   MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN, MATRIX_ROOM_ID, MATRIX_ALLOWED_USERS (comma list, required).
           Use an UNENCRYPTED room (the bot does not do E2EE); host it on your own homeserver.
 """
@@ -41,8 +41,21 @@ TEXT_TO_SCOPE = {
 
 
 def _describe(p: dict) -> str:
-    ips = ", ".join(p.get("ips") or [])
-    return f"{p['host']}:{p['port']} via {p.get('proto')} (IPs: {ips or '-'})"
+    """Approval text. The host is agent-chosen: show the registrable domain separately so that
+    look-alikes such as github.com.evil.example stand out, and flag punycode (IDN) names."""
+    ips = ", ".join(p.get("ips") or []) or "not resolved yet"
+    text = f"{p['host']}:{p['port']} via {p.get('proto')} (IPs: {ips})"
+    if p.get("domain") and p["domain"] != p["host"]:
+        text += f"\nDomain: {p['domain']}"
+    if p.get("idn"):
+        text += "\n⚠ internationalised (punycode) name - check for look-alikes"
+    return text
+
+
+def _scope_label(scope: str, label: str, p: dict) -> str:
+    if scope == "domain":
+        return f"Always (*.{p['domain']})" if p.get("domain") else ""
+    return label
 
 
 class Notifier:
@@ -61,6 +74,10 @@ class Notifier:
         if self.mx_hs and not self.mx_users:
             log.error("MATRIX_ALLOWED_USERS is required - Matrix approvals disabled")
             self.mx_hs = ""
+        if self.tg_token and not self.tg_users:
+            # In a group chat every member could otherwise press "Allow".
+            log.error("TELEGRAM_ALLOWED_USER_IDS is required - Telegram approvals disabled")
+            self.tg_token = ""
         # pending id -> {"tg": message_id, "mx": event_id, "short": n, "text": str}
         self.msgs: dict[str, dict] = {}
         self.short: dict[int, str] = {}
@@ -95,8 +112,15 @@ class Notifier:
             log.warning("notification failed: %s", e)
 
     async def _on_ask(self, p: dict) -> None:
+        now = time.time()
+        for pid, e in list(self.msgs.items()):  # drop entries whose 'resolved' event we missed
+            if e.get("expires", now) < now - 300:
+                self.short.pop(e["short"], None)
+                del self.msgs[pid]
         self._n = self._n % 999 + 1
-        entry = {"short": self._n, "text": _describe(p)}
+        while self._n in self.short:  # never reuse a number that is still open
+            self._n = self._n % 999 + 1
+        entry = {"short": self._n, "text": _describe(p), "expires": p.get("expires", now)}
         self.msgs[p["id"]] = entry
         self.short[self._n] = p["id"]
         timeout = int(p["expires"] - time.time())
@@ -147,9 +171,11 @@ class Notifier:
             return data["result"]
 
     async def _tg_send(self, p: dict, timeout: int) -> int:
+        buttons = [(scope, _scope_label(scope, label, p)) for scope, label, _ in BUTTONS]
+        buttons = [(scope, label) for scope, label in buttons if label]
         kb = [
-            [{"text": label, "callback_data": f"d:{p['id']}:{scope}"} for scope, label, _ in BUTTONS[i : i + 2]]
-            for i in range(0, len(BUTTONS), 2)
+            [{"text": label, "callback_data": f"d:{p['id']}:{scope}"} for scope, label in buttons[i : i + 2]]
+            for i in range(0, len(buttons), 2)
         ]
         text = f"🔐 Agent wants to connect:\n{_describe(p)}\nAuto-deny in {timeout}s."
         if self.public_url:
@@ -190,7 +216,7 @@ class Notifier:
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
-                log.warning("telegram poll: %s", e)
+                log.warning("telegram poll: %s", str(e).replace(self.tg_token, "<token>"))
                 await asyncio.sleep(5)
 
     # ---------------------------------------------------------------- Matrix
@@ -215,7 +241,7 @@ class Notifier:
         return await self._mx("PUT", path, body)
 
     async def _mx_send(self, p: dict, short: int, timeout: int) -> str:
-        legend = "  ".join(f"{r} {label}" for _, label, r in BUTTONS)
+        legend = "  ".join(f"{r} {lbl}" for s, label, r in BUTTONS if (lbl := _scope_label(s, label, p)))
         body = (
             f"🔐 #{short} Agent wants to connect: {_describe(p)} — auto-deny in {timeout}s.\n"
             f"React: {legend}\nor reply: allow|hour|always|domain|deny|block {short}"

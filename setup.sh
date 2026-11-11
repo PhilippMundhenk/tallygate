@@ -1,6 +1,7 @@
 #!/bin/bash
 # One-time host setup: create .env with random secrets, password hash, and state dirs with correct owners.
 set -euo pipefail
+umask 077                     # .env holds secrets: never world-readable, not even briefly
 cd "$(dirname "$0")"
 [[ -f .env ]] || cp .env.example .env
 set_var() { grep -q "^$1=" .env && sed -i "s|^$1=.*|$1=$2|" .env || echo "$1=$2" >> .env; }

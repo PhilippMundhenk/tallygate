@@ -61,7 +61,8 @@ def make_cert(tmp: Path) -> tuple[Path, Path]:
         .not_valid_before(now - datetime.timedelta(minutes=5))
         .not_valid_after(now + datetime.timedelta(days=1))
         .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName("gh.test"), x509.DNSName("other.test")]), critical=False
+            x509.SubjectAlternativeName([x509.DNSName("gh.test"), x509.DNSName("other.test"), x509.DNSName("ro.test")]),
+            critical=False,
         )
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .sign(key, hashes.SHA256())
@@ -129,6 +130,10 @@ def gateway(tmp_path_factory, upstream):
                     {"host": "badcert.test", "header": "Authorization", "value": "Bearer ${github_token}"},
                 ],
                 "services": [{"name": "echo", "listen": ports["svc"], "target": f"127.0.0.1:{upstream['http']}"}],
+                # tests talk to 127.0.0.1 upstreams, so the floor is narrowed here (static config only)
+                "hard_deny_floor": ["192.168.0.0/16", "10.0.0.0/8"],
+                "readonly": ["ro.test"],
+                "max_pending": 3,
             }
         )
     )
@@ -143,6 +148,9 @@ def gateway(tmp_path_factory, upstream):
                     {"id": "gh", "action": "allow", "host": "gh.test", "port": upstream["https"]},
                     {"id": "other", "action": "allow", "host": "other.test", "port": upstream["https"]},
                     {"id": "badcert", "action": "allow", "host": "badcert.test", "port": upstream["https"]},
+                    {"id": "ro", "action": "allow", "host": "ro.test", "port": upstream["https"]},
+                    {"id": "denied", "action": "deny", "host": "*.denied.test"},
+                    {"id": "lan", "action": "allow", "host": "lan.test"},
                 ],
             }
         )
@@ -158,7 +166,7 @@ def gateway(tmp_path_factory, upstream):
         GW_API_PORT=ports["api"],
         GW_API_TOKEN=API_TOKEN,
         PRESET_DIR=ROOT / "gateway" / "presets",
-        GW_TEST_STATIC_HOSTS="gh.test=127.0.0.1,other.test=127.0.0.1,badcert.test=127.0.0.1,lan.test=192.168.99.99",
+        GW_TEST_STATIC_HOSTS="gh.test=127.0.0.1,other.test=127.0.0.1,badcert.test=127.0.0.1,lan.test=192.168.99.99,ro.test=127.0.0.1",
         GW_EXTRA_ARGS=f"--set ssl_verify_upstream_trusted_ca={upstream['cert']}",
     )
     log = open(data / "gateway.log", "w")

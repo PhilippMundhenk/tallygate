@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from egressgw.policy import SCOPES, Policy, Rule
+from egressgw.policy import SCOPES, Policy, Rule, is_ip, valid_hostname
 
 if TYPE_CHECKING:
     from egressgw.core import Gateway
@@ -41,16 +41,14 @@ def build_app(gw: Gateway) -> web.Application:
 
     @routes.get("/policy")
     async def get_policy(_):
-        return _json(gw.policy.to_dict())
+        return _json(gw.policy.describe())
 
     @routes.put("/policy")
     async def put_policy(request):
-        new = Policy.from_dict(await request.json())
-        new.exceptions = gw.policy.exceptions
-        gw.policy = new
+        gw.adopt(Policy.from_dict(await request.json()))  # floor + service exceptions stay as configured
         gw.save_policy()
         gw.record(kind="admin", action="policy", reason="policy replaced via API")
-        return _json(gw.policy.to_dict())
+        return _json(gw.policy.describe())
 
     @routes.post("/rules")
     async def add_rule(request):
@@ -121,7 +119,15 @@ def build_app(gw: Gateway) -> web.Application:
     @routes.post("/test")
     async def test(request):
         body = await request.json()
-        host, port = str(body["host"]), int(body.get("port", 443))
+        host, port = str(body["host"]).strip(), int(body.get("port", 443))
+        if not is_ip(host):
+            if not valid_hostname(host):
+                return _json({"action": "deny", "reason": "invalid hostname", "ips": []})
+            pre = gw.policy.evaluate_name(host, port)
+            if pre is not None and pre.action != "allow":
+                return _json(
+                    {"action": pre.action, "reason": pre.reason + " (not resolved)", "rule_id": pre.rule_id, "ips": []}
+                )
         try:
             ips = await gw.resolve(host, port)
         except OSError as e:

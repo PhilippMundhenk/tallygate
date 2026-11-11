@@ -94,3 +94,15 @@ def test_matrix_refuses_bot_in_allowed_users(gateway, mockbots, control_with):
     status, _ = http_via_proxy(gateway["ports"]["http"], f"http://127.0.0.1:{port}/")
     assert status == 502
     assert not any("matrix" in (e["reason"] or "") for e in _events(gateway, port))
+
+
+def test_telegram_without_allowed_users_is_disabled(mockbots, control_with):
+    """TG-06: without TELEGRAM_ALLOWED_USER_IDS any member of a group chat could approve."""
+    from .conftest import CONTROL_PASSWORD
+    from .helpers import Api
+
+    base = control_with(TELEGRAM_API_BASE=mockbots.base, TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="777")
+    a = Api(base, csrf_header="X-Tallygate")
+    a.call("POST", "/login", form={"password": CONTROL_PASSWORD})
+    _, meta, _ = a.call("GET", "/api/meta")
+    assert meta["notify"]["telegram"] is False

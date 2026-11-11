@@ -36,8 +36,10 @@ def test_wrong_password_redirects_with_failure(control):
 
 def test_security_headers(ui):
     _, _, headers = ui.call("GET", "/")
-    assert "default-src 'self'" in headers["Content-Security-Policy"]
+    csp = headers["Content-Security-Policy"]
+    assert "default-src 'none'" in csp and "script-src 'self'" in csp and "frame-ancestors 'self'" in csp
     assert headers["X-Frame-Options"] == "SAMEORIGIN" and headers["X-Content-Type-Options"] == "nosniff"
+    assert headers["Cache-Control"] == "no-store" and headers["Cross-Origin-Opener-Policy"] == "same-origin"
 
 
 def test_csrf_protection(ui):
@@ -87,7 +89,6 @@ def test_web_console_roundtrip(ui, control):
         cookies = {c.name: c.value for c in ui.jar}
         origin = control["base"]
         async with aiohttp.ClientSession(cookies=cookies, trust_env=False) as s:
-            tok = (await (await s.get(f"{origin}/term/bash/token")).json())["token"]
             with pytest.raises(aiohttp.WSServerHandshakeError):
                 async with s.ws_connect(
                     f"{origin.replace('http', 'ws')}/term/bash/ws",
@@ -98,14 +99,58 @@ def test_web_console_roundtrip(ui, control):
             async with s.ws_connect(
                 f"{origin.replace('http', 'ws')}/term/bash/ws", protocols=("tty",), headers={"Origin": origin}
             ) as ws:
-                await ws.send_str(json.dumps({"AuthToken": tok, "columns": 80, "rows": 24}))
+                # no credential from the browser: the control plane adds it
+                await ws.send_str(json.dumps({"columns": 80, "rows": 24}))
                 await ws.send_bytes(b"0echo tally-$((6*7))\r")
                 out = b""
                 while b"tally-42" not in out:
                     msg = await asyncio.wait_for(ws.receive(), 5)
                     data = msg.data if isinstance(msg.data, bytes) else str(msg.data).encode()
-                    if data[:1] == b"0":
-                        out += data[1:]
+                    assert data[:1] == b"0"  # only terminal output is relayed (TG-01)
+                    out += data[1:]
                 return out
 
     assert b"tally-42" in asyncio.run(run())
+
+
+def test_console_page_is_served_by_control_not_the_agent(ui):
+    """TG-01: no agent-supplied HTML/JS may be served on the control origin."""
+    status, body, headers = ui.call("GET", "/term/bash/")
+    assert status == 200 and b"/static/term.js" in body
+    assert "script-src 'self'" in headers.get("Content-Security-Policy", "")
+    for path in ("/term/bash/token", "/term/bash/index.html", "/term/bash/auth_token.js"):
+        assert ui.call("GET", path)[0] in (404, 405)
+    assert ui.call("GET", "/term/nope/")[0] == 404
+
+
+def test_logout_invalidates_the_session_server_side(control):
+    """TG-12: a copied cookie must not survive logout."""
+    from .helpers import Api
+
+    a = Api(control["base"], csrf_header="X-Tallygate")
+    a.call("POST", "/login", form={"password": CONTROL_PASSWORD})
+    cookie = {c.name: c.value for c in a.jar}
+    assert a.call("GET", "/api/meta")[0] == 200
+    a.call("POST", "/logout", headers={"Origin": control["base"]})
+    replay = Api(control["base"])
+    status, _, _ = replay.call("GET", "/api/meta", headers={"Cookie": "; ".join(f"{k}={v}" for k, v in cookie.items())})
+    assert status == 401
+
+
+def test_forged_cookie_and_proxy_header_are_rejected(control):
+    """TG-07: TRUST_PROXY_AUTH_HEADER is unset here, and even when set only TRUSTED_PROXIES may use it."""
+    from .helpers import Api
+
+    anon = Api(control["base"])
+    assert anon.call("GET", "/api/meta", headers={"Remote-User": "admin", "X-Forwarded-For": "127.0.0.1"})[0] == 401
+    assert anon.call("GET", "/api/meta", headers={"Cookie": "tallygate_session=abc.def"})[0] == 401
+
+
+def test_cross_origin_login_is_refused(control):
+    from .helpers import Api
+
+    a = Api(control["base"])
+    status, _, _ = a.call(
+        "POST", "/login", form={"password": CONTROL_PASSWORD}, headers={"Origin": "https://evil.example"}
+    )
+    assert status == 403

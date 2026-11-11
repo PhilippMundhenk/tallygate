@@ -44,7 +44,11 @@ Configure Docker log rotation on the host (all three services also set `max-size
 ## Reverse proxy
 
 Publish the UI only on localhost (`CONTROL_PUBLISH=127.0.0.1:8080`) and terminate TLS in front. Set
-`TRUST_FORWARDED_FOR=1` and `PUBLIC_URL`. WebSockets must be passed through (web consoles).
+`PUBLIC_URL` (used for the origin check), `TRUST_FORWARDED_FOR=1` and `TRUSTED_PROXIES` — the address
+control sees for your proxy. With a proxy on the host talking to the published port that is the `mgmt`
+bridge gateway, `172.31.12.1/32` (check with `docker compose logs control` after a failed login: the
+logged address is what control sees). Forwarded headers from any other peer are ignored. WebSockets must
+be passed through (web consoles).
 
 Caddy example with forward-auth:
 
@@ -59,7 +63,11 @@ tallygate.example.org {
 ```
 
 With an authenticating proxy you may set `TRUST_PROXY_AUTH_HEADER=Remote-User` to skip the built-in
-password. Only do this if port 8080 is not reachable except through the proxy.
+password. It is honoured only from `TRUSTED_PROXIES` (control refuses to start without it); still keep port
+8080 unreachable except through the proxy.
+
+If the Docker host has a public IP (VPS), add it to `hard_deny_floor` in `config/gateway.yaml` so the agent
+cannot reach host services through the egress path.
 
 ## First-time setup
 

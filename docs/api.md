@@ -9,7 +9,7 @@ Base URL: `http://172.31.11.2:8081` (control-net only). All endpoints except `/h
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/health` | – | `{"ok": true}` (no auth) |
-| GET | `/policy` | – | Full policy (`default`, `ask_timeout`, `hard_deny`, `rules`) |
+| GET | `/policy` | – | Full policy (`default`, `ask_timeout`, `hard_deny` = extras, `rules`) plus read-only `hard_deny_floor` |
 | PUT | `/policy` | Full policy | Validated and replaced; returns the new policy |
 | POST | `/rules` | Rule (+ optional `"top": false` to append) | `201` created rule |
 | DELETE | `/rules/{id}` | – | `{"ok": true}` or `404` |
@@ -63,7 +63,8 @@ Used by the bundled web UI; documented for scripting and review.
 | POST | `/api/github/check` | session + CSRF | `{"token": "...", "store": true}` — validate a token against GitHub from the control plane and store it in the gateway |
 | GET | `/api/agent/status` | session | Agent status (Claude login, git identity, Remote Control running, versions) |
 | GET | `/api/agent/selftest` | session | Run the in-agent isolation self-test |
-| * | `/term/{name}/…` | session (+ Origin for WS) | Reverse proxy to the agent's ttyd console `name` |
+| GET | `/term/{name}/` | session | Console page (served by control: vendored xterm.js, no agent content) |
+| GET (WS) | `/term/{name}/ws` | session + Origin | Filtered relay to the agent's ttyd `name`: browser → `0` input / `1` resize, agent → `0` output only; control adds the ttyd credential |
 
 **CSRF rule:** non-GET requests under `/api/` must carry `X-Tallygate: 1` and, if an `Origin` header is
 present, it must match the host. Session cookies are `HttpOnly`, `SameSite=Strict` and `Secure` (unless

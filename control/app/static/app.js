@@ -49,11 +49,17 @@ function renderPending() {
   document.title = pending.length ? `(${pending.length}) tallygate` : "tallygate";
   for (const p of pending) {
     const el = document.createElement("div"); el.className = "pending";
+    // Host names are chosen by the agent: show the registrable domain separately (look-alikes such as
+    // github.com.evil.example) and warn about punycode names.
     el.innerHTML = `<div class="dest">${esc(p.host)}:${esc(p.port)}</div>
-      <div class="meta">${esc(p.proto)} · IPs ${esc((p.ips || []).join(", ") || "-")} · attempts ${esc(p.attempts)} ·
-      <span class="countdown" data-exp="${p.expires}"></span></div><div class="btns"></div>`;
+      ${p.domain && p.domain !== p.host ? `<div class="meta">domain <b>${esc(p.domain)}</b></div>` : ""}
+      ${p.idn ? `<div class="meta warn">⚠ internationalised (punycode) name – check for look-alikes</div>` : ""}
+      <div class="meta">${esc(p.proto)} · IPs ${esc((p.ips || []).join(", ") || "not resolved yet")} · attempts ${esc(p.attempts)} ·
+      <span class="countdown" data-exp="${Number(p.expires)}"></span></div><div class="btns"></div>`;
     for (const [scope, label, cls] of SCOPES) {
-      const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls;
+      if (scope === "domain" && !p.domain) continue;  // no registrable domain (IP, public suffix)
+      const b = document.createElement("button"); if (cls) b.className = cls;
+      b.textContent = scope === "domain" ? `Always (*.${p.domain})` : label;
       b.onclick = guard(async () => { await gw("POST", `/pending/${p.id}/decide`, { scope }); await loadPending(); });
       $(".btns", el).appendChild(b);
     }
@@ -77,7 +83,8 @@ function logRow(e) {
   tr.innerHTML = `<td title="${esc(fmtDate(e.ts))}">${esc(fmtTime(e.ts))}</td><td>${esc(e.kind)}</td><td>${esc(e.proto ?? "")}</td>
     <td><code>${esc(dest)}</code>${e.ips && e.ips.length ? `<br><span class="muted">${esc(e.ips.join(", "))}</span>` : ""}</td>
     <td class="a-${esc(e.action)}">${esc(e.action)}</td><td>${esc(e.reason)}</td><td></td>`;
-  if (e.kind === "conn" && e.host && !String(e.reason).startsWith("hard-deny")) {
+  const reason = String(e.reason);
+  if (e.kind === "conn" && e.host && !reason.startsWith("hard-deny") && reason !== "invalid hostname") {
     const cell = tr.lastElementChild;
     for (const [action, label, cls] of [["allow", "allow", "small"], ["deny", "deny", "small secondary"]]) {
       const b = document.createElement("button"); b.textContent = label; b.className = cls;
@@ -116,6 +123,7 @@ function parsePort(s) {
 async function loadPolicy() {
   policy = await gw("GET", "/policy");
   $("#defaultAction").value = policy.default; $("#askTimeout").value = policy.ask_timeout;
+  $("#hardDenyFloor").textContent = (policy.hard_deny_floor || []).join("  ");
   $("#hardDeny").value = policy.hard_deny.join("\n");
   $("#rawPolicy").value = JSON.stringify(policy, null, 2);
   const body = $("#rulesBody"); body.innerHTML = "";
@@ -134,7 +142,6 @@ async function loadPolicy() {
 async function putPolicy(p) { await gw("PUT", "/policy", p); toast("Policy saved"); await loadPolicy(); }
 $("#saveMode").onclick = guard(() => putPolicy({ ...policy, default: $("#defaultAction").value, ask_timeout: +$("#askTimeout").value }));
 $("#saveHard").onclick = guard(() => {
-  if (!confirm("Change the hard-deny list? Removing entries can expose your LAN to the agent.")) return;
   return putPolicy({ ...policy, hard_deny: $("#hardDeny").value.split(/\s+/).filter(Boolean) });
 });
 $("#saveRaw").onclick = guard(() => putPolicy(JSON.parse($("#rawPolicy").value)));

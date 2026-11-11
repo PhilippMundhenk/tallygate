@@ -3,8 +3,12 @@ Copyright 2026 Philipp Mundhenk
 
 This product is licensed under the MIT License (see LICENSE).
 
+Vendored third-party components (control/app/static/vendor/, see SHA256SUMS there):
+  - xterm.js 6.0.0 and @xterm/addon-fit 0.11.0 (MIT)  https://github.com/xtermjs/xterm.js
+
 Third-party components (installed at build time, not vendored):
   - mitmproxy (MIT)            https://mitmproxy.org
+  - publicsuffixlist (MPL-2.0) https://github.com/ko-zu/psl
   - aiohttp (Apache-2.0)       https://github.com/aio-libs/aiohttp
   - PyYAML (MIT)               https://pyyaml.org
   - ttyd (MIT)                 https://github.com/tsl0922/ttyd

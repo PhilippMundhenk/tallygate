@@ -38,6 +38,10 @@ check "agent is attached to agent-net only" \
   test "$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$AGENT")" = "$NET "
 check "agent drops all capabilities" grep -q ALL <<<"$(docker inspect -f '{{.HostConfig.CapDrop}}' "$AGENT")"
 check "agent has a read-only root filesystem" test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$AGENT")" = true
+for c in "$AGENT" "${PROJECT}-egress-gw-1" "${PROJECT}-control-1"; do
+  check "$c has IPv6 disabled (no link-local path)" \
+    grep -q 'net.ipv6.conf.all.disable_ipv6:1' <<<"$(docker inspect -f '{{.HostConfig.Sysctls}}' "$c")"
+done
 check "agent has no docker.sock" bash -c "! docker inspect -f '{{.HostConfig.Binds}}' '$AGENT' | grep -q docker.sock"
 
 echo "== egress from agent-net (independent probe container)"
@@ -50,6 +54,8 @@ expect "gateway API not on agent-net"         000          "http://$GW:8081/heal
 expect "control-net not routable"             000          http://172.31.11.2:8081/health
 expect "control UI not on agent-net"          000          http://172.31.10.3:8080/healthz
 expect "mgmt-net not routable"                000          http://172.31.12.3:8080/healthz
+expect "IPv6 link-local of the gateway unreachable" 000     -g "http://[fe80::1%25eth0]:3128/"
+expect "unknown host is held, not connected"  '000|403|502' -x "http://$GW:3128" "https://exfil-$(date +%s).invalid/"
 expect "allowed path works (api.anthropic.com)" '[1-4][0-9][0-9]' -x "http://$GW:3128" https://api.anthropic.com/
 
 echo "== in-agent self-test"

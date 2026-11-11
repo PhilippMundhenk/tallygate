@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 class EventLog:
-    def __init__(self, path: Path, keep_days: int = 30) -> None:
+    def __init__(self, path: Path, keep_days: int = 30, max_events: int = 500_000) -> None:
         self.db = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute(
@@ -23,6 +23,7 @@ class EventLog:
         )
         self.db.execute("CREATE INDEX IF NOT EXISTS events_ts ON events(ts)")
         self.keep_days = keep_days
+        self.max_events = max_events
         self._last_prune = 0.0
 
     def add(self, ev: dict) -> dict:
@@ -47,6 +48,12 @@ class EventLog:
             self._last_prune = ev["ts"]
             self.db.execute("DELETE FROM events WHERE ts < ?", (ev["ts"] - self.keep_days * 86400,))
         return ev
+
+    def enforce_cap(self) -> None:
+        """Hard row cap on top of the age-based retention (disk-fill protection)."""
+        row = self.db.execute("SELECT MAX(id) FROM events").fetchone()
+        if row and row[0] and row[0] > self.max_events:
+            self.db.execute("DELETE FROM events WHERE id <= ?", (row[0] - self.max_events,))
 
     def recent(self, limit: int = 200, before_id: int | None = None, q: str | None = None) -> list[dict]:
         sql = "SELECT id,ts,kind,proto,client,host,port,ips,action,reason,extra FROM events"
@@ -88,6 +95,8 @@ class Secrets:
         self.path = path
         self._data: dict[str, str] = {}
         if path.exists():
+            os.chmod(path, 0o600)
+        if path.exists():
             self._data = json.loads(path.read_text() or "{}")
 
     def names(self) -> list[str]:
@@ -99,6 +108,9 @@ class Secrets:
     def set(self, name: str, value: str | None) -> None:
         if not re.fullmatch(r"[a-z0-9_]{1,64}", name):
             raise ValueError("secret name must match [a-z0-9_]{1,64}")
+        if value is not None and (len(value) > 8192 or any(ord(c) < 0x20 or ord(c) == 0x7F for c in value)):
+            # values end up in HTTP headers: control characters would allow header injection
+            raise ValueError("secret value must be <= 8192 printable characters (no CR/LF/control chars)")
         if value:
             self._data[name] = value
         else:

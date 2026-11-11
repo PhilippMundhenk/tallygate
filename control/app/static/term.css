@@ -1,0 +1,6 @@
+html, body { margin: 0; height: 100%; background: #0b1020; overflow: hidden; }
+#term { position: absolute; inset: 0; padding: 4px; }
+.status { position: absolute; right: 8px; top: 6px; z-index: 10; font: 12px system-ui, sans-serif;
+  color: #94a3b8; background: rgba(15, 23, 42, .85); padding: 2px 8px; border-radius: 4px; }
+.status.hidden { display: none; }
+.status.bad { color: #fca5a5; }

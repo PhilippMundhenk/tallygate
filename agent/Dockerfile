@@ -9,6 +9,8 @@ ARG EXTRA_PACKAGES=""
 ARG TTYD_VERSION=1.7.7
 ARG TTYD_SHA256_AMD64=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
 ARG TTYD_SHA256_ARM64=b38acadd89d1d396a0f5649aa52c539edbad07f4bc7348b27b4f4b7219dd4165
+# GitHub CLI apt signing key (rotated 2026, https://github.blog/changelog/2026-09-03-github-cli-linux-package-signing-key-expires-september-5/)
+ARG GH_KEY_FPR=7F38BBB59D064DBCB3D84D725612B36462313325
 
 ARG DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -16,6 +18,8 @@ RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
  # GitHub CLI from GitHub's signed apt repo (Debian's trixie package is outdated)
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && gpg --show-keys --with-colons /usr/share/keyrings/githubcli-archive-keyring.gpg | grep -q "^fpr:::::::::${GH_KEY_FPR}:" \
+      || { echo "GitHub CLI keyring does not contain the pinned key ${GH_KEY_FPR}"; exit 1; } \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
  && apt-get update -qq \

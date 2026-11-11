@@ -1,6 +1,15 @@
 # egress-gw static configuration (mounted read-only at /data/config.yaml or $GW_CONFIG).
 initial_preset: baseline   # used only when /data/policy.yaml does not exist yet
 log_keep_days: 30
+log_max_events: 500000     # hard cap on stored events (disk-fill protection)
+max_pending: 10            # at most this many approvals open at once; more are denied immediately
+
+# Hard-deny floor: CIDRs that are NEVER reachable (except service-port targets with allow_private).
+# Only this read-only file can change it; the API/UI can only ADD entries. Omit for the built-in
+# list (RFC 1918, loopback, link-local, CGNAT, multicast, ULA, NAT64/6to4/Teredo, docs ranges ...).
+# Add your Docker host's public IP(s) here if it has any (e.g. a VPS), so the agent cannot reach
+# host services via the egress path.
+# hard_deny_floor: [...]
 
 # Credential injection: TLS for these exact hosts is intercepted and the header is set.
 # The agent only ever holds a placeholder. Secrets are set via the control UI (stored in /data/secrets.json).
@@ -14,6 +23,15 @@ inject:
   - host: github.com            # git smart-HTTP (clone/fetch/push)
     header: Authorization
     value: "Basic ${b64:x-access-token:${github_token}}"
+
+# Agent credentials (Authorization, Cookie) are always stripped on injection hosts, so the agent can
+# never act as an account of its own choosing there - even before a secret is configured.
+# inject_strip_headers: [Authorization, Cookie]
+
+# Read-only hosts: TLS is intercepted and PUT/PATCH/DELETE are refused (blocks e.g. `npm publish`
+# as an exfiltration path while installs keep working). Requires the agent to trust the gateway CA.
+readonly:
+  - registry.npmjs.org
 
 # Service ports: fixed TCP forwards for non-HTTP protocols. The agent connects to
 # egress-gw:<listen>; the connection is still subject to the policy (ask/allow/deny) for <target>.

@@ -1,3 +1,5 @@
+# vendored third-party files are checksum-pinned (SHA256SUMS) and must stay byte-identical
+exclude: ^control/app/static/vendor/
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.9

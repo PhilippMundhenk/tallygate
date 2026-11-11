@@ -59,31 +59,39 @@ service, **E**levation of privilege.
 | # | Threat | STRIDE | Mitigation | Verified by |
 |---|---|---|---|---|
 | T1 | Agent connects directly to the internet, bypassing the proxy | E, I | `agent-net` is `internal` (no route); agent attached to no other network | `bypass.sh` (direct IP/name), structure checks |
-| T2 | Agent reaches LAN/host/metadata through the proxy (incl. via public names resolving to private IPs) | E, I | `hard_deny` on literal **and resolved** IPs, before rules, not approvable | unit + e2e (`lan.test`), `bypass.sh` |
+| T2 | Agent reaches LAN/host/metadata through the proxy (incl. via public names resolving to private IPs) | E, I | Hard deny on literal **and resolved** IPs, before rules, not approvable; immutable floor (incl. NAT64/6to4/Teredo); service exceptions only on their own port | unit + e2e (`lan.test`, floor), `bypass.sh` |
 | T3 | DNS rebinding between check and connect | E | Upstream address pinned to the checked IP | design + e2e (pinned connections) |
-| T4 | Data exfiltration via DNS queries | I | Agent DNS → gateway → NXDOMAIN for everything, logged | e2e DNS test, self-test |
-| T5 | IPv6 side channel | E, I | IPv6 disabled on all networks; IPv6 targets subject to hard_deny/policy | `bypass.sh`, self-test |
+| T4 | Data exfiltration via DNS queries (agent's own lookups **or** names it asks the proxy for) | I | Agent DNS → gateway → NXDOMAIN, logged; the gateway resolves a name only after it is allowed/approved | e2e DNS + "denied names are never resolved" |
+| T5 | IPv6 side channel (incl. link-local on internal networks) | E, I | IPv6 disabled on all networks and by sysctl in every container; IPv6 targets subject to hard deny/policy | `bypass.sh`, self-test |
 | T6 | Agent steals the GitHub token | I | Token only in gateway; injected in flight; never returned by API; placeholders in agent | e2e (secrets write-only, no token in logs) |
 | T7 | Agent obtains injected token by spoofing SNI/Host towards another server | S, I | Injection requires CONNECT target = SNI = Host = configured host; plaintext never injected | e2e SNI-spoofing test |
 | T8 | MITM of intercepted upstream (gateway trusts a bad cert) | S, I | Upstream TLS verified against the configured hostname | e2e bad-cert test |
 | T9 | Agent changes policy (calls gateway API or control UI) | E | API bound to control-net only + bearer token; UI bound to mgmt only; agent on neither | `bypass.sh`, self-test |
 | T10 | Agent uses the Docker socket to escape | E | No docker.sock in any container | `bypass.sh` structure check |
 | T11 | Container breakout via capabilities / setuid | E | `cap_drop: ALL`, `no-new-privileges`, non-root, read-only rootfs, pid/memory limits | `bypass.sh` structure checks |
-| T12 | Attacker on the network uses the control UI | S, E | scrypt password or trusted-proxy auth (OIDC recommended); signed, HttpOnly, SameSite=Strict, Secure cookies; login rate limit | e2e auth tests |
+| T12 | Attacker on the network uses the control UI | S, E | scrypt (N = 2^16) password or trusted-proxy auth (OIDC recommended) honoured only from `TRUSTED_PROXIES`; server-side sessions (logout/idle/absolute expiry), signed HttpOnly SameSite=Strict Secure cookie; per-IP limit + globally serialised checks | e2e auth/session tests |
 | T13 | CSRF / cross-origin websocket hijacking against the UI | S, E | Custom header + Origin check for state-changing API calls; Origin check for websockets; strict CSP; frame restrictions | e2e CSRF/origin tests |
-| T14 | Someone else approves requests via the bots | S, E | Telegram chat + user-ID allowlist; Matrix user allowlist (bot itself excluded); approvals attributed (`by`) | e2e unauthorised-user tests |
-| T15 | Approval fatigue / notification storm | D | One prompt per host:port; negative cache after timeout; scoped approvals (2 min / 1 h / always) | e2e concurrent-dedupe test |
+| T14 | Someone else approves requests via the bots | S, E | Telegram chat + **mandatory** user-ID allowlist; Matrix user allowlist (bot itself excluded); approvals attributed (`by`) | e2e unauthorised-user / no-allowlist tests |
+| T15 | Approval fatigue / notification storm | D | One prompt per host:port; at most `max_pending` open prompts; negative cache after timeout; scoped approvals | e2e dedupe + cap tests |
 | T16 | Operator cannot reconstruct what happened | R | Every decision, DNS query, admin change and approval (with actor) logged in the gateway, outside the agent's reach | e2e log assertions |
 | T17 | Spoofed `by` attribution through the UI | R | Control overwrites `by` with the authenticated user | e2e (`by` cannot be spoofed) |
 | T18 | Compromised dependency in the agent image | T, E | Minimal image, pinned versions, gh from signed repo, ttyd checksum-verified, no bundled third-party plugins | review, CI builds |
 | T19 | In-agent self-test lies | R | Authoritative test runs from an independent probe container on the host | `bypass.sh` |
-| T20 | Login brute force with spoofed `X-Forwarded-For` | S | Forwarded headers only trusted when `TRUST_FORWARDED_FOR=1` (behind your proxy) | code review |
+| T20 | Login brute force with spoofed `X-Forwarded-For` | S | Forwarded headers only trusted with `TRUST_FORWARDED_FOR=1` **and** from `TRUSTED_PROXIES` | e2e forged-header test |
+| T21 | Agent runs script in the operator's browser (console content) and drives the UI | E, T | Console page + xterm.js served by control; WebSocket filtered both ways; no agent HTML on the UI origin; strict CSP (`script-src 'self'`); OSC 8 links inert | e2e console tests (TG-01) |
+| T22 | Agent tricks the operator with look-alike names (`github.com.evil.example`, homographs) | S | Strict hostname syntax; prompts show the registrable domain and flag punycode | unit + e2e (TG-10) |
+| T23 | One "Always (*.domain)" click opens a shared suffix (`*.github.io`, `*.ngrok-free.app`) | E, I | Public Suffix List incl. private section; widening refused for suffixes; exact pattern shown on the button | unit (TG-04) |
+| T24 | Agent uses its *own* account on an allowed credential host (token/cookie) to exfiltrate | I | Agent `Authorization`/`Cookie` stripped on inject hosts, also before a secret is set | e2e (TG-05) |
+| T25 | Exfiltration by publishing to a package registry (`npm publish`) | I | `readonly` hosts: writes (PUT/PATCH/DELETE) refused | e2e (TG-11) |
+| T26 | Disk/log flood by a looping or hostile agent | D | Identical events coalesced; hard row cap; retention | e2e (TG-09) |
+| T27 | A compromised control plane (or UI session) removes LAN protection | E | Hard-deny floor only in the read-only config file; API can only add | unit + e2e (TG-03) |
 
 ## Residual risks
 
 | Risk | Why it remains | Recommendation |
 |---|---|---|
-| **Exfiltration via allowed destinations** | Any allowed host (GitHub, Anthropic API, package registries) can carry data out. | Keep allowlists tight; prefer `ask`; fine-grained PATs; review the log. |
+| **Exfiltration via allowed destinations** | Any allowed host can carry data out — notably the Anthropic API with an API key of the attacker's choosing (the agent needs its own Claude credentials, so these cannot be stripped), GitHub within the injected token's permissions, and reads that encode data in URLs. | Keep allowlists tight; prefer `ask`; fine-grained PATs; review the log. |
+| **Agent-supplied terminal output** | xterm.js parses escape sequences from the agent. | Vendored, pinned xterm.js; no clipboard/link addons; CSP limits impact. |
 | **Abuse of the injected token's permissions** | The agent can *use* the token through the gateway. | Fine-grained PAT, only needed repos and permissions; branch protection on important repos. |
 | **Shared kernel** | Containers share the host kernel; a kernel exploit escapes all isolation. | Keep the host patched; run the stack in a dedicated VM; optionally `runtime: runsc` (gVisor) for the agent. |
 | **Claude OAuth credentials in the agent** | Remote Control requires a full-scope login on the machine. | Treat as exposed to the agent; revoke via claude.ai if compromise is suspected. |

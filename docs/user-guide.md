@@ -27,12 +27,16 @@ background. The countdown shows when it will be denied automatically.
 | Allow 2 min | This host:port for 2 minutes (covers follow-up connections of one operation) |
 | Allow 1 h | This host:port for one hour |
 | Always (host) | Permanent allow rule for exactly this host:port |
-| Always (*.domain) | Permanent allow rule for the registrable domain and all subdomains |
+| Always (*.example.com) | Permanent allow rule for the registrable domain and all subdomains. The button shows the exact pattern; it is not offered when the name has no registrable domain of its own (e.g. `github.io`, IPs). |
 | Deny | Deny for 2 minutes (the tool gets an error now; asking again later is possible) |
 | Block forever | Permanent deny rule |
 
 Every decision becomes a normal rule (tagged `[approval]`) that you can review or delete under **Rules**.
-Destinations in `hard_deny` (LAN, host, metadata…) are never asked about.
+Before you click, check the **domain** line: the host is chosen by the agent, so `github.com.evil.example`
+has the domain `evil.example`. Punycode names (`xn--…`) are flagged. Names are not resolved before your
+approval, so IPs show as "not resolved yet". A destination you approve can still be refused by the hard
+deny (LAN, host, metadata…). At most `max_pending` (10) requests wait at once; further unknown destinations
+are denied immediately until you have answered.
 
 ## Log
 
@@ -51,7 +55,8 @@ create a rule for exactly that host:port.
 - **Test a destination**: dry run against the current policy, including DNS resolution and hard deny.
 - **Presets**: apply a preset's rules on top, optionally with a TTL (e.g. `open` for 900 s during setup).
 - **Add rule**: host glob or CIDR, ports, note and optional TTL. New rules go to the top (first match wins).
-- **Hard deny**: CIDRs that are never reachable. Removing entries can expose your LAN; you'll be asked to confirm.
+- **Hard deny**: CIDRs that are never reachable. The built-in floor is read-only here (change it only in the
+  gateway config file); you can add more, e.g. your Docker host's public IP.
 - **Raw policy JSON**: edit everything at once (validated server-side).
 
 ## Console

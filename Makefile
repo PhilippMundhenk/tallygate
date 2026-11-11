@@ -12,10 +12,11 @@ help:  ## show this help
 dev-setup:  ## install dev dependencies into the current Python env
 	$(PY) -m pip install -r requirements-dev.txt shellcheck-py
 
-lint:  ## ruff + shellcheck
+lint:  ## ruff + shellcheck + vendored-file checksums
 	ruff check .
 	ruff format --check .
 	shellcheck setup.sh agent/entrypoint.sh tests/integration/bypass.sh
+	cd control/app/static/vendor && sha256sum --quiet -c SHA256SUMS
 
 fmt:  ## auto-format
 	ruff check --fix .

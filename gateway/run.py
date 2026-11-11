@@ -34,6 +34,7 @@ for opt in (
     "ssl_insecure=false",
     "upstream_cert=true",
     "dns_use_hosts_file=false",
+    "onboarding=false",  # no built-in mitm.it pages: every request goes through the policy
 ):
     args += ["--set", opt]
 args += os.environ.get("GW_EXTRA_ARGS", "").split()

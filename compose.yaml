@@ -14,6 +14,9 @@ name: tallygate
 x-hardening: &hardening
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
+  sysctls: &no-ipv6                       # no IPv6 at all (not even link-local fe80:: on internal networks)
+    net.ipv6.conf.all.disable_ipv6: "1"
+    net.ipv6.conf.default.disable_ipv6: "1"
   restart: unless-stopped
   logging:
     driver: json-file
@@ -27,6 +30,7 @@ services:
     read_only: true
     tmpfs: ["/tmp"]
     sysctls:
+      <<: *no-ipv6
       net.ipv4.ip_unprivileged_port_start: "53"   # bind DNS :53 as non-root without capabilities
     environment:
       GW_LISTEN_HOST: 172.31.10.2        # proxy/SOCKS/DNS/service ports: agent network only
@@ -59,6 +63,8 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       COOKIE_SECURE: ${COOKIE_SECURE:-1}
       TRUST_FORWARDED_FOR: ${TRUST_FORWARDED_FOR:-0}  # 1 = behind a reverse proxy that sets X-Forwarded-*
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}           # CIDRs whose X-Forwarded-*/auth headers are believed
+      SESSION_IDLE: ${SESSION_IDLE:-7200}
       PUBLIC_URL: ${PUBLIC_URL:-}
       GW_URL: http://172.31.11.2:8081
       GW_API_TOKEN: ${GW_API_TOKEN}

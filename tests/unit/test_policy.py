@@ -68,8 +68,8 @@ def test_expiry_and_prune():
 
 
 def test_approval_scopes():
-    r = rule_for_approval("objects.githubusercontent.com", 443, "domain")
-    assert r.host == "*.githubusercontent.com" and r.expires is None
+    r = rule_for_approval("api.github.com", 443, "domain")
+    assert r.host == "*.github.com" and r.expires is None
     r = rule_for_approval("pypi.org", 443, "once")
     assert r.expires and r.expires - time.time() <= 120
     assert registrable_domain("a.b.example.co.uk") == "example.co.uk"
@@ -114,4 +114,92 @@ def test_render(tmp_path):
 
     out = render("Basic ${b64:x-access-token:${github_token}}", s)
     assert base64.b64decode(out.split()[1]).decode() == "x-access-token:ghp_abc"
+    assert (tmp_path / "s.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_domain_scope_respects_private_public_suffixes():
+    # TG-04: widening must never cover other tenants of a shared suffix
+    assert rule_for_approval("foo.github.io", 443, "domain").host == "*.foo.github.io"
+    assert rule_for_approval("x.ngrok-free.app", 443, "domain").host == "*.x.ngrok-free.app"
+    assert rule_for_approval("b.s3.amazonaws.com", 443, "domain").host == "*.b.s3.amazonaws.com"
+    for host in ("github.io", "co.uk", "localhost"):
+        with pytest.raises(ValueError):
+            rule_for_approval(host, 443, "domain")
+
+
+def test_hostname_validation():
+    from egressgw.policy import valid_hostname
+
+    assert (
+        valid_hostname("api.github.com")
+        and valid_hostname("_dmarc.example.com.")
+        and valid_hostname("xn--80ak6aa92e.com")
+    )
+    for bad in (
+        "",
+        "a..b",
+        "-a.com",
+        "a-.com",
+        "gïthub.com",
+        "a b.com",
+        "x" * 64 + ".com",
+        "a.com\r\n",
+        "[x].com",
+        "*.com",
+    ):
+        assert not valid_hostname(bad), bad
+
+
+def test_hard_deny_floor_cannot_be_removed_via_policy():
+    # TG-03: an API/UI-supplied policy can only add CIDRs
+    p = Policy.from_dict({"default": "allow", "hard_deny": [], "rules": [{"id": "a", "action": "allow", "host": "*"}]})
+    assert p.evaluate("nas.example.org", 443, ["192.168.1.10"]).action == "deny"
+    p = Policy.from_dict({"hard_deny": ["203.0.113.7/32", "10.0.0.0/8"], "hard_deny_floor": ["junk"]})
+    assert p.hard_deny == ["203.0.113.7/32"]  # 10/8 is already in the floor (deduped); floor key ignored
+    p = Policy.from_dict({"hard_deny": ["8.8.8.8/32"]})
+    assert p.evaluate("dns.google", 443, ["8.8.8.8"]).action == "deny"
+
+
+def test_tunnelling_prefixes_are_hard_denied():
+    p = Policy.from_dict({"default": "allow"})
+    for ip in ("64:ff9b::a00:1", "2002:c0a8:101::1", "2001:0:1::1", "::127.0.0.1", "fec0::1"):
+        assert p.evaluate("x.example", 443, [ip]).action == "deny", ip
+
+
+def test_name_first_evaluation():
+    # TG-02: names are decided before resolution; only CIDR allow/ask rules need the IPs
+    p = Policy.from_dict(
+        {
+            "default": "ask",
+            "rules": [
+                {"id": "d", "action": "deny", "host": "*.evil.example"},
+                {"id": "a", "action": "allow", "host": "ok.example"},
+            ],
+        }
+    )
+    assert p.evaluate_name("x.evil.example", 443).action == "deny"
+    assert p.evaluate_name("ok.example", 443).action == "allow"
+    assert p.evaluate_name("new.example", 443).action == "ask"
+    p.add_rule(Rule(action="allow", cidr="140.82.112.0/20"), top=False)
+    assert p.evaluate_name("new.example", 443) is None
+    p.add_rule(Rule(action="deny", cidr="1.2.3.0/24"), top=True)
+    assert p.evaluate_name("x.evil.example", 443).action == "deny"  # CIDR deny doesn't force a lookup
+
+
+def test_service_exception_only_in_reverse_mode():
+    # TG-15: the allow_private exception is bound to the service listener, not the proxy modes
+    from egressgw.policy import Exception_
+
+    p = Policy.from_dict({"default": "allow"})
+    p.exceptions = [Exception_(host="192.168.1.5", port=5432)]
+    assert p.evaluate("192.168.1.5", 5432, ["192.168.1.5"], "reverse").action == "allow"
+    assert p.evaluate("192.168.1.5", 5432, ["192.168.1.5"], "regular").action == "deny"
+    assert p.evaluate("192.168.1.5", 5432, ["192.168.1.5"], "socks5").action == "deny"
+
+
+def test_secret_values_reject_control_characters(tmp_path):
+    s = Secrets(tmp_path / "s.json")
+    with pytest.raises(ValueError):
+        s.set("t", "abc\r\nX-Evil: 1")
+    s.set("t", "ghp_ok")
     assert (tmp_path / "s.json").stat().st_mode & 0o777 == 0o600

@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/PhilippMundhenk/tallygate/actions/workflows/ci.yml/badge.svg)](https://github.com/PhilippMundhenk/tallygate/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.1.0-informational)
+![Version](https://img.shields.io/badge/version-0.2.0-informational)
 
 tallygate puts an AI coding agent (Claude Code with [Remote Control](https://code.claude.com/docs/en/remote-control))
 into a container that has **no route to anything** except a gateway. The gateway decides every outbound
@@ -29,9 +29,11 @@ only then let through, turned back, or held for you to decide.
   domain, deny, or block forever. Concurrent attempts share one prompt.
 - **LAN protection.** A hard deny on resolved IPs (RFC1918, loopback, link-local/metadata, CGNAT, ULA …) that
   can't be approved away, plus DNS-rebinding protection by pinning to the checked IP.
-- **No DNS exfiltration.** The agent's DNS always answers NXDOMAIN, and every attempt is logged.
+- **No DNS exfiltration.** The agent's DNS always answers NXDOMAIN, and every attempt is logged. The gateway
+  only resolves a name after the policy or a human allowed it.
 - **Secrets stay out of the agent.** The GitHub token lives in the gateway and is injected in flight, only when
-  the CONNECT target, SNI and Host all match.
+  the CONNECT target, SNI and Host all match. The agent's own credentials for those hosts are stripped, and
+  read-only hosts (e.g. the npm registry) refuse uploads.
 - **Operator UI.** Approvals, live log, rules editor with dry-run test, presets, browser consoles (Remote
   Control, bash, claude), and a setup wizard for GitHub, Claude login, git and Remote Control.
 - **Phone approvals** via Telegram buttons or Matrix reactions (outbound polling only, no webhooks).
@@ -51,7 +53,8 @@ flowchart LR
     You["You<br/>browser · phone"] --> C
 ```
 
-Details: [docs/architecture.md](docs/architecture.md) · Security: [docs/threat-model.md](docs/threat-model.md)
+Details: [docs/architecture.md](docs/architecture.md) · Security: [docs/threat-model.md](docs/threat-model.md) ·
+[security review](docs/security-review.md)
 
 ## Quick start
 

@@ -95,10 +95,11 @@ Key properties:
 |---|---|
 | Agent has no route out | `agent-net` is `internal: true`: Docker creates no default gateway for it. The agent is attached to this network only. |
 | Agent can only talk to the gateway's enforcement ports | The gateway binds proxy/SOCKS/DNS/service ports to its `agent-net` address and the API to its `control-net` address only. |
-| Agent cannot reach the UI | Control is on `agent-net` (to reach ttyd/status) but binds its HTTP server to its `mgmt` address only. |
+| Agent cannot reach the UI | Control is on `agent-net` (to reach ttyd/status) but binds its HTTP server to its `mgmt` address only (`CONTROL_BIND_HOST` is mandatory). |
+| Agent cannot run code in the UI | Control serves the console page and its xterm.js client itself and relays only the ttyd WebSocket, filtered (browser → input/resize, agent → terminal output). No agent-supplied HTML/JS is ever served on the UI origin; strict CSP everywhere. |
 | Agent cannot reach the LAN or host via the gateway | `hard_deny` covers RFC1918, loopback, link-local, CGNAT, ULA etc. and is checked on **resolved** IPs; Docker's own subnets (172.16/12) are included. |
-| No DNS exfiltration | The agent's resolver is the gateway, which answers NXDOMAIN to everything. Names are resolved by the gateway when the proxy connects. |
-| No IPv6 side door | `enable_ipv6: false` on all networks; IPv6 targets are subject to the same `hard_deny`/policy checks. |
+| No DNS exfiltration | The agent's resolver is the gateway, which answers NXDOMAIN to everything. The gateway resolves a name only **after** the policy (or a human) allowed it, so denied or pending names never reach a resolver. |
+| No IPv6 side door | `enable_ipv6: false` on all networks and IPv6 disabled by sysctl in every container (no link-local `fe80::`); IPv6 targets are subject to the same hard deny/policy checks. |
 
 Why topology instead of iptables: [ADR-0001](adr/0001-network-topology-instead-of-iptables.md).
 
@@ -112,8 +113,8 @@ sequenceDiagram
     participant G as egress-gw
     participant S as api.anthropic.com
     A->>G: CONNECT api.anthropic.com:443
-    G->>G: resolve → [160.79.104.10]
-    G->>G: hard_deny? no · rules → allow (rule "anthropic")
+    G->>G: name valid · rules on name → allow (rule "anthropic")
+    G->>G: resolve → [160.79.104.10] · hard deny? no · rules → allow
     G->>G: log decision · pin address to 160.79.104.10
     G->>S: TCP connect (pinned IP)
     G-->>A: 200 Connection established
@@ -131,13 +132,14 @@ sequenceDiagram
     participant C as control
     participant H as Operator (UI / Telegram / Matrix)
     A->>G: CONNECT pypi.example.org:443
-    G->>G: policy → ask
-    G->>G: create pending request (dedupe by host:port), hold connection
+    G->>G: rules on name → ask (name NOT resolved yet: no DNS leak)
+    G->>G: create pending request (dedupe by host:port, max_pending), hold connection
     G-->>C: SSE event "ask"
     C-->>H: UI card / Telegram buttons / Matrix message
     H->>C: "Allow 1 h"
     C->>G: POST /pending/{id}/decide {scope: hour, by: telegram:philipp}
-    G->>G: insert rule at top (expires in 1 h) · resolve held connections
+    G->>G: insert rule at top (expires in 1 h) · release held connections
+    G->>G: resolve · hard deny on resolved IPs · pin IP
     G->>A: 200 Connection established
     Note over G: No answer within ask_timeout → deny,<br/>then 60 s negative cache for that host:port
 ```
@@ -155,7 +157,7 @@ sequenceDiagram
     G->>G: orig_host is an injection host AND SNI == orig_host → intercept
     G-->>A: TLS with certificate from the tallygate CA (trusted by the agent)
     A->>G: GET /user · Authorization: token injected-by-egress-gateway
-    G->>G: Host == orig_host → replace Authorization with "Bearer <real token>"
+    G->>G: strip agent Authorization/Cookie · Host == orig_host → set "Bearer <real token>"
     G->>S: TLS (verified against api.github.com) · real token
     S-->>A: response
 ```
@@ -186,12 +188,18 @@ All four paths go through the same `server_connect` hook ([ADR-0003](adr/0003-si
 
 Evaluation for a connection attempt to `host:port`:
 
-1. **Resolve** `host` (unless it is an IP literal).
-2. **hard_deny**: if any literal/resolved address is in a hard-deny CIDR → **deny**, never ask, cannot be
-   approved (except explicit service-port exceptions configured by the admin).
-3. **Rules**, first match wins. Approvals and presets are inserted at the top. Expired rules are ignored and
+1. **Validate** the name (strict DNS syntax, ASCII/punycode only, ≤ 253 chars) — otherwise deny.
+2. **Name-first decision** (no DNS yet): rules matched on the name, then the default. `deny` → deny
+   without resolving; `ask` → hold and ask the human first. Only a CIDR `allow`/`ask` rule that comes
+   before the deciding host rule forces a lookup at this stage ([ADR-0011](adr/0011-decide-on-names-before-resolving.md)).
+3. **Resolve** the allowed name (IP literals skip 1–3).
+4. **Hard deny** = immutable floor + policy extras: if any literal/resolved address is inside → **deny**,
+   never ask, cannot be approved (except a service-port target with `allow_private`, on that port only).
+5. **Rules**, first match wins. Approvals and presets are inserted at the top. Expired rules are ignored and
    pruned every 15 s.
-4. **default** action: `allow` (blocklist mode), `deny` (allowlist mode) or `ask` (human in the loop).
+6. **default** action: `allow` (blocklist mode), `deny` (allowlist mode) or `ask` (human in the loop).
+
+At most `max_pending` approvals are open at once; identical log events are coalesced.
 
 Rule matching:
 
@@ -209,7 +217,7 @@ Approval scopes map to rules:
 | `once` | allow exact host:port for 2 min (covers follow-up connections of the same operation) |
 | `hour` | allow exact host:port for 1 h |
 | `always` | allow exact host:port permanently |
-| `domain` | allow `*.<registrable domain>`:port permanently |
+| `domain` | allow `*.<registrable domain>`:port permanently. The registrable domain comes from the Public Suffix List **including its private section**, so `foo.github.io` widens to `*.foo.github.io`, never `*.github.io`; not offered for public suffixes or IPs. |
 | `deny` | deny exact host:port for 2 min |
 | `deny_always` | deny exact host:port permanently |
 

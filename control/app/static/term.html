@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>tallygate · console</title>
+<link rel="stylesheet" href="/static/vendor/xterm.css">
+<link rel="stylesheet" href="/static/term.css">
+</head>
+<body>
+<div id="status" class="status">connecting…</div>
+<div id="term"></div>
+<!-- Served by the control plane itself. Only the terminal byte stream comes from the agent
+     (over a filtered WebSocket); no HTML/JS from the agent ever runs on this origin. -->
+<script src="/static/vendor/xterm.js"></script>
+<script src="/static/vendor/addon-fit.js"></script>
+<script src="/static/term.js"></script>
+</body></html>

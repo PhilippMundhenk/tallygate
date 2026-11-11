@@ -13,5 +13,6 @@ Format: [MADR](https://adr.github.io/madr/)-style, one decision per file. Status
 | [0006](0006-dns-nxdomain-for-the-agent.md) | Agent DNS always answers NXDOMAIN | Accepted |
 | [0007](0007-hard-deny-on-resolved-ips-and-pinning.md) | Hard-deny on resolved IPs and pinning to the checked IP | Accepted |
 | [0008](0008-approvals-as-rules-with-ttl.md) | Approvals are rules with TTL; hold connections while asking | Accepted |
-| [0009](0009-web-console-via-ttyd-and-tmux.md) | Web consoles via ttyd + tmux, proxied by control | Accepted |
+| [0009](0009-web-console-via-ttyd-and-tmux.md) | Web consoles via ttyd + tmux, relayed by control | Accepted (revised) |
 | [0010](0010-notifications-via-outbound-polling-bots.md) | Notifications via outbound-polling Telegram/Matrix bots | Accepted |
+| [0011](0011-decide-on-names-before-resolving.md) | Decide on names before resolving them | Accepted |

@@ -43,6 +43,7 @@ def test_allowed_by_cidr_rule(gateway, upstream):
 
 
 def test_hard_deny_on_resolved_private_ip_is_immediate(gateway):
+    """lan.test is allowed by name but resolves to a private IP: denied at once, never asked."""
     t0 = time.time()
     status, _ = http_via_proxy(gateway["ports"]["http"], "http://lan.test/")
     assert status == 502 and time.time() - t0 < 2  # never asked
@@ -111,7 +112,7 @@ def test_injection_only_with_secret_and_matching_connect_and_sni(gateway, upstre
     hdr = {"Authorization": "token placeholder"}
     gateway["api"].call("PUT", "/secrets/github_token", {"value": ""})
     _, body = https_via_proxy(gateway["ports"]["http"], target, "gh.test", "/a", gateway["ca"], hdr)
-    assert json.loads(body)["auth"] == "token placeholder"  # no secret yet -> untouched
+    assert json.loads(body)["auth"] is None  # no secret yet -> agent credentials stripped (TG-05)
 
     gateway["api"].call("PUT", "/secrets/github_token", {"value": "ghp_E2E"})
     _, body = https_via_proxy(gateway["ports"]["http"], target, "gh.test", "/b", gateway["ca"], hdr)
@@ -200,3 +201,118 @@ def test_preset_with_ttl(gateway):
     rule = next(r for r in pol["rules"] if r["id"] == "open-https")
     assert rule["expires"] - time.time() <= 61
     gateway["api"].call("DELETE", "/rules/open-https")
+
+
+# ---------------------------------------------------------------- security review regressions
+def test_denied_names_are_never_resolved(gateway):
+    """TG-02: a name the policy denies must not reach a resolver (DNS exfiltration)."""
+    _, line = connect_tunnel(gateway["ports"]["http"], "c2VjcmV0.x.denied.test:443")
+    assert " 200" not in line
+    ev = last_events(gateway, 1)[0]
+    assert ev["host"] == "c2vjcmv0.x.denied.test" and "not resolved" in ev["reason"] and ev["ips"] == []
+
+
+def test_unknown_names_are_asked_before_resolution(gateway):
+    port = 4441
+    t, res = in_thread(connect_tunnel, gateway["ports"]["http"], f"unresolved-name.test:{port}")
+    p = wait_pending(gateway, port)
+    assert p["ips"] == [] and p["domain"] == "unresolved-name.test"
+    gateway["api"].call("POST", f"/pending/{p['id']}/decide", {"scope": "deny", "by": "e2e"})
+    t.join(10)
+    assert " 200" not in res["r"][1]
+
+
+def test_invalid_hostnames_are_refused(gateway):
+    """TG-10: garbage / spoofy names never reach DNS or a human prompt."""
+    for host in ("bad-.test", "a..b.test", "x" * 70 + ".test"):
+        _, line = connect_tunnel(gateway["ports"]["http"], f"{host}:443")
+        assert " 200" not in line
+    _, pend, _ = gateway["api"].call("GET", "/pending")
+    assert pend == []
+    assert last_events(gateway, 1)[0]["reason"] == "invalid hostname"
+
+
+def test_pending_approvals_are_capped(gateway):
+    """TG-08: max_pending=3 in the test config; the 4th distinct request is denied immediately."""
+    threads = [in_thread(connect_tunnel, gateway["ports"]["http"], f"flood{i}.test:{4450 + i}") for i in range(3)]
+    for i in range(3):
+        wait_pending(gateway, 4450 + i)
+    t0 = time.time()
+    _, line = connect_tunnel(gateway["ports"]["http"], "flood9.test:4459")
+    assert " 200" not in line and time.time() - t0 < 2
+    assert "too many pending" in last_events(gateway, 1)[0]["reason"]
+    _, pend, _ = gateway["api"].call("GET", "/pending")
+    for p in pend:
+        gateway["api"].call("POST", f"/pending/{p['id']}/decide", {"scope": "deny", "by": "e2e"})
+    for t, _ in threads:
+        t.join(10)
+
+
+def test_agent_credentials_never_reach_injection_hosts(gateway, upstream):
+    """TG-05: Authorization/Cookie from the agent are stripped even when no secret is configured."""
+    gateway["api"].call("PUT", "/secrets/github_token", {"value": ""})
+    hdr = {"Authorization": "token ghp_ATTACKER", "Cookie": "user_session=attacker"}
+    _, body = https_via_proxy(
+        gateway["ports"]["http"], f"gh.test:{upstream['https']}", "gh.test", "/c", gateway["ca"], hdr
+    )
+    assert json.loads(body)["auth"] is None
+    gateway["api"].call("PUT", "/secrets/github_token", {"value": "ghp_E2E"})
+    _, body = https_via_proxy(
+        gateway["ports"]["http"], f"gh.test:{upstream['https']}", "gh.test", "/c", gateway["ca"], hdr
+    )
+    assert json.loads(body)["auth"] == "Bearer ghp_E2E"
+
+
+def test_readonly_hosts_refuse_writes(gateway, upstream):
+    """TG-11: e.g. `npm publish` as an exfiltration path."""
+    target = f"ro.test:{upstream['https']}"
+    status, _ = https_via_proxy(gateway["ports"]["http"], target, "ro.test", "/pkg", gateway["ca"])
+    assert status == 200
+    raw, line = connect_tunnel(gateway["ports"]["http"], target)
+    assert " 200" in line
+    import ssl
+
+    ctx = ssl.create_default_context(cafile=gateway["ca"])
+    with ctx.wrap_socket(raw, server_hostname="ro.test") as tls:
+        tls.sendall(b"PUT /pkg HTTP/1.1\r\nHost: ro.test\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+        data = b""
+        while chunk := tls.recv(4096):
+            data += chunk
+    assert data.startswith(b"HTTP/1.1 403") and b"read-only" in data
+
+
+def test_identical_events_are_coalesced(gateway):
+    """TG-09: a flood of identical events is stored once plus a 'repeated Nx' summary."""
+    for _ in range(25):
+        dns_rcode(gateway["ports"]["dns"], "flood.example.com")
+    rows = [e for e in last_events(gateway, 50) if e["host"] == "flood.example.com"]
+    assert len(rows) == 1
+    time.sleep(17)  # housekeeping flushes the counter
+    rows = [e for e in last_events(gateway, 50) if e["host"] == "flood.example.com"]
+    assert any("repeated" in e["reason"] for e in rows)
+
+
+def test_hard_deny_floor_is_not_editable_via_api(gateway):
+    """TG-03"""
+    _, pol, _ = gateway["api"].call("GET", "/policy")
+    pol["hard_deny"] = []
+    gateway["api"].call("PUT", "/policy", pol)
+    _, pol, _ = gateway["api"].call("GET", "/policy")
+    assert "192.168.0.0/16" in pol["hard_deny_floor"]
+    _, data, _ = gateway["api"].call("POST", "/test", {"host": "lan.test", "port": 443})
+    assert data["action"] == "deny" and data["rule_id"] == "hard_deny"
+
+
+def test_secret_with_crlf_is_rejected(gateway):
+    status, _, _ = gateway["api"].call("PUT", "/secrets/github_token", {"value": "x\r\nX-Evil: 1"})
+    assert status == 400
+
+
+def test_punycode_names_are_flagged_in_prompts(gateway):
+    """TG-10: IDN names arrive as punycode and are flagged for the human."""
+    port = 4470
+    t, _res = in_thread(connect_tunnel, gateway["ports"]["http"], f"xn--gthub-cta.com:{port}")
+    p = wait_pending(gateway, port)
+    assert p["host"] == "xn--gthub-cta.com" and p["idn"] is True
+    gateway["api"].call("POST", f"/pending/{p['id']}/decide", {"scope": "deny", "by": "e2e"})
+    t.join(10)

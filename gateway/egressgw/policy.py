@@ -1,16 +1,22 @@
 """Policy engine: pure logic, no I/O besides YAML load/save.
 
 Evaluation order for a connection attempt to (host, port) resolving to ips:
-  1. hard_deny (CIDRs, checked against literal and *resolved* IPs) -> deny, never ask,
-     unless an explicit service exception matches.
+  1. hard deny = immutable floor (static config) + policy extras (CIDRs, checked against literal
+     and *resolved* IPs) -> deny, never ask, unless a service exception for that exact
+     reverse-mode target matches.
   2. rules, first match wins (approvals are inserted at the top).
   3. default action (allow | deny | ask).
+
+Hostnames are first evaluated *without* resolving them (`evaluate_name`), so names the policy
+denies or still has to ask about never reach a DNS resolver (no DNS exfiltration).
 """
 
 from __future__ import annotations
 
 import fnmatch
+import functools
 import ipaddress
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -29,17 +35,47 @@ DEFAULT_HARD_DENY = [
     "169.254.0.0/16",
     "172.16.0.0/12",
     "192.0.0.0/24",
+    "192.0.2.0/24",
+    "192.88.99.0/24",
     "192.168.0.0/16",
     "198.18.0.0/15",
+    "198.51.100.0/24",
+    "203.0.113.0/24",
     "224.0.0.0/4",
     "240.0.0.0/4",
-    "::/128",
-    "::1/128",
+    "::/96",  # unspecified, loopback and deprecated IPv4-compatible addresses
     "::ffff:0:0/96",
+    "64:ff9b::/96",  # NAT64: embeds (possibly private) IPv4 addresses
+    "64:ff9b:1::/48",
+    "100::/64",
+    "2001::/32",  # Teredo
+    "2001:db8::/32",
+    "2002::/16",  # 6to4: embeds IPv4 addresses
     "fc00::/7",
     "fe80::/10",
+    "fec0::/10",
     "ff00::/8",
 ]
+
+_LABEL = re.compile(r"(?!-)[a-z0-9_-]{1,63}(?<!-)")
+
+
+def valid_hostname(host: str) -> bool:
+    """Strict DNS name syntax: ASCII letters/digits/'-'/'_', labels 1..63, total <= 253.
+    Non-ASCII (IDN) names must arrive as punycode; anything else is refused before it can be
+    resolved or shown to a human in an approval prompt."""
+    h = host.lower()
+    h = h[:-1] if h.endswith(".") else h
+    if not h or len(h) > 253 or not h.isascii():
+        return False
+    return all(_LABEL.fullmatch(label) for label in h.split("."))
+
+
+@functools.lru_cache(maxsize=1)
+def _psl():
+    from publicsuffixlist import PublicSuffixList
+
+    return PublicSuffixList()  # bundled snapshot incl. the PRIVATE section (github.io, s3, ngrok, ...)
 
 
 def is_ip(value: str) -> bool:
@@ -99,6 +135,10 @@ class Rule:
         if self.cidr:
             ipaddress.ip_network(self.cidr, strict=False)
         port_matches(self.port, 1)  # raises on garbage
+        for p in self.port if isinstance(self.port, (list, tuple)) else [self.port]:
+            for n in str(p).split("-") if p not in (None, "*", "any") else []:
+                if not 0 < int(n) < 65536:
+                    raise ValueError(f"rule {self.id}: port {p} out of range")
 
     def expired(self, now: float | None = None) -> bool:
         return self.expires is not None and (now or time.time()) >= self.expires
@@ -155,7 +195,7 @@ class Decision:
 
 @dataclass
 class Exception_:
-    """Explicit hard-deny exception (used for service ports to private targets)."""
+    """Explicit hard-deny exception for one service port's fixed target (reverse mode only)."""
 
     host: str
     port: int
@@ -165,16 +205,20 @@ class Policy:
     def __init__(self) -> None:
         self.default = "ask"
         self.ask_timeout = 60
-        self.hard_deny: list[str] = list(DEFAULT_HARD_DENY)
+        # Immutable floor: comes from the static config file, never from the API.
+        self.hard_deny_floor: list[str] = list(DEFAULT_HARD_DENY)
+        # Extras: editable via the API, can only ADD to the floor.
+        self.hard_deny: list[str] = []
         self.rules: list[Rule] = []
         self.exceptions: list[Exception_] = []
 
     # ---------- evaluation ----------
-    def hard_denied(self, host: str, port: int, ips: list[str]) -> str | None:
-        for ex in self.exceptions:
-            if host_matches(ex.host, host) and ex.port == port:
-                return None
-        nets = [ipaddress.ip_network(c, strict=False) for c in self.hard_deny]
+    def hard_denied(self, host: str, port: int, ips: list[str], mode: str | None = None) -> str | None:
+        if mode == "reverse":
+            for ex in self.exceptions:
+                if ex.host.lower() == host.lower().rstrip(".") and ex.port == port:
+                    return None
+        nets = [ipaddress.ip_network(c, strict=False) for c in [*self.hard_deny_floor, *self.hard_deny]]
         candidates = list(ips)
         if is_ip(host):
             candidates.append(host.strip("[]"))
@@ -188,8 +232,22 @@ class Policy:
                     return f"hard-deny {n} ({ip})"
         return None
 
-    def evaluate(self, host: str, port: int, ips: list[str]) -> Decision:
-        hd = self.hard_denied(host, port, ips)
+    def evaluate_name(self, host: str, port: int) -> Decision | None:
+        """Decide on the *name* alone, before any DNS lookup. Returns None when a CIDR rule that
+        could allow/ask comes first, i.e. the answer genuinely depends on the resolved IPs."""
+        now = time.time()
+        for r in self.rules:
+            if r.expired(now) or not port_matches(r.port, port):
+                continue
+            if r.host:
+                if host_matches(r.host, host):
+                    return Decision(r.action, f"rule {r.id}" + (f" ({r.note})" if r.note else ""), r.id)
+            elif r.action != "deny":
+                return None  # CIDR allow/ask: needs IPs (CIDR deny is re-checked after resolution)
+        return Decision(self.default, "default")
+
+    def evaluate(self, host: str, port: int, ips: list[str], mode: str | None = None) -> Decision:
+        hd = self.hard_denied(host, port, ips, mode)
         if hd:
             return Decision("deny", hd, "hard_deny")
         now = time.time()
@@ -229,10 +287,15 @@ class Policy:
             "rules": [r.to_dict() for r in self.rules],
         }
 
+    def describe(self) -> dict:
+        """API view: the policy plus the read-only floor."""
+        return {**self.to_dict(), "hard_deny_floor": self.hard_deny_floor}
+
     @classmethod
     def from_dict(cls, d: dict) -> Policy:
         p = cls()
         d = d or {}
+        d = {k: v for k, v in d.items() if k != "hard_deny_floor"}  # read-only, echoed back by UIs
         unknown = set(d) - {"default", "ask_timeout", "hard_deny", "rules"}
         if unknown:
             raise ValueError(f"unknown policy keys: {sorted(unknown)}")
@@ -242,10 +305,13 @@ class Policy:
         p.ask_timeout = int(d.get("ask_timeout", 60))
         if not 5 <= p.ask_timeout <= 3600:
             raise ValueError("ask_timeout must be 5..3600 seconds")
-        if "hard_deny" in d:
-            p.hard_deny = [str(c) for c in d["hard_deny"] or []]
-        for c in p.hard_deny:
-            ipaddress.ip_network(c, strict=False)
+        floor = {str(ipaddress.ip_network(c, strict=False)) for c in DEFAULT_HARD_DENY}
+        extras = []
+        for c in d.get("hard_deny") or []:
+            net = str(ipaddress.ip_network(str(c), strict=False))
+            if net not in floor and net not in extras:
+                extras.append(net)
+        p.hard_deny = extras
         p.rules = [Rule.from_dict(r) for r in d.get("rules") or []]
         ids = [r.id for r in p.rules]
         if len(ids) != len(set(ids)):
@@ -276,15 +342,14 @@ SCOPES = {
 }
 
 
-def registrable_domain(host: str) -> str:
-    """Cheap eTLD+1 approximation (handles common 2-level public suffixes)."""
-    parts = host.lower().rstrip(".").split(".")
-    if len(parts) <= 2:
-        return ".".join(parts)
-    two_level = {"co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "co.jp", "com.br", "com.cn", "co.nz"}
-    if ".".join(parts[-2:]) in two_level and len(parts) >= 3:
-        return ".".join(parts[-3:])
-    return ".".join(parts[-2:])
+def registrable_domain(host: str) -> str | None:
+    """eTLD+1 per the Public Suffix List *including* its private section, so that e.g.
+    'foo.github.io' -> 'foo.github.io' (not 'github.io', which would cover every user's pages).
+    None if the host is itself a public suffix or has no registrable part."""
+    h = host.lower().rstrip(".")
+    if is_ip(h) or not valid_hostname(h):
+        return None
+    return _psl().privatesuffix(h)
 
 
 def rule_for_approval(host: str, port: int, scope: str) -> Rule:
@@ -294,7 +359,10 @@ def rule_for_approval(host: str, port: int, scope: str) -> Rule:
     if is_ip(host):
         pattern_rule = Rule(action=action, cidr=host.strip("[]"), port=port)
     elif kind == "domain":
-        pattern_rule = Rule(action=action, host="*." + registrable_domain(host), port=port)
+        base = registrable_domain(host)
+        if not base:
+            raise ValueError(f"{host!r} has no registrable domain; approve the exact host instead")
+        pattern_rule = Rule(action=action, host="*." + base, port=port)
     else:
         pattern_rule = Rule(action=action, host=host.lower(), port=port)
     pattern_rule.source = "approval"

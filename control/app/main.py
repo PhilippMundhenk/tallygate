@@ -2,6 +2,9 @@
 
 Talks to the gateway API (control network) and to ttyd/status on the agent (agent network).
 Never has docker.sock; never holds anything the agent could use to widen its own policy.
+
+Everything that comes from the agent (terminal bytes, status JSON) is untrusted: no HTML/JS from
+the agent is ever served on this origin, and all agent responses are size-limited.
 """
 
 from __future__ import annotations
@@ -10,12 +13,14 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import os
 import re
 import secrets
 import time
+import urllib.parse
 from pathlib import Path
 
 import aiohttp
@@ -37,9 +42,18 @@ TERMINALS = dict(
     for n, p in (t.split(":") for t in os.environ.get("TERMINALS", "rc:7681,bash:7682,claude:7683").split(","))
 )
 SESSION_SECRET = (os.environ.get("SESSION_SECRET") or secrets.token_hex(32)).encode()
-SESSION_TTL = int(os.environ.get("SESSION_TTL", str(12 * 3600)))
+SESSION_TTL = int(os.environ.get("SESSION_TTL", str(12 * 3600)))  # absolute lifetime
+SESSION_IDLE = int(os.environ.get("SESSION_IDLE", str(2 * 3600)))  # idle timeout
 PROXY_AUTH_HEADER = os.environ.get("TRUST_PROXY_AUTH_HEADER", "")  # e.g. Remote-User (only behind a trusted proxy!)
+TRUST_FORWARDED = os.environ.get("TRUST_FORWARDED_FOR") == "1"
+# Peers whose X-Forwarded-* / auth headers are believed. Required for TRUST_PROXY_AUTH_HEADER.
+TRUSTED_PROXIES = [
+    ipaddress.ip_network(c.strip(), strict=False) for c in os.environ.get("TRUSTED_PROXIES", "").split(",") if c.strip()
+]
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
 COOKIE = "tallygate_session"
+AGENT_MAX_BYTES = 1024 * 1024  # cap on anything read from the agent (status JSON, terminal frames)
+BROWSER_MAX_FRAME = 64 * 1024
 
 # Gateway API paths the UI may use: (method, regex)
 GW_ALLOW = [
@@ -60,42 +74,92 @@ GW_ALLOW = [
 
 
 # ------------------------------------------------------------------ auth
+def _peer_trusted(request: web.Request) -> bool:
+    try:
+        peer = ipaddress.ip_address(request.remote or "")
+    except ValueError:
+        return False
+    return any(peer in n for n in TRUSTED_PROXIES)
+
+
+def client_ip(request: web.Request) -> str:
+    if TRUST_FORWARDED and _peer_trusted(request) and request.headers.get("X-Forwarded-For"):
+        return request.headers["X-Forwarded-For"].split(",")[-1].strip()
+    return request.remote or "?"
+
+
 def _sign(payload: str) -> str:
     return hmac.new(SESSION_SECRET, payload.encode(), hashlib.sha256).hexdigest()
 
 
+# Server-side sessions: logout and restarts really end a session; idle + absolute expiry.
+_sessions: dict[str, dict] = {}
+
+
 def make_session(user: str) -> str:
-    payload = f"{user}|{int(time.time()) + SESSION_TTL}"
-    return base64.urlsafe_b64encode(f"{payload}|{_sign(payload)}".encode()).decode()
+    sid = secrets.token_urlsafe(32)
+    now = time.time()
+    _sessions[sid] = {"user": user, "exp": now + SESSION_TTL, "seen": now}
+    return f"{sid}.{_sign(sid)}"
+
+
+def _session_id(request: web.Request) -> str | None:
+    raw = request.cookies.get(COOKIE, "")
+    sid, _, sig = raw.partition(".")
+    if not sid or not hmac.compare_digest(sig, _sign(sid)):
+        return None
+    return sid
 
 
 def read_session(request: web.Request) -> str | None:
-    if PROXY_AUTH_HEADER and request.headers.get(PROXY_AUTH_HEADER):
+    if PROXY_AUTH_HEADER and _peer_trusted(request) and request.headers.get(PROXY_AUTH_HEADER):
         return request.headers[PROXY_AUTH_HEADER][:64]
-    raw = request.cookies.get(COOKIE)
-    if not raw:
+    sid = _session_id(request)
+    s = _sessions.get(sid) if sid else None
+    now = time.time()
+    if not s or s["exp"] < now or now - s["seen"] > SESSION_IDLE:
+        _sessions.pop(sid, None)
         return None
-    try:
-        user, exp, sig = base64.urlsafe_b64decode(raw.encode()).decode().rsplit("|", 2)
-    except Exception:  # noqa: BLE001
-        return None
-    if not hmac.compare_digest(sig, _sign(f"{user}|{exp}")) or int(exp) < time.time():
-        return None
-    return user
+    s["seen"] = now
+    return s["user"]
+
+
+def _prune_sessions() -> None:
+    now = time.time()
+    for sid, s in list(_sessions.items()):
+        if s["exp"] < now or now - s["seen"] > SESSION_IDLE:
+            del _sessions[sid]
+
+
+def hash_password(pw: str, log2n: int = 16) -> str:
+    salt = os.urandom(16)
+    n = 2**log2n
+    digest = hashlib.scrypt(pw.encode(), salt=salt, n=n, r=8, p=1, maxmem=256 * n * 8 + 1024 * 1024).hex()
+    return f"scrypt:{log2n}:{salt.hex()}:{digest}"
 
 
 def check_password(pw: str) -> bool:
-    """CONTROL_PASSWORD_HASH = "scrypt:<salt-hex>:<hash-hex>" (preferred) or CONTROL_PASSWORD (plain)."""
+    """CONTROL_PASSWORD_HASH = "scrypt:<log2N>:<salt-hex>:<hash-hex>" (legacy "scrypt:<salt>:<hash>" = N 2^14),
+    or CONTROL_PASSWORD (plain, discouraged)."""
     h = os.environ.get("CONTROL_PASSWORD_HASH", "")
     if h.startswith("scrypt:"):
-        _, salt, digest = h.split(":")
-        calc = hashlib.scrypt(pw.encode(), salt=bytes.fromhex(salt), n=2**14, r=8, p=1).hex()
+        parts = h.split(":")
+        try:
+            log2n, salt, digest = (14, *parts[1:]) if len(parts) == 3 else (int(parts[1]), *parts[2:])
+            n = 2 ** int(log2n)
+            calc = hashlib.scrypt(
+                pw.encode(), salt=bytes.fromhex(salt), n=n, r=8, p=1, maxmem=256 * n * 8 + 1024 * 1024
+            ).hex()
+        except (ValueError, TypeError):
+            log.error("CONTROL_PASSWORD_HASH is malformed")
+            return False
         return hmac.compare_digest(calc, digest)
     plain = os.environ.get("CONTROL_PASSWORD", "")
     return bool(plain) and hmac.compare_digest(pw.encode(), plain.encode())
 
 
 _login_failures: dict[str, list[float]] = {}
+_login_lock = asyncio.Lock()  # one password check at a time: caps guessing rate globally, bounds memory
 
 
 @web.middleware
@@ -114,43 +178,69 @@ async def security(request: web.Request, handler):
         state_changing = request.method not in ("GET", "HEAD", "OPTIONS") and path.startswith("/api/")
         if state_changing and (request.headers.get("X-Tallygate") != "1" or not _same_origin(request)):
             return web.json_response({"error": "csrf check failed"}, status=403)
+        if path == "/logout" and not _same_origin(request):
+            return web.json_response({"error": "csrf check failed"}, status=403)
         resp = await handler(request)
     if isinstance(resp, web.StreamResponse) and not resp.prepared:
-        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
-        resp.headers.setdefault("Referrer-Policy", "no-referrer")
-        if not path.startswith("/term/"):
-            resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-            resp.headers.setdefault(
-                "Content-Security-Policy",
-                "default-src 'self'; frame-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'",
-            )
+        _security_headers(resp, path)
     return resp
+
+
+CSP = (
+    "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+    "connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'"
+)
+
+
+def _security_headers(resp: web.StreamResponse, path: str) -> None:
+    resp.headers.setdefault("Content-Security-Policy", CSP)  # everywhere, incl. the console
+    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")  # "no-referrer" makes browsers send Origin: null
+    resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    resp.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+    resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), usb=()")
+    if path.startswith("/api/") or path in ("/", "/login"):
+        resp.headers.setdefault("Cache-Control", "no-store")
+
+
+def _expected_origin(request: web.Request) -> str:
+    if PUBLIC_URL:
+        u = urllib.parse.urlsplit(PUBLIC_URL)
+        return f"{u.scheme}://{u.netloc}".lower()
+    trusted = TRUST_FORWARDED and _peer_trusted(request)
+    host = (request.headers.get("X-Forwarded-Host") if trusted else None) or request.host
+    scheme = (request.headers.get("X-Forwarded-Proto") if trusted else None) or request.scheme
+    return f"{scheme}://{host}".lower()
 
 
 def _same_origin(request: web.Request) -> bool:
     origin = request.headers.get("Origin")
     if not origin:
         return True  # non-browser client with session cookie; custom header still required
-    host = (
-        request.headers.get("X-Forwarded-Host") if os.environ.get("TRUST_FORWARDED_FOR") == "1" else None
-    ) or request.host
-    return origin.split("://", 1)[-1] == host
+    return origin.lower() == _expected_origin(request)
 
 
 # ------------------------------------------------------------------ pages
 async def login_page(request: web.Request) -> web.StreamResponse:
     if request.method == "GET":
         return web.FileResponse(STATIC / "login.html")
-    ip = request.remote or "?"
-    if os.environ.get("TRUST_FORWARDED_FOR") == "1":  # only when a trusted reverse proxy sets it
-        ip = request.headers.get("X-Forwarded-For", ip).split(",")[-1].strip()
+    if not _same_origin(request):
+        return web.Response(status=403, text="bad origin")
+    ip = client_ip(request)
     now = time.time()
     fails = [t for t in _login_failures.get(ip, []) if now - t < 900]
     if len(fails) >= 10:
         return web.Response(status=429, text="Too many attempts, try again later.")
     form = await request.post()
-    if check_password(str(form.get("password", ""))):
+    pw = str(form.get("password", ""))[:1024]
+    async with _login_lock:  # serialised + 1 s penalty on failure -> ~1 guess/s globally
+        ok = await asyncio.get_running_loop().run_in_executor(None, check_password, pw)
+        if not ok:
+            await asyncio.sleep(1)
+    if ok:
         _login_failures.pop(ip, None)
+        _prune_sessions()
         resp = web.HTTPFound("/")
         resp.set_cookie(
             COOKIE,
@@ -163,11 +253,17 @@ async def login_page(request: web.Request) -> web.StreamResponse:
         raise resp
     fails.append(now)
     _login_failures[ip] = fails
-    await asyncio.sleep(1)
+    if len(_login_failures) > 10_000:  # bounded memory under address-spraying
+        for k in sorted(_login_failures, key=lambda k: _login_failures[k][-1])[:5_000]:
+            del _login_failures[k]
+    log.warning("failed login from %s", ip)
     raise web.HTTPFound("/login?failed=1")
 
 
-async def logout(_request: web.Request):
+async def logout(request: web.Request):
+    sid = _session_id(request)
+    if sid:
+        _sessions.pop(sid, None)
     resp = web.HTTPFound("/login")
     resp.del_cookie(COOKIE)
     raise resp
@@ -264,9 +360,15 @@ async def api_agent(request: web.Request):
         async with request.app["http"].get(
             f"http://{AGENT_HOST}:{AGENT_STATUS_PORT}/{what}", timeout=aiohttp.ClientTimeout(total=90)
         ) as r:
-            return web.json_response(await r.json(content_type=None), status=r.status)
-    except (TimeoutError, aiohttp.ClientError) as e:
-        return web.json_response({"error": f"agent unreachable: {e}"}, status=502)
+            raw = await r.content.read(AGENT_MAX_BYTES + 1)
+            if len(raw) > AGENT_MAX_BYTES:
+                return web.json_response({"error": "agent response too large"}, status=502)
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+            return web.json_response(data, status=200 if r.status == 200 else 502)
+    except (TimeoutError, aiohttp.ClientError, ValueError) as e:
+        return web.json_response({"error": f"agent unreachable or invalid response: {e}"}, status=502)
 
 
 async def api_meta(request: web.Request):
@@ -279,80 +381,72 @@ async def api_meta(request: web.Request):
     )
 
 
-# ------------------------------------------------------------------ ttyd reverse proxy
-def _ttyd_headers(request: web.Request) -> dict:
-    h = {
-        k: v
-        for k, v in request.headers.items()
-        if k.lower()
-        not in (
-            "host",
-            "cookie",
-            "authorization",
-            "origin",
-            "connection",
-            "upgrade",
-            "sec-websocket-key",
-            "sec-websocket-version",
-            "sec-websocket-extensions",
-            "sec-websocket-protocol",
-            "content-length",
-        )
-    }
-    if TTYD_AUTH:
-        h["Authorization"] = "Basic " + base64.b64encode(TTYD_AUTH.encode()).decode()
-    return h
+# ------------------------------------------------------------------ web console
+# The console page and its JS are served from THIS container (static/term.*). Only the ttyd
+# WebSocket is relayed, and filtered: the browser may send input/resize, the agent may only send
+# terminal output. Agent-supplied HTML (ttyd's own page, redirects, ...) never reaches the browser.
+async def term_page(request: web.Request):
+    if request.match_info["name"] not in TERMINALS:
+        raise web.HTTPNotFound()
+    return web.FileResponse(STATIC / "term.html")
 
 
-async def term_proxy(request: web.Request):
+def _ttyd_token() -> str:
+    return base64.b64encode(TTYD_AUTH.encode()).decode() if TTYD_AUTH else ""
+
+
+async def term_ws(request: web.Request):
     name = request.match_info["name"]
     if name not in TERMINALS:
         raise web.HTTPNotFound()
-    tail = request.match_info.get("tail", "")
-    upstream = f"http://{AGENT_HOST}:{TERMINALS[name]}/term/{name}/{tail}"
-    if request.query_string:
-        upstream += "?" + request.query_string
-    if request.headers.get("Upgrade", "").lower() == "websocket":
-        if not _same_origin(request) or not request.headers.get("Origin"):
-            raise web.HTTPForbidden(text="bad origin")
-        ws_client = web.WebSocketResponse(protocols=("tty",), max_msg_size=0, autoping=True)
-        await ws_client.prepare(request)
-        try:
-            async with request.app["http"].ws_connect(
-                upstream.replace("http://", "ws://"), protocols=("tty",), headers=_ttyd_headers(request), max_msg_size=0
-            ) as ws_up:
-
-                async def pump(src, dst):
-                    async for msg in src:
-                        if msg.type == WSMsgType.TEXT:
-                            await dst.send_str(msg.data)
-                        elif msg.type == WSMsgType.BINARY:
-                            await dst.send_bytes(msg.data)
-                        elif msg.type in (WSMsgType.CLOSE, WSMsgType.ERROR):
-                            break
-
-                await asyncio.wait(
-                    [asyncio.create_task(pump(ws_client, ws_up)), asyncio.create_task(pump(ws_up, ws_client))],
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-        except aiohttp.ClientError as e:
-            log.warning("terminal %s websocket failed: %s", name, e)
-        finally:
-            await ws_client.close()
-        return ws_client
+    if not request.headers.get("Origin") or not _same_origin(request):
+        raise web.HTTPForbidden(text="bad origin")
+    upstream = f"ws://{AGENT_HOST}:{TERMINALS[name]}/term/{name}/ws"
+    headers = {"Authorization": "Basic " + _ttyd_token()} if TTYD_AUTH else {}
+    ws_client = web.WebSocketResponse(protocols=("tty",), max_msg_size=BROWSER_MAX_FRAME, heartbeat=30)
+    await ws_client.prepare(request)
     try:
-        async with request.app["http"].request(
-            request.method, upstream, headers=_ttyd_headers(request), data=await request.read(), allow_redirects=False
-        ) as r:
-            body = await r.read()
-            headers = {
-                k: v
-                for k, v in r.headers.items()
-                if k.lower() in ("content-type", "cache-control", "etag", "last-modified", "location")
-            }
-            return web.Response(status=r.status, body=body, headers=headers)
-    except aiohttp.ClientError as e:
-        return web.Response(status=502, text=f"terminal '{name}' unreachable: {e}")
+        async with request.app["http"].ws_connect(
+            upstream, protocols=("tty",), headers=headers, max_msg_size=AGENT_MAX_BYTES
+        ) as ws_up:
+
+            async def browser_to_agent():
+                first = True
+                async for msg in ws_client:
+                    if msg.type not in (WSMsgType.TEXT, WSMsgType.BINARY):
+                        break
+                    data = msg.data.encode() if msg.type == WSMsgType.TEXT else msg.data
+                    if first:  # handshake: size only from the browser, credential from us
+                        first = False
+                        try:
+                            hello = json.loads(data)
+                            size = {"columns": int(hello.get("columns", 80)), "rows": int(hello.get("rows", 24))}
+                        except (ValueError, TypeError, AttributeError):
+                            size = {"columns": 80, "rows": 24}
+                        await ws_up.send_str(json.dumps({"AuthToken": _ttyd_token(), **size}))
+                    elif data[:1] in (b"0", b"1"):  # input, resize
+                        await ws_up.send_bytes(data)
+                    if read_session(request) is None:  # session ended (logout/expiry): drop the console
+                        await ws_client.close(code=4401, message=b"session expired")
+                        break
+
+            async def agent_to_browser():
+                async for msg in ws_up:
+                    if msg.type not in (WSMsgType.TEXT, WSMsgType.BINARY):
+                        break
+                    data = msg.data.encode() if msg.type == WSMsgType.TEXT else msg.data
+                    if data[:1] == b"0":  # terminal output only; title/preferences are dropped
+                        await ws_client.send_bytes(data)
+
+            tasks = [asyncio.create_task(browser_to_agent()), asyncio.create_task(agent_to_browser())]
+            _done, rest = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in rest:
+                t.cancel()
+    except (aiohttp.ClientError, TimeoutError) as e:
+        log.warning("terminal %s websocket failed: %s", name, e)
+    finally:
+        await ws_client.close()
+    return ws_client
 
 
 # ------------------------------------------------------------------ app
@@ -398,6 +492,12 @@ async def watch_gateway(app: web.Application):
 def build_app() -> web.Application:
     if not (os.environ.get("CONTROL_PASSWORD") or os.environ.get("CONTROL_PASSWORD_HASH") or PROXY_AUTH_HEADER):
         raise SystemExit("Set CONTROL_PASSWORD_HASH (or CONTROL_PASSWORD, or TRUST_PROXY_AUTH_HEADER)")
+    if PROXY_AUTH_HEADER and not TRUSTED_PROXIES:
+        raise SystemExit("TRUST_PROXY_AUTH_HEADER requires TRUSTED_PROXIES (CIDRs of your auth proxy)")
+    if TRUST_FORWARDED and not TRUSTED_PROXIES:
+        log.warning("TRUST_FORWARDED_FOR=1 but TRUSTED_PROXIES is empty: X-Forwarded-* headers are ignored")
+    if os.environ.get("CONTROL_PASSWORD") and not os.environ.get("CONTROL_PASSWORD_HASH"):
+        log.warning("CONTROL_PASSWORD (plain text) is in use - prefer CONTROL_PASSWORD_HASH")
     app = web.Application(middlewares=[security], client_max_size=2 * 1024 * 1024)
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
@@ -410,15 +510,19 @@ def build_app() -> web.Application:
     app.router.add_post("/api/github/check", api_github_check)
     app.router.add_get("/api/agent/{what}", api_agent)
     app.router.add_route("*", "/api/gw/{tail:.*}", api_gw)
-    app.router.add_route("*", "/term/{name}/{tail:.*}", term_proxy)
+    app.router.add_get("/term/{name}/", term_page)
+    app.router.add_get("/term/{name}/ws", term_ws)
     app.router.add_static("/static/", STATIC)
     return app
 
 
 def main():
+    bind = os.environ.get("CONTROL_BIND_HOST")
+    if not bind:  # fail closed: never listen on all interfaces (incl. the agent network) by accident
+        raise SystemExit("CONTROL_BIND_HOST must be set to the control plane's management IP")
     web.run_app(
         build_app(),
-        host=os.environ.get("CONTROL_BIND_HOST", "0.0.0.0"),
+        host=bind,
         port=int(os.environ.get("CONTROL_PORT", "8080")),
         access_log=None,
     )
