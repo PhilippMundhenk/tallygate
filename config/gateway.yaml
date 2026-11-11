@@ -5,11 +5,12 @@ log_max_events: 500000     # hard cap on stored events (disk-fill protection)
 max_pending: 10            # at most this many approvals open at once; more are denied immediately
 
 # Hard-deny floor: CIDRs that are NEVER reachable (except service-port targets with allow_private).
-# Only this read-only file can change it; the API/UI can only ADD entries. Omit for the built-in
-# list (RFC 1918, loopback, link-local, CGNAT, multicast, ULA, NAT64/6to4/Teredo, docs ranges ...).
-# Add your Docker host's public IP(s) here if it has any (e.g. a VPS), so the agent cannot reach
-# host services via the egress path.
-# hard_deny_floor: [...]
+# The built-in list (RFC 1918, loopback, link-local, CGNAT, multicast, ULA, NAT64/6to4/Teredo, docs
+# ranges ...) always applies; entries here are ADDED to it, they cannot remove built-in ones. Only
+# this read-only file can change the floor; the API/UI can only add further entries. Add your Docker
+# host's public IP(s) here if it has any (e.g. a VPS), so the agent cannot reach host services via
+# the egress path. An invalid entry stops the gateway.
+# hard_deny_floor: [203.0.113.7/32]
 
 # Credential injection: TLS for these exact hosts is intercepted and the header is set.
 # The agent only ever holds a placeholder. Secrets are set via the control UI (stored in /data/secrets.json).

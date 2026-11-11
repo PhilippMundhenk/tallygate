@@ -147,7 +147,7 @@ def gateway(tmp_path_factory, upstream):
                     {"host": "badcert.test", "header": "Authorization", "value": "Bearer ${github_token}"},
                 ],
                 "services": [{"name": "echo", "listen": ports["svc"], "target": f"127.0.0.1:{upstream['http']}"}],
-                # tests talk to 127.0.0.1 upstreams, so the floor is narrowed here (static config only)
+                # tests talk to 127.0.0.1 upstreams: this floor replaces the built-in one (GW_TEST_FLOOR_REPLACE)
                 "hard_deny_floor": ["192.168.0.0/16", "10.0.0.0/8", "127.0.0.2/32"],
                 "readonly": ["ro.test"],
                 "max_pending": 3,
@@ -214,6 +214,7 @@ def gateway(tmp_path_factory, upstream):
         data,
         upstream,
         ports,
+        GW_TEST_FLOOR_REPLACE="1",
         GW_TEST_STATIC_HOSTS="gh.test=127.0.0.1,other.test=127.0.0.1,badcert.test=127.0.0.1,lan.test=192.168.99.99,ro.test=127.0.0.1,"
         "svc.test=127.0.0.1,sec.test=127.0.0.1,lanecho.test=127.0.0.2,pin.test=127.0.0.1,badpin.test=127.0.0.1,raw.test=127.0.0.1",
     )

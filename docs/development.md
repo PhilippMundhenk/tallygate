@@ -45,7 +45,8 @@ The e2e suite (`tests/e2e`) needs no Docker and no root:
 
 - The gateway runs as a real `mitmdump` process on random localhost ports, with DNS on an unprivileged
   port (`GW_DNS_PORT`) and test-only static name resolution (`GW_TEST_STATIC_HOSTS`) instead of
-  `/etc/hosts`.
+  `/etc/hosts`. `GW_TEST_FLOOR_REPLACE=1` lets the test config's `hard_deny_floor` replace the built-in
+  list, because the upstreams run on loopback.
 - Upstreams are local HTTP/HTTPS echo servers with a throwaway certificate.
 - The control plane runs as a real process; Telegram and Matrix are mocked (`tests/e2e/mockbots.py`).
 - The web-console test runs if `ttyd` is installed (CI installs the checksum-verified binary).

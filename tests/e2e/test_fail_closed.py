@@ -29,6 +29,7 @@ def test_event_log_failure_refuses_the_connection(make_gateway, upstream):
     gw = make_gateway(
         {"hard_deny_floor": ["10.0.0.0/8"]},
         {"default": "deny", "rules": [{"id": "echo", "action": "allow", "cidr": "127.0.0.1/32", "port": port}]},
+        GW_TEST_FLOOR_REPLACE="1",
     )
     proxy = gw["ports"]["http"]
     assert http_via_proxy(proxy, f"http://127.0.0.1:{port}/ok")[0] == 200

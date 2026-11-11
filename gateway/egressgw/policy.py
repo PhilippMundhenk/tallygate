@@ -229,6 +229,12 @@ class Policy:
         self.rules: list[Rule] = []
         self.exceptions: list[Exception_] = []
 
+    def use_floor(self, floor: list[str]) -> None:
+        """Attach the effective floor; extras that are already part of it are dropped (compared with the
+        floor actually in force, so a range missing from it can always be added)."""
+        self.hard_deny_floor = list(floor)
+        self.hard_deny = [c for c in self.hard_deny if c not in self.hard_deny_floor]
+
     # ---------- evaluation ----------
     def hard_denied(self, host: str, port: int, ips: list[str], mode: str | None = None) -> str | None:
         if mode == "reverse":
@@ -318,13 +324,7 @@ class Policy:
         p.ask_timeout = int(d.get("ask_timeout", 60))
         if not 5 <= p.ask_timeout <= 3600:
             raise ValueError("ask_timeout must be 5..3600 seconds")
-        floor = {str(ipaddress.ip_network(c, strict=False)) for c in DEFAULT_HARD_DENY}
-        extras = []
-        for c in d.get("hard_deny") or []:
-            net = str(ipaddress.ip_network(str(c), strict=False))
-            if net not in floor and net not in extras:
-                extras.append(net)
-        p.hard_deny = extras
+        p.hard_deny = parse_cidrs(d.get("hard_deny") or [], "hard_deny")  # deduped against the floor by use_floor
         p.rules = [Rule.from_dict(r) for r in d.get("rules") or []]
         ids = [r.id for r in p.rules]
         if len(ids) != len(set(ids)):

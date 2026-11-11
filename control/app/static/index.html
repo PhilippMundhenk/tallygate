@@ -75,7 +75,7 @@
     </div>
     <table class="rules"><thead><tr><th>#</th><th>Action</th><th>Match</th><th>Port</th><th>Note</th><th>Expires</th><th></th></tr></thead><tbody id="rulesBody"></tbody></table>
     <details class="card"><summary>Hard deny (never reachable, never asked)</summary>
-      <p class="hint">Built-in floor (read-only; change only via <code>hard_deny_floor</code> in the gateway config file):</p>
+      <p class="hint">Floor (read-only): the built-in list plus <code>hard_deny_floor</code> from the gateway config file:</p>
       <p><code id="hardDenyFloor" class="muted"></code></p>
       <p class="hint">Additional CIDRs (one per line), e.g. your Docker host's public IP:</p>
       <textarea id="hardDeny" rows="5"></textarea><button id="saveHard">Save additional hard deny</button></details>

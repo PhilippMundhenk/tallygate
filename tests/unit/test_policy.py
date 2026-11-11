@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gateway"))
 
-from egressgw.policy import Policy, Rule, host_matches, registrable_domain, rule_for_approval
+from egressgw.policy import DEFAULT_HARD_DENY, Policy, Rule, host_matches, registrable_domain, rule_for_approval
 from egressgw.store import Secrets, render
 
 PRESETS = Path(__file__).resolve().parents[2] / "gateway" / "presets"
@@ -159,7 +159,13 @@ def test_hard_deny_floor_cannot_be_removed_via_policy():
     p = Policy.from_dict({"default": "allow", "hard_deny": [], "rules": [{"id": "a", "action": "allow", "host": "*"}]})
     assert p.evaluate("nas.example.org", 443, ["192.168.1.10"]).action == "deny"
     p = Policy.from_dict({"hard_deny": ["203.0.113.7/32", "10.0.0.0/8"], "hard_deny_floor": ["junk"]})
+    p.use_floor(DEFAULT_HARD_DENY)
     assert p.hard_deny == ["203.0.113.7/32"]  # 10/8 is already in the floor (deduped); floor key ignored
+    # #11: compared with the floor in force - a range missing from it is kept as an extra
+    p = Policy.from_dict({"hard_deny": ["203.0.113.7/32", "10.0.0.0/8"]})
+    p.use_floor(["192.168.0.0/16"])
+    assert p.hard_deny == ["203.0.113.7/32", "10.0.0.0/8"]
+    assert p.evaluate("10.1.2.3", 22, []).action == "deny"
     p = Policy.from_dict({"hard_deny": ["8.8.8.8/32"]})
     assert p.evaluate("dns.google", 443, ["8.8.8.8"]).action == "deny"
 

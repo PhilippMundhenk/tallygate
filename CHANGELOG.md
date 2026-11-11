@@ -18,6 +18,9 @@ All notable changes to this project are documented here. The format follows
   destinations. They made the name phase inconclusive, so unknown names were resolved before the decision
   (TG-02 regression). **Behaviour change:** names resolving into an allowed CIDR are no longer allowed by
   it; use host rules ([#10](https://github.com/PhilippMundhenk/tallygate/issues/10)).
+- `hard_deny_floor` now extends the built-in hard-deny list instead of replacing it; adding a VPS address
+  silently dropped RFC 1918, loopback and metadata ranges. Extras from the API are compared with the floor
+  in force ([#11](https://github.com/PhilippMundhenk/tallygate/issues/11)).
 
 ## [0.3.0] - 2026-11-11
 
