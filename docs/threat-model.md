@@ -59,6 +59,7 @@ service, **E**levation of privilege.
 | # | Threat | STRIDE | Mitigation | Verified by |
 |---|---|---|---|---|
 | T1 | Agent connects directly to the internet, bypassing the proxy | E, I | `agent-net` is `internal` (no route); agent attached to no other network | `bypass.sh` (direct IP/name), structure checks |
+| T1a | Agent connects directly to services on the Docker host through the host's address on `agent-net` | E, I | The bridge gets no IPv4 address (`com.docker.network.bridge.inhibit_ipv4`), so the host is not a peer on `agent-net` | `bypass.sh` (listener in the host namespace, #7) |
 | T2 | Agent reaches LAN/host/metadata through the proxy (incl. via public names resolving to private IPs) | E, I | Hard deny on literal **and resolved** IPs, before rules, not approvable; immutable floor (incl. NAT64/6to4/Teredo); service exceptions only on their own port | unit + e2e (`lan.test`, floor), `bypass.sh` |
 | T3 | DNS rebinding between check and connect | E | Upstream address pinned to the checked IP | design + e2e (pinned connections) |
 | T4 | Data exfiltration via DNS queries (agent's own lookups **or** names it asks the proxy for) | I | Agent DNS → gateway → NXDOMAIN, logged; the gateway resolves a name only after it is allowed/approved | e2e DNS + "denied names are never resolved" |
