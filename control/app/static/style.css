@@ -44,6 +44,8 @@ pre{white-space:pre-wrap;word-break:break-all}pre.copy{background:var(--bg);padd
 .card .btns,#grantEditor .btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.row-between .btns{margin-top:0}
 .card .meta{color:var(--muted);font-size:12px;margin:6px 0 0}.meta.warn{color:var(--amber)}
 .pending.grantreq{border-color:var(--blue)}
+.pending.gone{opacity:.45}.pending.busy{opacity:.7}button:disabled{opacity:.5;cursor:default}
+.stale{border-color:var(--amber)!important}
 .grid4{display:grid;grid-template-columns:repeat(2,minmax(0,1fr)) repeat(2,minmax(0,1fr));gap:4px 14px}
 @media(max-width:800px){.grid4{grid-template-columns:1fr 1fr}}
 .grid2 input,.grid4 input,.grid4 select{width:100%}

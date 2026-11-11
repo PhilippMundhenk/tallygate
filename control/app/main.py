@@ -51,6 +51,7 @@ TRUSTED_PROXIES = [
     ipaddress.ip_network(c.strip(), strict=False) for c in os.environ.get("TRUSTED_PROXIES", "").split(",") if c.strip()
 ]
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
+GITHUB_API = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")  # tests point it elsewhere
 COOKIE = "tallygate_session"
 AGENT_MAX_BYTES = 1024 * 1024  # cap on anything read from the agent (status JSON, terminal frames)
 BROWSER_MAX_FRAME = 64 * 1024
@@ -181,7 +182,15 @@ async def security(request: web.Request, handler):
             return web.json_response({"error": "csrf check failed"}, status=403)
         if path == "/logout" and not _same_origin(request):
             return web.json_response({"error": "csrf check failed"}, status=403)
-        resp = await handler(request)
+        try:
+            resp = await handler(request)
+        except web.HTTPException:
+            raise
+        except Exception:
+            if not path.startswith("/api/"):
+                raise
+            log.exception("%s %s failed", request.method, path)
+            return web.json_response({"error": "internal error (see the control log)"}, status=500)
     if isinstance(resp, web.StreamResponse) and not resp.prepared:
         _security_headers(resp, path)
     return resp
@@ -248,7 +257,10 @@ async def login_page(request: web.Request) -> web.StreamResponse:
             make_session("admin"),
             max_age=SESSION_TTL,
             httponly=True,
-            samesite="Strict",
+            # Lax, not Strict: the PUBLIC_URL link in a Telegram/Matrix message is a cross-site navigation
+            # and must arrive logged in. Cross-site POSTs still carry no cookie, and every state-changing
+            # API call additionally needs the X-Tallygate header and a same-origin Origin.
+            samesite="Lax",
             secure=os.environ.get("COOKIE_SECURE", "1") == "1",
         )
         raise resp
@@ -291,11 +303,23 @@ async def gw(app: web.Application, method: str, path: str, body=None, timeout: f
         return r.status, data
 
 
+async def json_body(request: web.Request):
+    """The request's JSON body (None if there is none); 400 with {"error": ...} if it is not JSON."""
+    if not request.can_read_body:
+        return None
+    try:
+        return await request.json()
+    except ValueError:
+        raise web.HTTPBadRequest(
+            text=json.dumps({"error": "invalid JSON body"}), content_type="application/json"
+        ) from None
+
+
 async def api_gw(request: web.Request):
     sub = "/" + request.match_info["tail"]
     if not any(m == request.method and re.fullmatch(rx, sub) for m, rx in GW_ALLOW):
         return web.json_response({"error": "not allowed"}, status=404)
-    body = await request.json() if request.can_read_body else None
+    body = await json_body(request)
     by = f"web:{request['user']}"
     if (sub.endswith("/decide") or sub.endswith("/activate")) and isinstance(body, dict):
         body["by"] = by  # attribution is set here, never taken from the browser
@@ -306,6 +330,8 @@ async def api_gw(request: web.Request):
         status, data = await gw(request.app, request.method, sub + qs, body)
     except (TimeoutError, aiohttp.ClientError) as e:
         return web.json_response({"error": f"gateway unreachable: {e}"}, status=502)
+    except ValueError:
+        return web.json_response({"error": "invalid response from the gateway"}, status=502)
     return web.json_response(data, status=status)
 
 
@@ -331,26 +357,38 @@ async def api_stream(request: web.Request):
 async def api_github_check(request: web.Request):
     """Validate the stored-at-gateway token by calling GitHub from the control plane (which has egress).
     The token is sent once from the browser for validation and storage; it is never returned."""
-    body = await request.json()
+    body = await json_body(request)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "expected a JSON object"}, status=400)
     token = str(body.get("token", "")).strip()
     if not token:
         return web.json_response({"error": "token missing"}, status=400)
-    async with request.app["http"].get(
-        "https://api.github.com/user",
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-        timeout=aiohttp.ClientTimeout(total=15),
-    ) as r:
-        data = await r.json(content_type=None)
-        if r.status != 200:
-            return web.json_response({"ok": False, "status": r.status, "message": data.get("message")}, status=200)
-        info = {
-            "ok": True,
-            "login": data.get("login"),
-            "scopes": r.headers.get("X-OAuth-Scopes"),
-            "expires": r.headers.get("github-authentication-token-expiration"),
-        }
+    try:
+        async with request.app["http"].get(
+            GITHUB_API + "/user",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as r:
+            data = await r.json(content_type=None)
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+            if r.status != 200:
+                return web.json_response({"ok": False, "status": r.status, "message": data.get("message")})
+            info = {
+                "ok": True,
+                "login": data.get("login"),
+                "scopes": r.headers.get("X-OAuth-Scopes"),
+                "expires": r.headers.get("github-authentication-token-expiration"),
+            }
+    except (TimeoutError, aiohttp.ClientError) as e:
+        return web.json_response({"error": f"GitHub unreachable: {e}"}, status=502)
+    except ValueError:
+        return web.json_response({"error": "invalid response from GitHub"}, status=502)
     if body.get("store"):
-        status, _ = await gw(request.app, "PUT", "/secrets/github_token", {"value": token})
+        try:
+            status, _ = await gw(request.app, "PUT", "/secrets/github_token", {"value": token})
+        except (TimeoutError, aiohttp.ClientError, ValueError) as e:
+            return web.json_response({"error": f"token valid, but storing it in the gateway failed: {e}"}, status=502)
         info["stored"] = status == 200
     return web.json_response(info)
 
