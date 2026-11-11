@@ -18,7 +18,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("report", help="coverage.json from `coverage json`")
     ap.add_argument("--min", type=float, default=95.0, help="minimum line coverage per module in percent")
     a = ap.parse_args(argv)
-    files = json.load(open(a.report, encoding="utf-8"))["files"]
+    with open(a.report, encoding="utf-8") as f:
+        files = json.load(f)["files"]
     failed = 0
     for name, data in sorted(files.items()):
         s = data["summary"]

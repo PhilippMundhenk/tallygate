@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 HOME = Path.home()
+PROC = Path("/proc")
 TIMEOUT = 5
 
 
@@ -34,7 +35,7 @@ def status() -> dict:
     if "v" not in _version_cache:
         _version_cache["v"] = sh("claude", "--version")
     rc = False
-    for p in Path("/proc").iterdir():
+    for p in PROC.iterdir():
         if p.name.isdigit():
             try:
                 cmd = (p / "cmdline").read_bytes().split(b"\0")
@@ -74,12 +75,12 @@ def tcp(host: str, port: int, family=socket.AF_UNSPEC) -> str:
         return f"connected to {host}:{port}"
 
 
-def udp_dns(server: str) -> str:
+def udp_dns(server: str, port: int = 53) -> str:
     q = struct.pack(">HHHHHH", 0x4242, 0x0100, 1, 0, 0, 0) + b"\x07example\x03com\x00" + struct.pack(">HH", 1, 1)
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.settimeout(TIMEOUT)
-    s.sendto(q, (server, 53))
-    data = s.recv(512)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.settimeout(TIMEOUT)
+        s.sendto(q, (server, port))
+        data = s.recv(512)
     return f"got {len(data)} byte reply from {server}"
 
 
@@ -156,12 +157,17 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-if __name__ == "__main__":
-    import sys
-
-    if "--selftest" in sys.argv:
+def main(argv: list[str]) -> int:
+    if "--selftest" in argv:
         res = selftest()
         for r in res:
             print(("PASS " if r["pass"] else "FAIL ") + r["name"] + "  -- " + r["detail"])
-        sys.exit(0 if all(r["pass"] for r in res) else 1)
+        return 0 if all(r["pass"] for r in res) else 1
     ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("STATUS_PORT", "7680"))), Handler).serve_forever()
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - process entry point, main() is tested
+    import sys
+
+    sys.exit(main(sys.argv[1:]))
