@@ -506,11 +506,11 @@ class Gateway:
             # 1) decide on the name alone: denied / not-yet-approved names are never resolved
             pre = self.policy.evaluate_name(host, port)
             hint = self._grant_hint(host, port)
-            if hint and (pre is None or pre.action != "allow"):
-                return block(f"{pre.reason if pre else 'not allowed'}; {hint}")
-            if pre is not None and pre.action == "ask":
+            if hint and pre.action != "allow":
+                return block(f"{pre.reason}; {hint}")
+            if pre.action == "ask":
                 pre = await self.ask(host, port, [], proto, client)
-            if pre is not None and pre.action == "deny":
+            if pre.action != "allow":
                 return block(f"{pre.reason} (not resolved)")
             # 2) resolve and re-check with IPs (hard deny, CIDR rules); pin to the checked IP
             try:
@@ -543,10 +543,8 @@ class Gateway:
         """Active grant for host:port - unless the policy already allows the name: grants only ADD
         access, they never narrow what the rules allow."""
         m = self.grants.match(host, port)
-        if m and not is_ip(host):
-            pre = self.policy.evaluate_name(host, port)
-            if pre is not None and pre.action == "allow":
-                return None
+        if m and not is_ip(host) and self.policy.evaluate_name(host, port).action == "allow":
+            return None
         return m
 
     def _grant_hint(self, host: str, port: int) -> str | None:

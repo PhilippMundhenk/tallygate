@@ -192,8 +192,8 @@ Evaluation for a connection attempt to `host:port`:
 
 1. **Validate** the name (strict DNS syntax, ASCII/punycode only, ≤ 253 chars) — otherwise deny.
 2. **Name-first decision** (no DNS yet): rules matched on the name, then the default. `deny` → deny
-   without resolving; `ask` → hold and ask the human first. Only a CIDR `allow`/`ask` rule that comes
-   before the deciding host rule forces a lookup at this stage ([ADR-0011](adr/0011-decide-on-names-before-resolving.md)).
+   without resolving; `ask` → hold and ask the human first. CIDR rules are not consulted for names
+   ([ADR-0011](adr/0011-decide-on-names-before-resolving.md)).
 3. **Resolve** the allowed name (IP literals skip 1–3).
 4. **Hard deny** = immutable floor + policy extras: if any literal/resolved address is inside → **deny**,
    never ask, cannot be approved (except a service-port target with `allow_private`, on that port only).
@@ -208,7 +208,7 @@ Rule matching:
 | Field | Semantics |
 |---|---|
 | `host` | Case-insensitive glob. `*.example.com` matches `example.com` **and** all subdomains. `*` matches everything. |
-| `cidr` | For `allow`: **all** resolved IPs must be inside. For `deny`/`ask`: **any** resolved IP inside matches. |
+| `cidr` | `allow`/`ask`: only for IP-literal destinations (approving an IP never covers names that resolve to it). `deny`: matches IP literals and hostnames with **any** resolved IP inside. |
 | `port` | `443`, `[80, 443]`, `"8000-8100"` or `*` (default). |
 | `expires` | Unix timestamp; omitted = permanent. |
 

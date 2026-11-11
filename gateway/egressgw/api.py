@@ -124,7 +124,7 @@ def build_app(gw: Gateway) -> web.Application:
             if not valid_hostname(host):
                 return _json({"action": "deny", "reason": "invalid hostname", "ips": []})
             pre = gw.policy.evaluate_name(host, port)
-            if pre is not None and pre.action != "allow":
+            if pre.action != "allow":
                 return _json(
                     {"action": pre.action, "reason": pre.reason + " (not resolved)", "rule_id": pre.rule_id, "ips": []}
                 )

@@ -14,6 +14,10 @@ All notable changes to this project are documented here. The format follows
 - TLS to injection and read-only hosts is always intercepted. A missing, trailing-dot or different SNI
   used to pass it through untouched, skipping credential stripping and the read-only check
   ([#9](https://github.com/PhilippMundhenk/tallygate/issues/9)).
+- CIDR `allow`/`ask` rules, including those created by approving an IP literal, apply only to IP-literal
+  destinations. They made the name phase inconclusive, so unknown names were resolved before the decision
+  (TG-02 regression). **Behaviour change:** names resolving into an allowed CIDR are no longer allowed by
+  it; use host rules ([#10](https://github.com/PhilippMundhenk/tallygate/issues/10)).
 
 ## [0.3.0] - 2026-11-11
 
