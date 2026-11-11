@@ -2,10 +2,14 @@
 
 - [Requirements](#requirements)
 - [Installation](#installation)
+  - [With Docker Compose (recommended)](#with-docker-compose-recommended)
+  - [From source](#from-source)
+  - [Custom agent image](#custom-agent-image)
 - [Reverse proxy](#reverse-proxy)
 - [First-time setup](#first-time-setup)
 - [Day-to-day](#day-to-day)
 - [Upgrades](#upgrades)
+- [Resource limits](#resource-limits)
 - [Backup and restore](#backup-and-restore)
 - [Monitoring](#monitoring)
 - [Troubleshooting](#troubleshooting)
@@ -15,26 +19,97 @@
 ## Requirements
 
 - Linux host or VM with Docker Engine ≥ 25 and the Compose plugin (amd64 or arm64).
-- ~6 GB free disk for images plus your workspace. Keep an eye on the root filesystem: a full disk makes
-  Claude Code fail with `ENOSPC` in confusing places.
+- ~6 GB free disk for images plus your workspace. Keep an eye on the disk: see
+  [resource limits](#resource-limits).
 - A claude.ai subscription (Pro/Max/Team/Enterprise) for Remote Control. API keys don't work with Remote
   Control.
 - Recommended: a reverse proxy with TLS and SSO (Caddy, Traefik, nginx + Authelia/Authentik/oauth2-proxy).
 
 ## Installation
 
+### With Docker Compose (recommended)
+
+Prebuilt images for amd64 and arm64 are published on GHCR: `tallygate-gateway`, `tallygate-control` and
+`tallygate-agent` under `ghcr.io/philippmundhenk/`. You only need the compose file.
+
+```bash
+mkdir tallygate && cd tallygate
+curl -fsSLO https://raw.githubusercontent.com/PhilippMundhenk/tallygate/main/compose.yaml
+docker compose up -d
+docker compose logs control | grep -A1 password    # the generated UI password, shown once
+```
+
+Open <http://127.0.0.1:8080> on the Docker host (from elsewhere through an SSH tunnel,
+`ssh -L 8080:127.0.0.1:8080 <host>`) and continue with [First-time setup](#first-time-setup).
+
+On first start the containers create everything they need in Docker volumes:
+
+| Volume | Mounted in | Contains |
+|---|---|---|
+| `gateway-data` | egress-gw | policy, event log, stored secrets (GitHub token), CA key |
+| `gw-token` | egress-gw (rw), control (ro) | management API token |
+| `control-data` | control | session secret, UI password hash |
+| `ttyd` | control (rw), agent (ro) | console credential |
+| `ca` | egress-gw (rw), agent (ro) | the gateway's public CA certificate |
+| `agent-home`, `workspace` | agent | Claude login and settings; your repositories |
+
+Settings go into a `.env` file next to `compose.yaml`; all of them are optional. Start from
+[`.env.example`](../.env.example) and see the [configuration reference](configuration.md). The ones you will
+most likely want: `PUBLIC_URL` and `TRUSTED_PROXIES` for a [reverse proxy](#reverse-proxy), `RC_NAME`, and
+Telegram or Matrix for phone approvals. Apply changes with `docker compose up -d`.
+
+To keep state in host directories instead of volumes (for example to see the workspace from the host), set
+`GATEWAY_DATA`, `AGENT_HOME` and `WORKSPACE` to paths owned by uid 10001 (gateway) and 1000 (agent).
+`./setup.sh /srv/tallygate` from the repository does this for you.
+
+To change the static gateway configuration (grants, service ports, credential injection), save
+[`config/gateway.yaml`](../config/gateway.yaml) as `gateway.yaml` next to `compose.yaml`, edit it and
+uncomment the `./gateway.yaml:/etc/egressgw/config.yaml:ro` line in `compose.yaml`.
+
+Check the isolation with the UI's **Setup → Self-test**. The authoritative test runs on the host, with a
+separate probe container:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/PhilippMundhenk/tallygate/main/tests/integration/bypass.sh
+bash bypass.sh                 # must end with ALL CHECKS PASSED
+```
+
+Pin a version with `TALLYGATE_VERSION=0.4` (minor version, gets patches) or `0.4.0` in `.env`. Each release
+also attaches `compose.yaml`, `.env.example`, `gateway.yaml` and `bypass.sh` for that version.
+
+### From source
+
+Builds the images from a checkout instead of pulling them, for development or to change the code:
+
 ```bash
 git clone https://github.com/PhilippMundhenk/tallygate.git && cd tallygate
-sudo ./setup.sh           # .env with random secrets, UI password, state dirs with correct owners
-$EDITOR .env              # RC_NAME, CONTROL_PUBLISH, PUBLIC_URL, TRUST_FORWARDED_FOR, notifications
-make up                   # docker compose up -d --build
+./setup.sh                # optional: creates .env; `./setup.sh /srv/tallygate` also uses host directories
+make up                   # docker compose -f compose.yaml -f compose.build.yaml up -d --build
 make bypass-test          # authoritative isolation test (must end with ALL CHECKS PASSED)
 ```
 
-`setup.sh` is idempotent: it only fills empty values and fixes ownership (gateway state uid 10001, agent
-state uid 1000).
+The `make` targets add [`compose.build.yaml`](../compose.build.yaml), which gives every service a `build:`
+section; the local images are tagged `:local`. Requirements: Docker, `make`, and Python 3.12+ for the tests.
 
-Configure Docker log rotation on the host (all three services also set `max-size: 10m` themselves):
+### Custom agent image
+
+The agent image contains Claude Code, git, gh, Node.js, Python and common CLI tools. Add your toolchains in an
+image of your own:
+
+```dockerfile
+FROM ghcr.io/philippmundhenk/tallygate-agent:0.4
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential golang-go \
+ && rm -rf /var/lib/apt/lists/*
+USER 1000:1000
+```
+
+Build it (`docker build -t my-agent .`) and set `image: my-agent` for the `agent` service in a
+`compose.override.yaml`. When building from source, `AGENT_EXTRA_PACKAGES` in `.env` does the same.
+
+### Docker log rotation
+
+All three services set `max-size: 10m` themselves. To rotate other containers too, configure the host:
 
 ```json
 // /etc/docker/daemon.json
@@ -43,12 +118,17 @@ Configure Docker log rotation on the host (all three services also set `max-size
 
 ## Reverse proxy
 
-Publish the UI only on localhost (`CONTROL_PUBLISH=127.0.0.1:8080`) and terminate TLS in front. Set
-`PUBLIC_URL` (used for the origin check), `TRUST_FORWARDED_FOR=1` and `TRUSTED_PROXIES` — the address
-control sees for your proxy. With a proxy on the host talking to the published port that is the `mgmt`
-bridge gateway, `172.31.12.1/32` (check with `docker compose logs control` after a failed login: the
-logged address is what control sees). Forwarded headers from any other peer are ignored. WebSockets must
-be passed through (web consoles).
+Publish the UI only on localhost (`CONTROL_PUBLISH=127.0.0.1:8080`, the default) and terminate TLS in
+front. Set `PUBLIC_URL` (used for the origin check), `TRUST_FORWARDED_FOR=1` and `TRUSTED_PROXIES`, the
+address control sees for your proxy. Forwarded headers from any other peer are ignored. WebSockets must be
+passed through (web consoles).
+
+With a proxy on the host talking to the published port, control sees the `mgmt` bridge gateway,
+`172.31.12.1` (check with `docker compose logs control` after a failed login). Every other process on the
+host that connects to the published port arrives from that address too, so trusting it means trusting the
+whole host. That is acceptable for `X-Forwarded-For` on a single-user host, but **not** together with
+`TRUST_PROXY_AUTH_HEADER`: then let the proxy container join the `mgmt` network with a fixed address and
+trust only that address.
 
 Caddy example with forward-auth:
 
@@ -106,34 +186,64 @@ Then clone repositories in the *bash* console: `gh repo clone owner/repo /worksp
 
 | Component | Procedure |
 |---|---|
-| Claude Code | Set `CLAUDE_VERSION` in `.env` → `docker compose up -d --build agent`. There is no auto-updater in the agent by design. |
-| tallygate | `git pull` → read `CHANGELOG.md` → `make up` → `make bypass-test`. |
-| Base images / dependencies | Rebuild regularly: `docker compose build --pull && make up`. Dependabot proposes pin updates. |
+| tallygate (Compose) | Read the [CHANGELOG](../CHANGELOG.md) → `docker compose pull && docker compose up -d` → self-test or `bash bypass.sh`. Download the new `compose.yaml` when the changelog says so. |
+| tallygate (from source) | `git pull` → read `CHANGELOG.md` → `make up` → `make bypass-test`. |
+| Claude Code | Part of the agent image, which has no auto-updater by design. New Claude Code versions arrive as tallygate patch releases: update tallygate. From source, set `CLAUDE_VERSION` in `.env` and run `make up`. |
+| Base images / dependencies | Published images are rebuilt for every release. From source: `docker compose -f compose.yaml -f compose.build.yaml build --pull && make up`. |
 
 Running sessions are reconnected by Remote Control after a restart if you're back within about 4 hours.
 
-## Backup and restore
+## Resource limits
 
-Back up `${TALLYGATE_DIR}` (default `./state`) plus `.env` and `config/`:
+The agent is limited to `AGENT_MEM_LIMIT` (6 GB) of memory, 1024 processes and a 1 GB `/tmp`. CPU is unlimited
+by default; set `AGENT_CPUS` (e.g. `2`) so a busy or looping agent leaves CPU for the gateway, the UI and the
+host.
 
-| Path | Contains | Sensitivity |
+Disk is the limit Docker does not enforce. The workspace and the agent home grow without bound, and by default
+they share a filesystem with Docker itself (`/var/lib/docker`) and the gateway's event log. A runaway or
+hostile agent can fill it, and then Claude Code fails with `ENOSPC` in confusing places and other containers
+on the host suffer too. On a host that runs more than tallygate:
+
+- Put the workspace on its own filesystem or a dataset with a quota (LVM volume, ZFS/btrfs dataset, a loop
+  file) and point `WORKSPACE` (and `AGENT_HOME`) there. Keep `GATEWAY_DATA` on a different filesystem, so the
+  gateway can still log and decide while the agent's disk is full.
+- Alternatively give Docker's data root its own filesystem.
+- Monitor free space; `docker system df` shows what Docker uses.
+
+The gateway's event log is capped by `log_max_events` and `log_keep_days`, and identical events are coalesced.
+
+
+Back up the volumes (or the directories in `GATEWAY_DATA`, `AGENT_HOME`, `WORKSPACE`), plus `.env` and your
+`gateway.yaml` if you have them:
+
+| Volume | Contains | Sensitivity |
 |---|---|---|
-| `state/gateway/` | policy, event log, **secrets (GitHub token)**, gateway CA private key | **high**: encrypt backups |
-| `state/agent-home/` | **Claude login**, settings, skills, git config | **high** |
-| `state/workspace/` | your repositories | as your code |
-| `.env` | API token, session secret, password hash | **high** |
+| `gateway-data` | policy, event log, **secrets (GitHub token)**, gateway CA private key | **high**: encrypt backups |
+| `agent-home` | **Claude login**, settings, skills, git config | **high** |
+| `workspace` | your repositories | as your code |
+| `control-data` | session secret, UI password hash | medium |
+| `gw-token`, `ttyd`, `ca` | recreated on start when missing | – |
 
-Restore: stop the stack, put the files back with the original owners (`setup.sh` fixes them), start the
-stack. If you restore only `agent-home` to a new gateway, the CA changes. That's harmless: the agent re-reads
-the CA on start.
+Copy a volume with a throwaway container, stopping the stack first for a consistent copy:
+
+```bash
+docker run --rm -v tallygate_gateway-data:/v:ro -v "$PWD":/b debian tar czf /b/gateway-data.tgz -C /v .
+```
+
+Restore the same way into the volume (`tar xzf` as root keeps the owners). If you restore only `agent-home`
+to a new gateway, the CA changes. That's harmless: the agent re-reads the CA on start.
 
 ## Monitoring
 
-- `docker compose ps` shows health checks for `egress-gw` and `control`.
+- `docker compose ps` shows health checks for `egress-gw`, `control` and `agent`.
 - The UI header dot shows the live event stream status.
 - Long-running: alert on `docker inspect -f '{{.State.Health.Status}}' tallygate-egress-gw-1`.
-- The event log is SQLite (`state/gateway/events.db`). Query ad hoc:
-  `sqlite3 state/gateway/events.db "select datetime(ts,'unixepoch'),host,port,action,reason from events where action='deny' order by id desc limit 20"`.
+- The event log is SQLite (`events.db` in `gateway-data`). Query ad hoc, for example the last denials:
+
+  ```bash
+  docker compose exec egress-gw python -c "import sqlite3; db = sqlite3.connect('/data/events.db')
+  for r in db.execute(\"select datetime(ts,'unixepoch'),host,port,reason from events where action='deny' order by id desc limit 20\"): print(*r)"
+  ```
 
 ## Troubleshooting
 
@@ -143,27 +253,27 @@ the CA on start.
 | `Remote Control requires feature-flag evaluation …` | A settings file or env sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_GROWTHBOOK` or (older versions) `DISABLE_TELEMETRY`. tallygate's agent image sets none of them; check `~/.claude/settings.json` in `agent-home`. |
 | Tool fails with "could not resolve host" | It resolves locally instead of via the proxy. Use `socks5h://`, proxy-side resolution, or a service port. |
 | Tool hangs ~60 s then fails | The destination is in `ask` and nobody answered. Approve it in the UI/phone, then retry. |
-| `502 egress policy: blocked (hard-deny …)` | Destination resolves to a private range. For LAN services use a service port with `allow_private: true`. |
+| `502 egress policy: blocked (hard-deny …)` | Destination resolves to a private range. For LAN services define a [grant](grants.md), or a service port with `allow_private: true`. |
 | `gh`/`git` 401 against GitHub | No token stored (Setup step 2), PAT expired, or PAT lacks access to that repository. |
 | TLS errors only for github.com | The agent doesn't trust the gateway CA: check `/ca/egress-gw-ca.pem` exists in the agent (`ls /ca`) and restart the agent after the gateway. |
 | `ENOSPC: no space left on device` | Host disk full. Free space (`docker system df`, logs) or grow the VM disk. |
-| UI login loops | `COOKIE_SECURE=1` while accessing via plain HTTP; use HTTPS or set `0` for local tests only. |
+| UI login loops | `COOKIE_SECURE=1` while accessing via plain HTTP from another machine. Use HTTPS, or an SSH tunnel to `127.0.0.1` (localhost counts as secure); set `0` for tests only. |
+| Lost the UI password | `docker compose exec control python -m app.passwd` sets a new one. |
 | Self-test "Management endpoint … UNEXPECTEDLY SUCCEEDED" | Network wiring changed. Re-check `compose.yaml` and run `make bypass-test`. |
 
 ## Migrating from another Claude Code container
 
 1. Stop the old container.
-2. Copy skills: `cp -r <old>/claude-home/skills state/agent-home/.claude/` and run `sudo ./setup.sh` to fix
-   ownership.
-3. Copy repositories into `state/workspace/` (or re-clone).
+2. Copy skills into the agent home: `docker compose cp <old>/claude-home/skills agent:/home/agent/.claude/`,
+   then `docker compose exec -u 0 agent chown -R 1000:1000 /home/agent/.claude/skills`.
+3. Copy repositories into the workspace the same way (or re-clone).
 4. **Log in again** instead of copying credentials, and create a new fine-grained PAT for the gateway.
 5. Revoke tokens that were stored in the old container.
 
 ## Uninstall
 
 ```bash
-docker compose down -v --rmi local
-sudo rm -rf "${TALLYGATE_DIR:-./state}"   # deletes logins, secrets, workspace!
+docker compose down -v --rmi all   # -v deletes the volumes: logins, secrets, workspace!
 ```
 
-Then revoke the GitHub PAT and sign the session out in claude.ai (Settings → sessions).
+If you used host directories, delete them too. Then revoke the GitHub PAT and sign the session out in claude.ai (Settings → sessions).

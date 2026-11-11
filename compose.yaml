@@ -1,5 +1,12 @@
 # tallygate: Claude Code agent behind a policy-enforcing egress gateway with human-in-the-loop.
 #
+#   docker compose up -d
+#   docker compose logs control | grep -A1 password      # first start: the generated UI password
+#   open http://127.0.0.1:8080 and follow Setup
+#
+# Works without any configuration: secrets are created on first start and kept in volumes. Every
+# setting below can be changed in a `.env` file next to this file (see docs/configuration.md).
+#
 #   internet ── egress ── [egress-gw] ── agent-net (internal, no route out) ── [agent]
 #                              │                                                │ ttyd/status
 #                         control-net (internal)                                │
@@ -25,8 +32,7 @@ x-hardening: &hardening
 services:
   egress-gw:
     <<: *hardening
-    build: ./gateway
-    image: tallygate/egress-gw:local
+    image: ghcr.io/philippmundhenk/tallygate-gateway:${TALLYGATE_VERSION:-latest}
     read_only: true
     tmpfs: ["/tmp"]
     sysctls:
@@ -37,12 +43,13 @@ services:
       GW_API_HOST: 172.31.11.2           # management API: control network only
       GW_API_PORT: "8081"
       GW_GRANTS_PORT: "8079"             # grant request API for the agent (agent network)
-      GW_API_TOKEN: ${GW_API_TOKEN:?set GW_API_TOKEN in .env}
-      GW_CONFIG: /etc/egressgw/config.yaml
+      GW_API_TOKEN: ${GW_API_TOKEN:-}    # empty: created on first start in the gw-token volume
     volumes:
-      - ${TALLYGATE_DIR:-./state}/gateway:/data
-      - ./config/gateway.yaml:/etc/egressgw/config.yaml:ro
-      - ca:/ca
+      - ${GATEWAY_DATA:-gateway-data}:/data        # policy, log, secrets (GitHub token), CA key
+      - gw-token:/run/tallygate/gw                 # API token, shared read-only with control
+      - ca:/ca                                     # public CA certificate for the agent
+      # Your own static config (grants, services, credential injection), see docs/configuration.md:
+      # - ./gateway.yaml:/etc/egressgw/config.yaml:ro
     networks:
       agent-net: {ipv4_address: 172.31.10.2}
       control-net: {ipv4_address: 172.31.11.2}
@@ -52,25 +59,25 @@ services:
 
   control:
     <<: *hardening
-    build: ./control
-    image: tallygate/control:local
+    image: ghcr.io/philippmundhenk/tallygate-control:${TALLYGATE_VERSION:-latest}
     read_only: true
     tmpfs: ["/tmp"]
     environment:
       CONTROL_BIND_HOST: 172.31.12.3     # UI only on the mgmt network, NOT reachable from agent-net
       CONTROL_PORT: "8080"
+      # Empty: a password is generated on first start and printed to the log (shown once).
       CONTROL_PASSWORD_HASH: ${CONTROL_PASSWORD_HASH:-}
       TRUST_PROXY_AUTH_HEADER: ${TRUST_PROXY_AUTH_HEADER:-}
-      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      SESSION_SECRET: ${SESSION_SECRET:-}             # empty: created in the control-data volume
       COOKIE_SECURE: ${COOKIE_SECURE:-1}
       TRUST_FORWARDED_FOR: ${TRUST_FORWARDED_FOR:-0}  # 1 = behind a reverse proxy that sets X-Forwarded-*
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}           # CIDRs whose X-Forwarded-*/auth headers are believed
       SESSION_IDLE: ${SESSION_IDLE:-7200}
-      PUBLIC_URL: ${PUBLIC_URL:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}                     # e.g. https://tallygate.example.org (links in notifications)
       GW_URL: http://172.31.11.2:8081
-      GW_API_TOKEN: ${GW_API_TOKEN}
+      GW_API_TOKEN: ${GW_API_TOKEN:-}
       AGENT_HOST: 172.31.10.10
-      TTYD_CREDENTIAL: ${TTYD_CREDENTIAL:?set TTYD_CREDENTIAL in .env}
+      TTYD_CREDENTIAL: ${TTYD_CREDENTIAL:-}           # empty: created in the ttyd volume
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS:-}
@@ -78,6 +85,10 @@ services:
       MATRIX_ACCESS_TOKEN: ${MATRIX_ACCESS_TOKEN:-}
       MATRIX_ROOM_ID: ${MATRIX_ROOM_ID:-}
       MATRIX_ALLOWED_USERS: ${MATRIX_ALLOWED_USERS:-}
+    volumes:
+      - control-data:/data                         # session secret, UI password hash
+      - gw-token:/run/tallygate/gw:ro
+      - ttyd:/run/tallygate/ttyd                   # console credential, shared read-only with the agent
     ports:
       - "${CONTROL_PUBLISH:-127.0.0.1:8080}:8080"   # put your reverse proxy (TLS + OIDC) in front
     networks:
@@ -86,16 +97,13 @@ services:
       agent-net: {ipv4_address: 172.31.10.3}
     pids_limit: 128
     mem_limit: 256m
-    depends_on: [egress-gw]
+    depends_on:
+      egress-gw: {condition: service_healthy}
 
   agent:
     <<: *hardening
-    build:
-      context: ./agent
-      args:
-        CLAUDE_VERSION: ${CLAUDE_VERSION:-2.1.304}
-        EXTRA_PACKAGES: ${AGENT_EXTRA_PACKAGES:-}
-    image: tallygate/agent:local
+    # To add tools, build your own image FROM this one (docs/operations.md#custom-agent-image).
+    image: ghcr.io/philippmundhenk/tallygate-agent:${TALLYGATE_VERSION:-latest}
     read_only: true
     tmpfs: ["/tmp:size=1g,uid=1000,gid=1000,mode=1777"]
     dns: [172.31.10.2]                    # gateway answers NXDOMAIN for everything: no DNS exfiltration
@@ -106,35 +114,51 @@ services:
       http_proxy: http://172.31.10.2:3128
       ALL_PROXY: socks5h://172.31.10.2:1080   # for tools that only speak SOCKS
       NO_PROXY: localhost,127.0.0.1,egress-gw,172.31.10.2
-      TALLYGATE_URL: http://172.31.10.2:8079   # grant requests (tallygate CLI)
       no_proxy: localhost,127.0.0.1,egress-gw,172.31.10.2
-      TTYD_CREDENTIAL: ${TTYD_CREDENTIAL}
-      RC_NAME: ${RC_NAME:-tallygate}
+      TALLYGATE_URL: http://172.31.10.2:8079   # grant requests (tallygate CLI)
+      TTYD_CREDENTIAL: ${TTYD_CREDENTIAL:-}
+      RC_NAME: ${RC_NAME:-tallygate}          # session name in the Claude app
       RC_ENABLE: ${RC_ENABLE:-1}
       RC_ARGS: ${RC_ARGS:-}                   # extra args for `claude remote-control`, e.g. --spawn worktree
       AGENT_PERMISSION_MODE: ${AGENT_PERMISSION_MODE:-bypassPermissions}
       SELFTEST_BLOCKED_PROBES: 172.31.10.2:8081,172.31.11.2:8081,172.31.10.3:8080,172.31.12.3:8080
     volumes:
-      - ${TALLYGATE_DIR:-./state}/agent-home:/home/agent
-      - ${TALLYGATE_DIR:-./state}/workspace:/workspace
+      - ${AGENT_HOME:-agent-home}:/home/agent      # Claude login, settings, history
+      - ${WORKSPACE:-workspace}:/workspace         # the agent's working directory
       - ca:/ca:ro
+      - ttyd:/run/tallygate/ttyd:ro
     networks:
       agent-net: {ipv4_address: 172.31.10.10}
     pids_limit: 1024
     mem_limit: ${AGENT_MEM_LIMIT:-6g}
-    depends_on: [egress-gw]
+    cpus: ${AGENT_CPUS:-0}                  # 0 = no limit; e.g. 2 keeps CPU for the gateway and the host
+    depends_on:
+      egress-gw: {condition: service_healthy}
+      control: {condition: service_healthy}
 
 volumes:
+  gateway-data: {}
+  gw-token: {}
+  control-data: {}
+  ttyd: {}
   ca: {}
+  agent-home: {}
+  workspace: {}
 
 networks:
   agent-net:
     internal: true                        # no default route: the core isolation property
     enable_ipv6: false
+    driver_opts:
+      # No address for the host on this network. Otherwise the host's bridge IP (172.31.10.1) is reachable
+      # from the agent, and with it every host service listening on 0.0.0.0, bypassing the gateway.
+      com.docker.network.bridge.inhibit_ipv4: "true"
     ipam: {config: [{subnet: 172.31.10.0/24}]}
   control-net:
     internal: true
     enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.inhibit_ipv4: "true"
     ipam: {config: [{subnet: 172.31.11.0/24}]}
   egress:
     enable_ipv6: false

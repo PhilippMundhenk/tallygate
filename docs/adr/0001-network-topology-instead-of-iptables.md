@@ -24,4 +24,7 @@ application layer (domain/IP/port), outside the agent's container.
 - ✅ No kernel firewall rules to maintain in containers; works with rootless Docker.
 - ⚠️ Clients must use the proxy (env vars are set) or a service port; transparent interception is not possible.
 - ⚠️ UDP/ICMP egress is unavailable to the agent (acceptable; QUIC falls back to TCP).
+- ⚠️ An internal network still gives the host an address on the bridge, and traffic to the host itself
+  is not filtered by Docker. `agent-net` and `control-net` therefore set
+  `com.docker.network.bridge.inhibit_ipv4` (#7).
 - ⚠️ Docker's embedded DNS still answers on the internal network; mitigated by [ADR-0006](0006-dns-nxdomain-for-the-agent.md).
