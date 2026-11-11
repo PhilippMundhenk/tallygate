@@ -28,6 +28,10 @@ All notable changes to this project are documented here. The format follows
 ### Removed
 - `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
 
+### Security
+- The event stream and the web console end within 10 s of logout or session expiry, and console input is
+  checked before it reaches the agent (#21).
+
 ### Upgrading from 0.3.0
 Keep your existing state: in `.env`, replace `TALLYGATE_DIR=/your/dir` with
 `GATEWAY_DATA=/your/dir/gateway`, `AGENT_HOME=/your/dir/agent-home`, `WORKSPACE=/your/dir/workspace`. Your

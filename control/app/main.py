@@ -44,6 +44,7 @@ TERMINALS = dict(
 SESSION_SECRET = b""  # set in build_app()
 SESSION_TTL = int(os.environ.get("SESSION_TTL", str(12 * 3600)))  # absolute lifetime
 SESSION_IDLE = int(os.environ.get("SESSION_IDLE", str(2 * 3600)))  # idle timeout
+SESSION_RECHECK = float(os.environ.get("SESSION_RECHECK", "10"))  # open streams/consoles re-check this often (s)
 PROXY_AUTH_HEADER = os.environ.get("TRUST_PROXY_AUTH_HEADER", "")  # e.g. Remote-User (only behind a trusted proxy!)
 TRUST_FORWARDED = os.environ.get("TRUST_FORWARDED_FOR") == "1"
 # Peers whose X-Forwarded-* / auth headers are believed. Required for TRUST_PROXY_AUTH_HEADER.
@@ -117,7 +118,8 @@ def _session_id(request: web.Request) -> str | None:
     return sid
 
 
-def read_session(request: web.Request) -> str | None:
+def read_session(request: web.Request, touch: bool = True) -> str | None:
+    """The logged-in user, or None. touch=False checks without counting as activity (idle timeout)."""
     if PROXY_AUTH_HEADER and _peer_trusted(request) and request.headers.get(PROXY_AUTH_HEADER):
         return request.headers[PROXY_AUTH_HEADER][:64]
     sid = _session_id(request)
@@ -126,8 +128,29 @@ def read_session(request: web.Request) -> str | None:
     if not s or s["exp"] < now or now - s["seen"] > SESSION_IDLE:
         _sessions.pop(sid, None)
         return None
-    s["seen"] = now
+    if touch:
+        s["seen"] = now
     return s["user"]
+
+
+async def session_ended(request: web.Request) -> None:
+    """Returns once the request's session is gone (logout, idle or absolute expiry) or the browser has
+    disconnected. A stream that stays open does not keep its session alive."""
+    while True:
+        await asyncio.sleep(SESSION_RECHECK)
+        if read_session(request, touch=False) is None or request.transport is None or request.transport.is_closing():
+            return
+
+
+async def _first_done(*coros) -> None:
+    """Run the coroutines until the first one finishes, then cancel the rest."""
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _prune_sessions() -> None:
@@ -315,16 +338,20 @@ async def api_stream(request: web.Request):
         headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
     await resp.prepare(request)
-    try:
-        async with request.app["http"].get(
-            GW_URL + "/stream",
-            headers={"Authorization": f"Bearer {GW_TOKEN}"},
-            timeout=aiohttp.ClientTimeout(total=None, sock_read=60),
-        ) as up:
-            async for chunk in up.content.iter_any():
-                await resp.write(chunk)
-    except (TimeoutError, aiohttp.ClientError, ConnectionResetError):
-        pass
+
+    async def relay():
+        try:
+            async with request.app["http"].get(
+                GW_URL + "/stream",
+                headers={"Authorization": f"Bearer {GW_TOKEN}"},
+                timeout=aiohttp.ClientTimeout(total=None, sock_read=60),
+            ) as up:
+                async for chunk in up.content.iter_any():
+                    await resp.write(chunk)
+        except (TimeoutError, aiohttp.ClientError, ConnectionResetError):
+            pass
+
+    await _first_done(relay(), session_ended(request))  # logout/expiry ends the stream
     return resp
 
 
@@ -419,6 +446,8 @@ async def term_ws(request: web.Request):
                 async for msg in ws_client:
                     if msg.type not in (WSMsgType.TEXT, WSMsgType.BINARY):
                         break
+                    if read_session(request) is None:  # session ended (logout/expiry): nothing reaches the agent
+                        return
                     data = msg.data.encode() if msg.type == WSMsgType.TEXT else msg.data
                     if first:  # handshake: size only from the browser, credential from us
                         first = False
@@ -430,9 +459,6 @@ async def term_ws(request: web.Request):
                         await ws_up.send_str(json.dumps({"AuthToken": _ttyd_token(), **size}))
                     elif data[:1] in (b"0", b"1"):  # input, resize
                         await ws_up.send_bytes(data)
-                    if read_session(request) is None:  # session ended (logout/expiry): drop the console
-                        await ws_client.close(code=4401, message=b"session expired")
-                        break
 
             async def agent_to_browser():
                 async for msg in ws_up:
@@ -442,10 +468,9 @@ async def term_ws(request: web.Request):
                     if data[:1] == b"0":  # terminal output only; title/preferences are dropped
                         await ws_client.send_bytes(data)
 
-            tasks = [asyncio.create_task(browser_to_agent()), asyncio.create_task(agent_to_browser())]
-            _done, rest = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            for t in rest:
-                t.cancel()
+            await _first_done(browser_to_agent(), agent_to_browser(), session_ended(request))
+            if read_session(request, touch=False) is None:  # tells the browser not to reconnect
+                await ws_client.close(code=4401, message=b"session expired")
     except (aiohttp.ClientError, TimeoutError) as e:
         log.warning("terminal %s websocket failed: %s", name, e)
     finally:
