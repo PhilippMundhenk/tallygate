@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
+import inspect
 import logging
 import os
 import socket
@@ -35,6 +37,7 @@ from egressgw.policy import (
     Exception_,
     Policy,
     is_ip,
+    parse_cidrs,
     registrable_domain,
     rule_for_approval,
     valid_hostname,
@@ -53,6 +56,40 @@ WRITE_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
 # TEST ONLY: "name=ip,name=ip" static resolution used by the e2e test-suite instead of /etc/hosts.
 # Never set this in production; the gateway logs a loud warning when it is active.
 STATIC_HOSTS = dict(kv.split("=", 1) for kv in os.environ.get("GW_TEST_STATIC_HOSTS", "").split(",") if "=" in kv)
+
+
+def fail_closed(hook):
+    """mitmproxy only logs an exception raised in an addon hook and then carries on, i.e. the connection
+    would go out unchecked. Every hook is therefore wrapped: any error refuses the connection or flow."""
+
+    def refuse(data) -> None:
+        log.exception("%s failed - refusing the connection (fail closed)", hook.__name__)
+        if isinstance(data, server_hooks.ServerConnectionHookData):
+            data.server.error = "egress policy: internal error (fail closed)"
+        elif isinstance(data, tls.ClientHelloData):
+            data.ignore_connection = False  # intercept: the per-request checks still apply
+        elif getattr(data, "killable", False):
+            data.kill()  # http/tcp/websocket/dns flows
+
+    if inspect.iscoroutinefunction(hook):
+
+        @functools.wraps(hook)
+        async def wrapper(self, data):
+            try:
+                return await hook(self, data)
+            except Exception:  # noqa: BLE001 - any error must refuse, never pass traffic through
+                refuse(data)
+
+    else:
+
+        @functools.wraps(hook)
+        def wrapper(self, data):
+            try:
+                return hook(self, data)
+            except Exception:  # noqa: BLE001 - any error must refuse, never pass traffic through
+                refuse(data)
+
+    return wrapper
 
 
 @dataclass
@@ -91,7 +128,8 @@ class Gateway:
         self.config = self.config or {}
         self.policy_path = DATA_DIR / "policy.yaml"
         # The hard-deny floor comes only from the (read-only mounted) static config, never from the API.
-        self.hard_deny_floor = [str(c) for c in self.config.get("hard_deny_floor") or DEFAULT_HARD_DENY]
+        # Validated here: a broken entry must stop the gateway, not fail per connection.
+        self.hard_deny_floor = parse_cidrs(self.config.get("hard_deny_floor") or DEFAULT_HARD_DENY, "hard_deny_floor")
         if not self.policy_path.exists():
             preset = PRESET_DIR / f"{self.config.get('initial_preset', 'baseline')}.yaml"
             self.policy = Policy.load(preset) if preset.exists() else Policy()
@@ -172,20 +210,26 @@ class Gateway:
     async def _housekeeping(self) -> None:
         while True:
             await asyncio.sleep(15)
-            if self.policy.prune_expired():
-                self.save_policy()
-            now = time.time()
-            self.neg_cache = {k: v for k, v in self.neg_cache.items() if v > now}
-            self._flush_dups(now)
-            self.events.enforce_cap()
-            expired, timed_out = self.grants.prune()
-            for a in expired:
-                self.record(kind="grant", host=a.name, action="expired", reason=f"grant {a.name} ({a.level}) expired")
-            for r in timed_out:
-                self.record(kind="grant", host=r.name, action="deny", reason=f"grant request {r.id} timed out")
-                self._grant_resolved(r)
-            if expired:
-                self.publish({"type": "grants"})
+            try:
+                self._housekeep()
+            except Exception:  # keep the loop alive; the error is logged
+                log.exception("housekeeping failed")
+
+    def _housekeep(self) -> None:
+        if self.policy.prune_expired():
+            self.save_policy()
+        now = time.time()
+        self.neg_cache = {k: v for k, v in self.neg_cache.items() if v > now}
+        self._flush_dups(now)
+        self.events.enforce_cap()
+        expired, timed_out = self.grants.prune()
+        for a in expired:
+            self.record(kind="grant", host=a.name, action="expired", reason=f"grant {a.name} ({a.level}) expired")
+        for r in timed_out:
+            self.record(kind="grant", host=r.name, action="deny", reason=f"grant request {r.id} timed out")
+            self._grant_resolved(r)
+        if expired:
+            self.publish({"type": "grants"})
 
     # ------------------------------------------------------------------ events
     def publish(self, ev: dict) -> None:
@@ -262,9 +306,7 @@ class Gateway:
             p = Pending(
                 host=host.lower(), port=port, ips=ips, proto=proto, client=client, timeout=self.policy.ask_timeout
             )
-            p.future = asyncio.get_running_loop().create_future()
-            self.pending[key] = p
-            self.record(
+            self.record(  # first: if the log cannot be written, nothing is left pending
                 kind="ask",
                 proto=proto,
                 client=client,
@@ -275,6 +317,8 @@ class Gateway:
                 reason="awaiting approval",
                 extra={"pending_id": p.id},
             )
+            p.future = asyncio.get_running_loop().create_future()
+            self.pending[key] = p
             self.publish({"type": "ask", "pending": p.to_dict()})
         else:
             p.attempts += 1
@@ -423,6 +467,7 @@ class Gateway:
             data.server.sni = host
         return True
 
+    @fail_closed
     async def server_connect(self, data: server_hooks.ServerConnectionHookData) -> None:
         if data.server.address is None:
             data.server.error = "egress policy: no destination"
@@ -433,10 +478,10 @@ class Gateway:
         client = data.client.peername[0] if data.client.peername else "?"
 
         def block(reason: str, ips: list[str] | None = None) -> None:
+            data.server.error = f"egress policy: blocked ({reason})"  # first: recording may fail
             self.record(
                 kind="conn", proto=proto, client=client, host=host, port=port, ips=ips, action="deny", reason=reason
             )
-            data.server.error = f"egress policy: blocked ({reason})"
 
         if is_ip(host):
             if await self._grant_connect(data, host, port, proto, client, block):
@@ -476,13 +521,14 @@ class Gateway:
                 return block("no address")
             dec = await self.decide(host, port, ips, proto, client)
         reason = dec.reason
-        if dec.action != "allow" and (hint := self._grant_hint(host, port)):
-            reason = f"{reason}; {hint}"
+        if dec.action != "allow":
+            data.server.error = f"egress policy: blocked ({dec.reason})"
+            if hint := self._grant_hint(host, port):
+                reason = f"{reason}; {hint}"
         self.record(
             kind="conn", proto=proto, client=client, host=host, port=port, ips=ips, action=dec.action, reason=reason
         )
         if dec.action != "allow":
-            data.server.error = f"egress policy: blocked ({dec.reason})"
             return
         self.orig_host[data.server.id] = host
         # Pin to the checked address (anti DNS-rebinding: no second resolution after the decision).
@@ -507,10 +553,12 @@ class Gateway:
         names = self.grants.defined_for(host, port)
         return f"available via grant {', '.join(names)} (agent: tallygate request {names[0]})" if names else None
 
+    @fail_closed
     def server_disconnected(self, data: server_hooks.ServerConnectionHookData) -> None:
         self.orig_host.pop(data.server.id, None)
         self.conn_grant.pop(data.server.id, None)
 
+    @fail_closed
     def tls_clienthello(self, data: tls.ClientHelloData) -> None:
         b = self.conn_grant.get(data.context.server.id)
         if b:
@@ -525,6 +573,7 @@ class Gateway:
             return  # intercept: credential injection and/or read-only enforcement
         data.ignore_connection = True  # end-to-end TLS, untouched
 
+    @fail_closed
     def tls_start_server(self, data: tls.TlsData) -> None:
         """Per-target upstream TLS for grant targets: pinned leaf fingerprint (self-signed LAN services)
         or, if explicitly configured, no verification."""
@@ -552,17 +601,20 @@ class Gateway:
 
             data.ssl_conn.set_verify(SSL.VERIFY_NONE, None)
 
+    @fail_closed
     def tcp_start(self, flow) -> None:
         b = self.conn_grant.get(flow.server_conn.id)
         if b and b[2].scheme != "tcp":
             self._grant_refuse_raw(flow, b, "non-HTTP traffic to an HTTP grant target")
 
+    @fail_closed
     def websocket_start(self, flow: http.HTTPFlow) -> None:
         b = self.conn_grant.get(flow.server_conn.id)
         if b and (a := self.grants.active.get(b[0])) is not None and a.level == "read":
             self._grant_refuse_raw(flow, b, "websocket on a read-only grant")
 
     def _grant_refuse_raw(self, flow, b, reason: str) -> None:
+        flow.kill()
         self.record(
             kind="conn",
             proto="grant",
@@ -572,7 +624,6 @@ class Gateway:
             action="deny",
             reason=reason,
         )
-        flow.kill()
 
     def _grant_request(self, flow: http.HTTPFlow) -> bool:
         """Enforce an active grant on an HTTP request. Returns True if the request was handled."""
@@ -593,6 +644,7 @@ class Gateway:
         client = flow.client_conn.peername[0] if flow.client_conn.peername else "?"
 
         def refuse(why: str) -> bool:
+            flow.response = http.Response.make(403, f"egress policy: {why}\n".encode(), {"Content-Type": "text/plain"})
             self.record(
                 kind="conn",
                 proto="http",
@@ -602,7 +654,6 @@ class Gateway:
                 action="deny",
                 reason=f"{why}: {req.method} {req.path[:120]}",
             )
-            flow.response = http.Response.make(403, f"egress policy: {why}\n".encode(), {"Content-Type": "text/plain"})
             return True
 
         if a is None or g is None or a.expires <= time.time():
@@ -627,6 +678,7 @@ class Gateway:
                     req.headers[i["header"]] = value
         return True
 
+    @fail_closed
     def request(self, flow: http.HTTPFlow) -> None:
         if self._grant_request(flow):
             return
@@ -634,6 +686,7 @@ class Gateway:
         # (plain HTTP proxy requests, whose server connection is opened after this hook).
         target = (self.orig_host.get(flow.server_conn.id) or flow.request.host or "").lower().rstrip(".")
         if target in self.readonly_hosts and flow.request.method.upper() in WRITE_METHODS:
+            flow.response = http.Response.make(403, b"egress policy: read-only host\n", {"Content-Type": "text/plain"})
             self.record(
                 kind="conn",
                 proto="http",
@@ -643,7 +696,6 @@ class Gateway:
                 action="deny",
                 reason=f"read-only host: {flow.request.method} refused",
             )
-            flow.response = http.Response.make(403, b"egress policy: read-only host\n", {"Content-Type": "text/plain"})
             return
         if target not in self.inject_hosts:
             return
@@ -664,7 +716,9 @@ class Gateway:
             if value is not None:  # secret not configured: request goes out without credentials
                 flow.request.headers[rule.get("header", "Authorization")] = value
 
+    @fail_closed
     def dns_request(self, flow: dns.DNSFlow) -> None:
+        flow.response = flow.request.fail(response_codes.NXDOMAIN)
         q = flow.request.question
         name = q.name if q else "?"
         client = flow.client_conn.peername[0] if flow.client_conn.peername else "?"
@@ -677,4 +731,3 @@ class Gateway:
             action="deny",
             reason="agent DNS is disabled (NXDOMAIN); use the proxy",
         )
-        flow.response = flow.request.fail(response_codes.NXDOMAIN)

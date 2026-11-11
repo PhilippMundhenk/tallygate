@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- The gateway fails closed: an error inside a hook (e.g. the event log cannot be written) refuses the
+  connection instead of letting it through. An invalid `hard_deny_floor` entry stops the gateway at
+  startup, and until a failed startup has exited every connection is refused (it used to be proxied
+  without the policy for a moment) ([#8](https://github.com/PhilippMundhenk/tallygate/issues/8)).
+
 ## [0.3.0] - 2026-11-11
 
 ### Added
