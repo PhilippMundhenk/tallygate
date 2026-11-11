@@ -18,7 +18,8 @@ async function api(method, path, body) {
 const gw = (method, sub, body) => api(method, "/api/gw" + sub, body);
 
 function toast(msg, bad = false) {
-  const t = $("#toast"); t.textContent = msg; t.style.display = "block"; t.style.color = bad ? "#fca5a5" : "";
+  const t = $("#toast"); t.setAttribute("role", bad ? "alert" : "status");
+  t.textContent = msg; t.style.display = "block"; t.style.color = bad ? "#fca5a5" : "";
   clearTimeout(toast._t); toast._t = setTimeout(() => (t.style.display = "none"), 4000);
 }
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
@@ -26,7 +27,10 @@ const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toas
 /* ---------------- tabs ---------------- */
 function showTab(name) {
   $$("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "tab-" + name));
-  $$("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  $$("#tabs button").forEach((b) => {
+    const on = b.dataset.tab === name;
+    b.classList.toggle("active", on); b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1;
+  });
   history.replaceState(null, "", "#" + name);
   if (name === "rules") guard(loadPolicy)();
   if (name === "grants") { guard(loadGrants)(); guard(loadSecrets)(); }
@@ -34,6 +38,12 @@ function showTab(name) {
   if (name === "log" && !logLoaded) guard(loadLog)();
 }
 $$("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+$("#tabs").addEventListener("keydown", (e) => {  // arrow keys move between tabs (WAI-ARIA tabs pattern)
+  const tabs = $$("#tabs button"), i = tabs.indexOf(document.activeElement);
+  if (i < 0 || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+  const j = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (i + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  e.preventDefault(); tabs[j].focus(); showTab(tabs[j].dataset.tab);
+});
 
 /* ---------------- approvals ---------------- */
 const SCOPES = [["once", "Allow 2 min", ""], ["hour", "Allow 1 h", ""], ["always", "Always (host)", ""],
@@ -294,12 +304,12 @@ setInterval(() => $$(".left").forEach((x) => (x.textContent = fmtLeft(Number(x.d
 
 function targetRow(t = { scheme: "https", host: "", port: 443, paths: ["/*"] }) {
   const row = document.createElement("div"); row.className = "target-row";
-  row.innerHTML = `<select class="t-scheme"><option>https</option><option>http</option><option>tcp</option></select>
-    <input class="t-host" placeholder="ha.lan or 192.168.1.5"><input class="t-port" type="number" min="1" max="65535">
-    <input class="t-paths" placeholder="paths, e.g. /api/*"><label><input type="checkbox" class="t-lan"> LAN</label>
-    <input class="t-address" placeholder="fixed IP (optional)"><input class="t-fp" placeholder="SHA-256 cert fingerprint (optional)">
+  row.innerHTML = `<select class="t-scheme" aria-label="Scheme"><option>https</option><option>http</option><option>tcp</option></select>
+    <input class="t-host" aria-label="Host" placeholder="ha.lan or 192.168.1.5"><input class="t-port" type="number" min="1" max="65535" aria-label="Port">
+    <input class="t-paths" aria-label="Paths" placeholder="paths, e.g. /api/*"><label><input type="checkbox" class="t-lan"> LAN</label>
+    <input class="t-address" aria-label="Fixed IP (optional)" placeholder="fixed IP (optional)"><input class="t-fp" aria-label="SHA-256 certificate fingerprint (optional)" placeholder="SHA-256 cert fingerprint (optional)">
     <label title="only for https without fingerprint"><input type="checkbox" class="t-verify" checked> verify TLS</label>
-    <button class="small secondary t-del">✕</button>`;
+    <button class="small secondary t-del" aria-label="Remove target">✕</button>`;
   $(".t-scheme", row).value = t.scheme; $(".t-host", row).value = t.host; $(".t-port", row).value = t.port;
   $(".t-paths", row).value = (t.paths || ["/*"]).join(", "); $(".t-lan", row).checked = !!t.lan;
   $(".t-address", row).value = t.address || ""; $(".t-fp", row).value = t.tls_fingerprint || ""; $(".t-verify", row).checked = t.tls_verify !== false;
@@ -308,8 +318,8 @@ function targetRow(t = { scheme: "https", host: "", port: 443, paths: ["/*"] }) 
 }
 function injectRow(i = { host: "", header: "Authorization", value: "Bearer ${token_name}" }) {
   const row = document.createElement("div"); row.className = "inject-row";
-  row.innerHTML = `<input class="i-host" placeholder="host (an https target)"><input class="i-header" placeholder="header">
-    <input class="i-value" placeholder="value template, e.g. Bearer \${ha_token}"><button class="small secondary i-del">✕</button>`;
+  row.innerHTML = `<input class="i-host" aria-label="Host" placeholder="host (an https target)"><input class="i-header" aria-label="Header" placeholder="header">
+    <input class="i-value" aria-label="Value template" placeholder="value template, e.g. Bearer \${ha_token}"><button class="small secondary i-del" aria-label="Remove header">✕</button>`;
   $(".i-host", row).value = i.host; $(".i-header", row).value = i.header; $(".i-value", row).value = i.value;
   $(".i-del", row).onclick = () => row.remove();
   return row;
@@ -407,17 +417,29 @@ $("#selftestBtn").onclick = guard(async () => {
   const rows = r.results.map((t) => `<tr><td class="${t.pass ? "ok" : "bad"}">${t.pass ? "PASS" : "FAIL"}</td><td>${esc(t.name)}</td><td class="muted">${esc(t.detail)}</td></tr>`).join("");
   setStatus("st-test", `<table class="results">${rows}</table>`, r.results.every((t) => t.pass) ? "ok" : "bad");
 });
+// Browsers only show the permission prompt after a user gesture, so it is asked from a button.
+function showNotifyPerm() {
+  const supported = "Notification" in window;
+  $("#notifyBtn").classList.toggle("hidden", !supported || Notification.permission !== "default");
+  $("#notifyPerm").textContent = !supported ? "not supported by this browser"
+    : Notification.permission === "granted" ? "browser notifications are on"
+    : Notification.permission === "denied" ? "blocked in the browser's site settings" : "";
+}
+$("#notifyBtn").onclick = guard(async () => { await Notification.requestPermission(); showNotifyPerm(); });
+showNotifyPerm();
 $$(".wizard [data-term]").forEach((b) => (b.onclick = () => openTerm(b.dataset.term)));
 $$("pre.copy").forEach((p) => (p.onclick = () => navigator.clipboard.writeText(p.textContent).then(() => toast("Copied"))));
 
 /* ---------------- live stream ---------------- */
 let streamOpened = false;
+// Connection state in words as well as colour.
+function setConn(ok) { $("#conn").classList.toggle("ok", ok); $("#connText").textContent = ok ? "live" : "reconnecting"; }
 // After every (re)connect, reload what may have changed during the gap (sleep, network change, gateway
 // restart): otherwise asks and grant requests from the gap stay invisible until they are auto-denied.
 function connectStream() {
   const es = new EventSource("/api/stream");
   es.onopen = () => {
-    $("#conn").classList.add("ok"); $("#conn").title = "event stream: connected";
+    setConn(true);
     if (streamOpened) {
       loadPending().catch(() => {}); loadGrants().catch(() => {});
       if (logLoaded) loadLog().catch(() => {});
@@ -425,7 +447,7 @@ function connectStream() {
     streamOpened = true;
   };
   es.onerror = () => {
-    $("#conn").classList.remove("ok"); $("#conn").title = "event stream: reconnecting";
+    setConn(false);
     if (es.readyState !== EventSource.CLOSED) return;  // the browser retries by itself
     // Closed for good (e.g. 401 after the session ended): api() sends us to the login page on 401.
     setTimeout(() => api("GET", "/api/meta").then(connectStream, connectStream), 3000);
@@ -448,7 +470,6 @@ function connectStream() {
     const b = document.createElement("button"); b.textContent = name; b.dataset.name = name; b.className = "secondary";
     b.onclick = () => openTerm(name); $("#termButtons").appendChild(b);
   }
-  if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {});
   await loadPending().catch((e) => toast(e.message, true));
   await loadGrants().catch((e) => toast(e.message, true));
   connectStream();
