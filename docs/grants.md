@@ -72,7 +72,7 @@ write-only.
 ### In the UI
 
 **Grants → New grant** offers the same fields as a form. Grants from the config file are shown read-only;
-UI grants are stored in `state/gateway/grants.yaml`.
+UI grants are stored in `grants.yaml` in the `gateway-data` volume.
 
 ![Grants tab](images/grants.png)
 

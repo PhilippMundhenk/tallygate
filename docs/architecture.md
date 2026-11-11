@@ -229,15 +229,16 @@ Concurrent connections to the same `host:port` share one pending request (one no
 
 | Data | Location | Owner | Notes |
 |---|---|---|---|
-| Policy | `state/gateway/policy.yaml` | egress-gw (uid 10001) | Written atomically; seeded from the `baseline` preset on first start. |
-| Event log | `state/gateway/events.db` | egress-gw | SQLite/WAL, pruned after `log_keep_days`. |
-| Secrets | `state/gateway/secrets.json` | egress-gw | Mode 0600, never returned by the API. |
-| Gateway CA | `state/gateway/mitmproxy/` | egress-gw | Public cert exported to the `ca` volume for the agent. |
-| Static gateway config | `config/gateway.yaml` | operator | Mounted read-only: injection hosts, service ports, hard-deny floor, config grants. |
-| UI-defined grants | `state/gateway/grants.yaml` | egress-gw | Active grants and pending requests live in memory (a restart ends them: fail closed). |
-| Agent home | `state/agent-home/` | agent (uid 1000) | Claude login, settings, skills, `.gitconfig`, tmux/shell history. |
-| Workspace | `state/workspace/` | agent | Repositories. |
-| Control | – | – | Sessions in memory (a restart logs everyone out). |
+| Policy | `gateway-data`: `policy.yaml` | egress-gw (uid 10001) | Written atomically; seeded from the `baseline` preset on first start. |
+| Event log | `gateway-data`: `events.db` | egress-gw | SQLite/WAL, pruned after `log_keep_days`. |
+| Secrets | `gateway-data`: `secrets.json` | egress-gw | Mode 0600, never returned by the API. |
+| Gateway CA | `gateway-data`: `mitmproxy/` | egress-gw | Public cert exported to the `ca` volume for the agent. |
+| Static gateway config | `/etc/egressgw/config.yaml` (default from `config/gateway.yaml` in the image) | operator | Read-only (override by mounting your own file): injection hosts, service ports, hard-deny floor, config grants. |
+| UI-defined grants | `gateway-data`: `grants.yaml` | egress-gw | Active grants and pending requests live in memory (a restart ends them: fail closed). |
+| Agent home | `agent-home` | agent (uid 1000) | Claude login, settings, skills, `.gitconfig`, tmux/shell history. |
+| Workspace | `workspace` | agent | Repositories. |
+| Control | `control-data`: `session-secret`, `password-hash` | control (uid 10002) | Created on first start unless set by environment. Sessions in memory (a restart logs everyone out). |
+| Shared secrets | `gw-token` (gateway rw, control ro), `ttyd` (control rw, agent ro) | – | API token and console credential, created on first start. The agent never mounts `gw-token`. |
 
 ## Process model
 
