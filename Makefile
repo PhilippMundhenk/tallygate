@@ -11,7 +11,7 @@ help:  ## show this help
 # ---------------------------------------------------------------- development
 .PHONY: dev-setup lint fmt test test-unit test-e2e
 dev-setup:  ## install dev dependencies into the current Python env
-	$(PY) -m pip install -r requirements-dev.txt shellcheck-py
+	$(PY) -m pip install -r requirements-dev.txt
 
 lint:  ## ruff + shellcheck + vendored-file checksums
 	ruff check .
