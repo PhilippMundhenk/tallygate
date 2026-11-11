@@ -1,25 +1,30 @@
 #!/bin/bash
-# One-time host setup: create .env with random secrets, password hash, and state dirs with correct owners.
+# Optional host setup. tallygate needs no configuration: secrets and the UI password are created on
+# first start. This script only
+#   - creates .env from .env.example (if missing), readable only by you, and
+#   - with a directory argument, keeps the state in host directories instead of Docker volumes:
+#       ./setup.sh /srv/tallygate      -> /srv/tallygate/{gateway,agent-home,workspace} with the right owners
+# Run it as your normal user; it uses sudo only to create and chown the state directories.
 set -euo pipefail
-umask 077                     # .env holds secrets: never world-readable, not even briefly
 cd "$(dirname "$0")"
-[[ -f .env ]] || cp .env.example .env
-set_var() { grep -q "^$1=" .env && sed -i "s|^$1=.*|$1=$2|" .env || echo "$1=$2" >> .env; }
-get_var() { grep "^$1=" .env | head -1 | cut -d= -f2- | sed 's/[[:space:]]*#.*//'; }
-rand() { python3 -c "import secrets;print(secrets.token_urlsafe($1))"; }
 
-[[ -n "$(get_var GW_API_TOKEN)" ]]   || set_var GW_API_TOKEN "$(rand 32)"
-[[ -n "$(get_var SESSION_SECRET)" ]] || set_var SESSION_SECRET "$(rand 32)"
-[[ -n "$(get_var TTYD_CREDENTIAL)" ]] || set_var TTYD_CREDENTIAL "agent:$(rand 24)"
-if [[ -z "$(get_var CONTROL_PASSWORD_HASH)" ]]; then
-  echo "Choose the web UI password:"
-  set_var CONTROL_PASSWORD_HASH "$(python3 control/hashpw.py)"
+if [[ ! -f .env ]]; then
+  (umask 077 && cp .env.example .env)
+  echo "created .env"
 fi
-chmod 600 .env
+set_var() { if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else echo "$1=$2" >>.env; fi; }
 
-DIR=$(get_var TALLYGATE_DIR); DIR=${DIR:-./state}
-mkdir -p "$DIR/gateway" "$DIR/agent-home" "$DIR/workspace"
-chown -R 10001:10001 "$DIR/gateway"
-chown -R 1000:1000 "$DIR/agent-home" "$DIR/workspace"
-chmod 700 "$DIR/gateway"
-echo "State in $DIR. Next: docker compose up -d --build, then open the UI and run the Setup wizard."
+if [[ -n "${1:-}" ]]; then
+  DIR=$(realpath -m "$1")
+  SUDO=""; [[ $(id -u) -eq 0 ]] || SUDO=sudo
+  $SUDO mkdir -p "$DIR/gateway" "$DIR/agent-home" "$DIR/workspace"
+  $SUDO chown 10001:10001 "$DIR/gateway"                      # gateway user
+  $SUDO chown 1000:1000 "$DIR/agent-home" "$DIR/workspace"    # agent user
+  $SUDO chmod 700 "$DIR/gateway"
+  set_var GATEWAY_DATA "$DIR/gateway"
+  set_var AGENT_HOME "$DIR/agent-home"
+  set_var WORKSPACE "$DIR/workspace"
+  echo "state in $DIR (GATEWAY_DATA, AGENT_HOME, WORKSPACE set in .env)"
+fi
+echo "Next: docker compose up -d   (or 'make up' to build from this checkout)"
+echo "      docker compose logs control | grep -A1 password   (first start: generated UI password)"

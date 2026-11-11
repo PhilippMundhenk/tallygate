@@ -24,6 +24,55 @@ All notable changes to this project are documented here. The format follows
 - Grants defined in the UI or API can no longer use `inject` or `tls_verify: false` (config-file grants
   only): a UI session could send stored secrets to any host. Such UI grants saved earlier are ignored at
   startup ([#12](https://github.com/PhilippMundhenk/tallygate/issues/12)).
+### Added
+- **Docker Compose with prebuilt images is the recommended installation.** Multi-arch images
+  (`linux/amd64`, `linux/arm64`) `ghcr.io/philippmundhenk/tallygate-{gateway,control,agent}` are published
+  from `main` and for every release; releases attach `compose.yaml`, `.env.example`, `gateway.yaml` and
+  `bypass.sh`.
+- Zero-config first start: the gateway API token, session secret and console credential are created in
+  volumes, and a UI password is generated and printed once to the control log. Environment variables still
+  take precedence. `docker compose exec control python -m app.passwd` changes the stored password.
+- `compose.build.yaml` to build the images from a checkout (`make up`).
+- A weekly workflow opens a PR when a new Claude Code version is published; `agent/Dockerfile` is the
+  single place that pins the version (#17).
+- `AGENT_CPUS` to limit the agent's CPU (default: no limit), and a resource-limits section in the
+  operations guide on keeping the workspace from filling the host disk (#25).
+- Health check for the agent; services start in order of health (`depends_on: condition: service_healthy`).
+
+### Changed
+- CI: actions pinned to commit SHAs, base images pinned by digest, Dependabot groups minor/patch
+  updates, gitleaks secret scan on every PR and weekly, Trivy scan of the published images, image
+  build tested on pull requests, ttyd and tool versions pinned in one place (#18).
+- Gateway and control images on Python 3.15 (was 3.13); actions/checkout and actions/setup-python v7;
+  ruff 0.17.4 (also in pre-commit), pytest 9.2.0.
+- State lives in Docker volumes by default. `TALLYGATE_DIR` is replaced by `GATEWAY_DATA`, `AGENT_HOME` and
+  `WORKSPACE` (each a volume name or a host path); `./setup.sh /path` sets them up for host directories.
+- The default `config/gateway.yaml` is built into the gateway image; mount your own file to change it.
+- `setup.sh` runs as your normal user (sudo only for `chown`) and no longer generates secrets.
+- `TRUST_FORWARDED_FOR` defaults to `0`; docs explain that the `mgmt` bridge address is shared by every
+  process on the host.
+
+### Fixed
+- The managed setting `skipDangerousModePermissionPrompt` was nested under `permissions`, where Claude Code
+  ignores it; it is now a top-level key, so the bypass-mode confirmation no longer appears (#26).
+
+### Removed
+- `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
+
+### Security
+- The agent could reach services on the Docker host that listen on all interfaces through the host's
+  address on `agent-net` (`172.31.10.1`), bypassing the gateway. `agent-net` and `control-net` no longer
+  give the host an address (`com.docker.network.bridge.inhibit_ipv4`), and `bypass.sh` checks it with a
+  listener on the host (#7).
+
+### Upgrading from 0.3.0
+Keep your existing state: in `.env`, replace `TALLYGATE_DIR=/your/dir` with
+`GATEWAY_DATA=/your/dir/gateway`, `AGENT_HOME=/your/dir/agent-home`, `WORKSPACE=/your/dir/workspace`. Your
+secrets in `.env` keep working. If you changed `config/gateway.yaml`, mount it as described in
+[docs/operations.md](docs/operations.md#with-docker-compose-recommended). Then `make up`, or switch to the
+published images with `docker compose pull && docker compose up -d`.
+Recreate the networks so the new network option takes effect: `docker compose down && docker compose up -d`
+(compose warns that the network configuration changed).
 
 ## [0.3.0] - 2026-11-11
 
