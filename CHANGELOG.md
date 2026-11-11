@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- CI: the image scan used an invalid image reference and failed on every push to `main`; release notes named
+  `:vX.Y.Z` tags that don't exist; manual runs on other branches pushed images; the Claude Code workflow
+  opens an issue when Actions may not create pull requests (#64).
+
 ### Security
 - The gateway fails closed: an error inside a hook (e.g. the event log cannot be written) refuses the
   connection instead of letting it through. An invalid `hard_deny_floor` entry stops the gateway at

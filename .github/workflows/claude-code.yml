@@ -9,6 +9,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write              # fallback when Actions may not open PRs
   actions: write             # start CI for the PR branch (PRs opened with GITHUB_TOKEN trigger no workflows)
 
 concurrency:
@@ -50,11 +51,20 @@ jobs:
           git switch -c "$branch"
           git commit -am "build(agent): Claude Code $CURRENT -> $LATEST"
           git push -u origin "$branch"
-          gh pr create --base main --head "$branch" --label dependencies --label agent \
-            --title "build(agent): Claude Code $LATEST" \
-            --body "Bumps the Claude Code version in the agent image from \`$CURRENT\` to \`$LATEST\`.
+          body="Bumps the Claude Code version in the agent image from \`$CURRENT\` to \`$LATEST\`.
 
           Release notes: https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md
 
           After merging, cut a patch release so the published images carry the new version."
+          if ! gh pr create --base main --head "$branch" --label dependencies --label agent \
+               --title "build(agent): Claude Code $LATEST" --body "$body"; then
+            # Repositories may forbid PRs created by GITHUB_TOKEN (Settings -> Actions -> General ->
+            # "Allow GitHub Actions to create and approve pull requests"). Then ask a human to open it.
+            gh issue create --label dependencies --label agent --title "Claude Code $LATEST is available" \
+              --body "Branch \`$branch\` bumps the agent image from \`$CURRENT\` to \`$LATEST\`, but this workflow may not open
+          pull requests here. Open one: https://github.com/${{ github.repository }}/compare/main...$branch
+
+          (To let the workflow do it, enable *Settings -> Actions -> General -> Allow GitHub Actions to create and
+          approve pull requests*.)"
+          fi
           gh workflow run ci.yml --ref "$branch"
