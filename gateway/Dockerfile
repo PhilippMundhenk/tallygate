@@ -1,5 +1,5 @@
 # egress-gw: policy-enforcing egress gateway (HTTP/HTTPS proxy, SOCKS5, TCP service ports, NXDOMAIN DNS)
-FROM docker.io/library/python:3.13-slim-trixie
+FROM docker.io/library/python:3.15-slim-trixie
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 DATA_DIR=/data CA_EXPORT_DIR=/ca
 COPY requirements.txt /app/requirements.txt
