@@ -76,7 +76,10 @@ class MockBots:
             plan = self.plan.get("telegram")
             if plan:
                 buttons = [b for row in p["reply_markup"]["inline_keyboard"] for b in row]
-                btn = next(b for b in buttons if b["text"] == plan["scope_label"])
+                label = plan["scope_label"]
+                btn = next((b for b in buttons if b["text"] == label or b["text"].startswith(label)), None)
+                if btn is None:
+                    return web.json_response({"ok": True, "result": {"message_id": mid}})
 
                 async def press():
                     await asyncio.sleep(0.8)
@@ -118,7 +121,7 @@ class MockBots:
         if request.match_info["type"] == "m.room.message":
             self.log.append(("mx.msg", body["body"]))
             plan = self.plan.get("matrix")
-            if plan and "wants to connect" in body["body"]:
+            if plan and ("wants to connect" in body["body"] or "Grant request" in body["body"]):
                 short = body["body"].split("#", 1)[1].split()[0]
 
                 async def act():

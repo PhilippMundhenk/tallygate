@@ -16,3 +16,4 @@ Format: [MADR](https://adr.github.io/madr/)-style, one decision per file. Status
 | [0009](0009-web-console-via-ttyd-and-tmux.md) | Web consoles via ttyd + tmux, relayed by control | Accepted (revised) |
 | [0010](0010-notifications-via-outbound-polling-bots.md) | Notifications via outbound-polling Telegram/Matrix bots | Accepted |
 | [0011](0011-decide-on-names-before-resolving.md) | Decide on names before resolving them | Accepted |
+| [0012](0012-grants-for-scoped-temporary-access.md) | Grants for scoped, temporary access | Accepted |

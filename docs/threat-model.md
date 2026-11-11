@@ -85,12 +85,18 @@ service, **E**levation of privilege.
 | T25 | Exfiltration by publishing to a package registry (`npm publish`) | I | `readonly` hosts: writes (PUT/PATCH/DELETE) refused | e2e (TG-11) |
 | T26 | Disk/log flood by a looping or hostile agent | D | Identical events coalesced; hard row cap; retention | e2e (TG-09) |
 | T27 | A compromised control plane (or UI session) removes LAN protection | E | Hard-deny floor only in the read-only config file; API can only add | unit + e2e (TG-03) |
+| T28 | Agent abuses an approved grant beyond its intent (other paths, other vhosts on the same IP, writes on read, WebSocket, raw TCP on an HTTP port) | E, T | Per-request checks: Host == granted host, canonical path match (no `..`, `//`, encoded separators), safe methods + no upgrade on read, non-HTTP cut; pinned IP | unit + e2e grants tests |
+| T29 | Agent talks the human into a broad grant (misleading reason, request flooding) | S | Only operator-defined grants can be requested; reason sanitised and labelled unverified; write can be downgraded to read; max 3 pending, rate-limited API | e2e grants + notification tests |
+| T30 | UI compromise defines a grant to arbitrary LAN hosts | E | UI grants may use `lan` only inside `grants_lan_allow` (config file); `grants_never` always applies | unit + e2e |
+| T31 | Self-signed LAN service impersonated on the path | S, I | Leaf certificate pinned by SHA-256 (`tls_fingerprint`); disabling verification needs an explicit setting and UI confirmation | e2e pinned/badpin |
+| T32 | Access outlives the task | E | Grants expire (≤ 7 days, capped per grant), are revocable from UI/Telegram/Matrix, end on restart; open HTTP connections are re-checked per request | e2e revoke test |
 
 ## Residual risks
 
 | Risk | Why it remains | Recommendation |
 |---|---|---|
 | **Exfiltration via allowed destinations** | Any allowed host can carry data out — notably the Anthropic API with an API key of the attacker's choosing (the agent needs its own Claude credentials, so these cannot be stripped), GitHub within the injected token's permissions, and reads that encode data in URLs. | Keep allowlists tight; prefer `ask`; fine-grained PATs; review the log. |
+| **Grant semantics** | `read` trusts that the target does not change state on GET; `tcp` grants cannot see inside the stream, and established sessions survive expiry. | Narrow paths, short `max_ttl` for tcp, dedicated restricted accounts/keys on targets. |
 | **Agent-supplied terminal output** | xterm.js parses escape sequences from the agent. | Vendored, pinned xterm.js; no clipboard/link addons; CSP limits impact. |
 | **Abuse of the injected token's permissions** | The agent can *use* the token through the gateway. | Fine-grained PAT, only needed repos and permissions; branch protection on important repos. |
 | **Shared kernel** | Containers share the host kernel; a kernel exploit escapes all isolation. | Keep the host patched; run the stack in a dedicated VM; optionally `runtime: runsc` (gVisor) for the agent. |

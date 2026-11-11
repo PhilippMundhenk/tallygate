@@ -75,6 +75,23 @@ hosts; if a referenced secret is missing the request goes out without credential
 
 Every `inject` host must also be **allowed** by the policy (the baseline preset allows GitHub).
 
+### Grants
+
+See [grants.md](grants.md) for the concept and examples. Keys in `config/gateway.yaml`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `grants` | – | Map `name → definition` (`description`, `targets`, `levels`, `approval`, `default_ttl`, `max_ttl`, `inject`). Read-only in the UI. |
+| `grants_lan_allow` | `[]` | CIDRs that **UI-defined** grants may reach with `lan: true`. Empty = UI grants cannot target the LAN. |
+| `grants_never` | loopback, link-local, multicast, unspecified | Never reachable through any grant. |
+| `grant_request_timeout` | `300` | Seconds a request waits for a decision. |
+| `grant_max_pending` | `3` | Open grant requests at once. |
+| `grant_api_rate` | `30` | Requests/minute on the agent grant API. |
+
+Target fields: `host` (name, `*.domain` or IP), `port`, `scheme` (`https` default, `http`, `tcp`), `paths`
+(globs, default `/*`), `lan`, `address` (fixed IP), `tls_fingerprint` (SHA-256), `tls_verify`
+(default `true`).
+
 ## `policy.yaml`
 
 ```yaml
@@ -121,6 +138,7 @@ These are wired by the compose file and normally need no change.
 | egress-gw | `GW_LISTEN_HOST` | Gateway address on agent-net (proxy, SOCKS5, DNS, service ports). |
 | egress-gw | `GW_HTTP_PORT` / `GW_SOCKS_PORT` / `GW_DNS_PORT` | Listener ports (3128 / 1080 / 53). |
 | egress-gw | `GW_API_HOST` / `GW_API_PORT` | API address on control-net / port (8081). |
+| egress-gw | `GW_GRANTS_PORT` | Agent grant API port on agent-net (8079). |
 | egress-gw | `GW_CONFIG`, `DATA_DIR`, `CA_EXPORT_DIR`, `PRESET_DIR` | Paths. |
 | egress-gw | `GW_EXTRA_ARGS` | Extra mitmdump arguments (advanced). |
 | egress-gw | `GW_TEST_STATIC_HOSTS` | **Test suite only.** Never set in production (logged as a warning). |
@@ -130,3 +148,4 @@ These are wired by the compose file and normally need no change.
 | control | `SESSION_TTL`, `LOG_LEVEL` | Session lifetime (s, default 12 h), log level. |
 | agent | `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` (+ lowercase) | Route all tools through the gateway. |
 | agent | `SELFTEST_BLOCKED_PROBES` | Management endpoints the self-test expects to be unreachable. |
+| agent | `TALLYGATE_URL` | Grant API for the `tallygate` CLI (`http://172.31.10.2:8079`). |

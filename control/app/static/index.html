@@ -8,6 +8,7 @@
     <button data-tab="approvals">Approvals <span id="pendingCount" class="badge hidden">0</span></button>
     <button data-tab="log">Log</button>
     <button data-tab="rules">Rules</button>
+    <button data-tab="grants">Grants <span id="grantActiveCount" class="badge ok hidden">0</span></button>
     <button data-tab="console">Console</button>
     <button data-tab="setup">Setup</button>
   </nav>
@@ -18,6 +19,11 @@
 <main>
   <!-- APPROVALS -->
   <section id="tab-approvals">
+    <div id="grantReqBox" class="hidden">
+      <h2>Grant requests</h2>
+      <p class="hint">The agent asks for a predefined bundle of access. The reason is written by the agent – treat it as a claim, not a fact.</p>
+      <div id="grantReqList"></div>
+    </div>
     <h2>Pending connection requests</h2>
     <p class="hint">Connections are held until you decide or the timeout passes (then denied). Hard-denied targets (LAN etc.) never appear here.</p>
     <div id="pendingList"></div>
@@ -78,6 +84,55 @@
   </section>
 
   <!-- CONSOLE -->
+  <section id="tab-grants" class="hidden">
+    <h2>Active grants</h2>
+    <div id="activeGrants"></div>
+    <p id="activeEmpty" class="muted">No grant is active.</p>
+
+    <h2>Defined grants</h2>
+    <p class="hint">A grant bundles targets (host:port, optionally HTTP paths), access levels (<b>read</b> = GET/HEAD/OPTIONS
+      only, <b>write</b> = everything), LAN access, credential injection and how each level is approved. The agent can
+      request them with <code>tallygate request &lt;name&gt;</code>; grants from the config file are read-only here.</p>
+    <div id="grantDefs"></div>
+    <button id="grantNew">New grant</button>
+
+    <div id="grantEditor" class="card hidden">
+      <h3 id="geTitle">New grant</h3>
+      <div class="grid2">
+        <label>Name <input id="geName" placeholder="homeassistant" pattern="[a-z0-9][a-z0-9_-]{0,47}"></label>
+        <label>Description <input id="geDesc" placeholder="Home Assistant REST API"></label>
+      </div>
+      <div class="grid4">
+        <label class="check"><input type="checkbox" id="geRead" checked> read level</label>
+        <label>approval <select id="geApprRead"><option>ask</option><option>auto</option></select></label>
+        <label class="check"><input type="checkbox" id="geWrite"> write level</label>
+        <label>approval <select id="geApprWrite"><option>ask</option><option>auto</option></select></label>
+        <label>default duration <input id="geTtl" value="1h"></label>
+        <label>max duration <input id="geMaxTtl" value="4h"></label>
+      </div>
+      <h4>Targets</h4>
+      <p class="hint">https/http targets are inspected per request (method, path, Host). tcp passes raw traffic (write level only).
+        <b>LAN</b> exempts exactly this target from the hard deny (UI grants only within <code id="geLanAllow">–</code>).
+        Self-signed certificate? Pin its SHA-256 fingerprint instead of disabling verification.</p>
+      <div id="geTargets"></div>
+      <button id="geAddTarget" class="small secondary">+ target</button>
+      <h4>Credential injection <span class="muted">(https targets; the agent never sees the value)</span></h4>
+      <div id="geInject"></div>
+      <button id="geAddInject" class="small secondary">+ header</button>
+      <div class="btns">
+        <button id="geSave">Save grant</button><button id="geCancel" class="secondary">Cancel</button>
+      </div>
+    </div>
+
+    <details class="card"><summary>Secrets for credential injection</summary>
+      <p class="hint">Write-only: values are stored in the gateway and can never be read back. Reference them in a
+        header template as <code>${name}</code>, e.g. <code>Bearer ${ha_token}</code>.</p>
+      <div id="secretList"></div>
+      <div class="row"><input id="secName" placeholder="name (a-z0-9_)"><input id="secValue" type="password" placeholder="value">
+        <button id="secSave">Store</button></div>
+    </details>
+  </section>
+
   <section id="tab-console" class="hidden">
     <div class="toolbar" id="termButtons"></div>
     <p class="hint"><b>rc</b> = the Remote Control server (tmux; answer prompts here, detach is automatic). <b>bash</b> = shell in the agent. <b>claude</b> = interactive Claude Code.</p>

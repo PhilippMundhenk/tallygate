@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-11
+
+### Added
+- **Grants** ([docs/grants.md](docs/grants.md), [ADR-0012](docs/adr/0012-grants-for-scoped-temporary-access.md)):
+  named, time-limited bundles of access, defined in `config/gateway.yaml` or in the UI. A grant has:
+  - targets: `https`/`http` with path patterns, or `tcp`; exact, wildcard or IP hosts;
+  - `read`/`write` levels, each with its own approval mode (`ask`/`auto`);
+  - a LAN exemption for exact targets (UI grants only within `grants_lan_allow`);
+  - credential injection, and certificate pinning by SHA-256 fingerprint.
+- Gateway enforcement per request on grant targets: Host match, canonical path match, safe methods and no
+  upgrades on `read`, non-HTTP traffic cut, agent credentials stripped.
+- Agent grant API on `172.31.10.2:8079` (list / request / long-poll; rate-limited) and the `tallygate` CLI
+  in the agent image, plus a managed `/etc/claude-code/CLAUDE.md` that explains the gateway and grants to
+  Claude. Refused connections name the grant that would allow them.
+- UI: grant requests on the Approvals page (approve, approve read-only, deny), a new Grants tab (active
+  grants with revoke, definitions, editor, activation), and write-only secret management.
+- Telegram (buttons incl. *Revoke*) and Matrix (👍 / 📖 / 👎, `approve|read|deny|revoke N`) grant prompts.
+- New config keys: `grants`, `grants_lan_allow`, `grants_never`, `grant_request_timeout`,
+  `grant_max_pending`, `grant_api_rate`; new env `GW_GRANTS_PORT`, `TALLYGATE_URL`.
+
 ## [0.2.0] - 2026-11-11
 
 Security release. Full report: [docs/security-review.md](docs/security-review.md).
@@ -52,6 +72,7 @@ Security release. Full report: [docs/security-review.md](docs/security-review.md
   isolation test (`tests/integration/bypass.sh`), CI workflow.
 - Documentation: architecture, ADRs, threat model, configuration, API, operations, user guide.
 
-[Unreleased]: https://github.com/PhilippMundhenk/tallygate/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/PhilippMundhenk/tallygate/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/PhilippMundhenk/tallygate/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/PhilippMundhenk/tallygate/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/PhilippMundhenk/tallygate/releases/tag/v0.1.0

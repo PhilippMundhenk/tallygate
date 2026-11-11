@@ -1,6 +1,6 @@
 [project]
 name = "tallygate"
-version = "0.2.0"
+version = "0.3.0"
 description = "Run Claude Code behind a policy-enforcing egress gateway with human-in-the-loop approvals"
 readme = "README.md"
 license = "MIT"

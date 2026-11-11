@@ -106,3 +106,48 @@ def test_telegram_without_allowed_users_is_disabled(mockbots, control_with):
     a.call("POST", "/login", form={"password": CONTROL_PASSWORD})
     _, meta, _ = a.call("GET", "/api/meta")
     assert meta["notify"]["telegram"] is False
+
+
+def _revoke_all(gateway, name):
+    _, g, _ = gateway["api"].call("GET", "/grants")
+    for a in g["active"]:
+        if a["name"] == name:
+            gateway["api"].call("DELETE", f"/active-grants/{a['id']}")
+
+
+def test_telegram_grant_request_can_be_downgraded_to_read(gateway, mockbots, control_with):
+    mockbots.plan = {"telegram": {"scope_label": "📖 Approve read-only", "user_id": 4242, "chat_id": 777}}
+    control_with(
+        TELEGRAM_API_BASE=mockbots.base,
+        TELEGRAM_BOT_TOKEN="t",
+        TELEGRAM_CHAT_ID="777",
+        TELEGRAM_ALLOWED_USER_IDS="4242",
+    )
+    time.sleep(1)  # control subscribes to the gateway stream
+    _, r, _ = gateway["agent"].call("POST", "/v1/grants/svc/request", {"level": "write", "reason": "dim the lights"})
+    _, r2, _ = gateway["agent"].call("GET", f"/v1/requests/{r['id']}?wait=10")
+    assert r2["status"] == "approved" and r2["granted_level"] == "read"
+    sent = [m for m in mockbots.messages("tg.send") if "Grant request: svc" in m][-1]
+    assert "Agent's reason (unverified): dim the lights" in sent
+    time.sleep(0.5)
+    assert any("read until" in m and "telegram:tester" in m for m in mockbots.messages("tg.editMessageText"))
+    _revoke_all(gateway, "svc")
+
+
+def test_matrix_text_reply_approves_grant(gateway, mockbots, control_with):
+    mockbots.plan = {
+        "matrix": {"actions": [("@stranger:hs", "text", "approve {n}"), ("@me:hs", "text", "approve {n}")]}
+    }
+    control_with(
+        MATRIX_HOMESERVER=mockbots.base,
+        MATRIX_ACCESS_TOKEN="m",
+        MATRIX_ROOM_ID="!room:hs",
+        MATRIX_ALLOWED_USERS="@me:hs",
+    )
+    time.sleep(1)
+    _, r, _ = gateway["agent"].call("POST", "/v1/grants/sec/request", {"level": "write", "reason": "deploy check"})
+    _, r2, _ = gateway["agent"].call("GET", f"/v1/requests/{r['id']}?wait=10")
+    assert r2["status"] == "approved" and r2["granted_level"] == "write"
+    _, g, _ = gateway["api"].call("GET", "/grants")
+    assert next(a for a in g["active"] if a["name"] == "sec")["approved_by"] == "matrix:@me:hs"
+    _revoke_all(gateway, "sec")

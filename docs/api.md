@@ -23,6 +23,12 @@ Base URL: `http://172.31.11.2:8081` (control-net only). All endpoints except `/h
 | GET | `/secrets` | – | `{"names": [...]}` — values are never returned |
 | PUT | `/secrets/{name}` | `{"value": "..."}` (empty removes) | `{"names": [...]}` |
 | GET | `/info` | – | `inject_hosts`, `inject_secrets_needed`, `services`, `ca_pem`, `pending` |
+| GET | `/grants` | – | `defs` (with `source` config/ui), `active`, pending `requests`, `lan_allow_ui`, `missing_secrets` |
+| PUT | `/grants/{name}` | Grant definition ([grants](grants.md)) | Validated, stored as a UI grant; `400` for config grants or LAN targets outside `grants_lan_allow` |
+| DELETE | `/grants/{name}` | – | UI grants only; also ends an active instance |
+| POST | `/grants/{name}/activate` | `{"level": "read"\|"write", "ttl": "1h", "by": "who"}` | Active grant (admin activation without a request) |
+| DELETE | `/active-grants/{id}?by=who` | – | Revoked active grant |
+| POST | `/grant-requests/{id}/decide` | `{"decision": "approve"\|"read"\|"deny", "by": "who", "ttl": optional}` | The decided request; `read` downgrades a write request |
 
 ### Event log entry
 
@@ -33,7 +39,7 @@ Base URL: `http://172.31.11.2:8081` (control-net only). All endpoints except `/h
 ```
 
 `kind`: `conn` (decision), `ask` (approval requested), `dns` (blocked DNS query), `admin` (policy/secret
-change). `proto`: `regular` (HTTP proxy), `socks5`, `reverse` (service port), `dns`.
+change), `grant` (grant requested/approved/denied/expired/revoked). `proto`: `regular` (HTTP proxy), `socks5`, `reverse` (service port), `dns`.
 
 ### Stream events
 
@@ -43,7 +49,22 @@ data: {"type": "ask", "pending": {...pending request...}}
 data: {"type": "resolved", "id": "5ae33c9d25", "action": "allow", "scope": "hour", "by": "telegram:philipp"}
 data: {"type": "resolved", "id": "...", "action": "deny", "reason": "timeout"}
 data: {"type": "policy"}
+data: {"type": "grant_request", "request": {...}, "grant": {...summary...}}
+data: {"type": "grant_resolved", "request": {..., "status": "approved", "granted_level": "read"}}
+data: {"type": "grants"}                       (definitions or active grants changed)
 ```
+
+## Agent grant API
+
+Base URL: `http://172.31.10.2:8079` (agent network, **no authentication**, rate-limited to
+`grant_api_rate` requests/min, 4 KiB bodies). This is the only gateway API the agent can reach. It can
+list, ask and poll, nothing else. The `tallygate` CLI in the agent image wraps it.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/v1/grants` | – | `{"grants": [{name, description, levels, default_ttl, max_ttl, targets, active?}]}`: no credentials |
+| POST | `/v1/grants/{name}/request` | `{"level": "read"\|"write", "ttl": "30m", "reason": "..."}` | `202 {"id", "status": "pending", ...}` or `200` if auto-approved; `429` when too many are pending |
+| GET | `/v1/requests/{id}?wait=0..55` | – | `{"id", "grant", "level", "status": pending\|approved\|denied\|expired, "granted_level"?}`; `wait` long-polls |
 
 Keep-alive comments (`: ping`) are sent every 20 s.
 

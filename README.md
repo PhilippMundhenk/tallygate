@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/PhilippMundhenk/tallygate/actions/workflows/ci.yml/badge.svg)](https://github.com/PhilippMundhenk/tallygate/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.2.0-informational)
+![Version](https://img.shields.io/badge/version-0.3.0-informational)
 
 tallygate puts an AI coding agent (Claude Code with [Remote Control](https://code.claude.com/docs/en/remote-control))
 into a container that has **no route to anything** except a gateway. The gateway decides every outbound
@@ -29,6 +29,11 @@ only then let through, turned back, or held for you to decide.
   domain, deny, or block forever. Concurrent attempts share one prompt.
 - **LAN protection.** A hard deny on resolved IPs (RFC1918, loopback, link-local/metadata, CGNAT, ULA …) that
   can't be approved away, plus DNS-rebinding protection by pinning to the checked IP.
+- **Grants for your home network.** Named, time-limited bundles of access, such as "Home Assistant API,
+  read-only" or "SSH to the NAS for 30 min". You define them in the config or the UI. The agent asks for one
+  with a reason, and you approve, downgrade to read-only, or deny with one tap. The gateway enforces Host,
+  paths and methods on every request, injects the service's credentials, and pins self-signed certificates.
+  [More](docs/grants.md)
 - **No DNS exfiltration.** The agent's DNS always answers NXDOMAIN, and every attempt is logged. The gateway
   only resolves a name after the policy or a human allowed it.
 - **Secrets stay out of the agent.** The GitHub token lives in the gateway and is injected in flight, only when
@@ -54,7 +59,7 @@ flowchart LR
 ```
 
 Details: [docs/architecture.md](docs/architecture.md) · Security: [docs/threat-model.md](docs/threat-model.md) ·
-[security review](docs/security-review.md)
+[security review](docs/security-review.md) · Grants: [docs/grants.md](docs/grants.md)
 
 ## Quick start
 

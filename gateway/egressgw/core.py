@@ -28,6 +28,7 @@ from mitmproxy.net.dns import response_codes
 from mitmproxy.proxy import server_hooks
 
 from egressgw import api
+from egressgw.grants import READ_METHODS, GrantDef, Grants, Target, path_ok
 from egressgw.policy import (
     DEFAULT_HARD_DENY,
     Decision,
@@ -111,6 +112,10 @@ class Gateway:
         self.strip_headers = [str(h) for h in self.config.get("inject_strip_headers") or ["Authorization", "Cookie"]]
         self.max_pending = int(self.config.get("max_pending", 10))
         self._dups: dict[tuple, list] = {}
+        self.grants = Grants(self.config, DATA_DIR)
+        # server connection id -> (active grant id, host the agent asked for, target)
+        self.conn_grant: dict[str, tuple[str, str, Target]] = {}
+        self._grant_events: dict[str, asyncio.Event] = {}
         self.pending: dict[tuple[str, int], Pending] = {}
         self.neg_cache: dict[tuple[str, int], float] = {}
         self.orig_host: dict[str, str] = {}
@@ -143,6 +148,12 @@ class Gateway:
             port = int(os.environ.get("GW_API_PORT", "8081"))
             await api.start(self, host, port)
             log.warning("egressgw API listening on %s:%s", host, port)
+        from egressgw import agentapi
+
+        ahost = os.environ.get("GW_LISTEN_HOST", "127.0.0.1")
+        aport = int(os.environ.get("GW_GRANTS_PORT", "8079"))
+        await agentapi.start(self, ahost, aport)
+        log.warning("grant request API for the agent listening on %s:%s", ahost, aport)
         self._export_ca()
         self._tasks.append(asyncio.create_task(self._housekeeping()))
 
@@ -167,6 +178,14 @@ class Gateway:
             self.neg_cache = {k: v for k, v in self.neg_cache.items() if v > now}
             self._flush_dups(now)
             self.events.enforce_cap()
+            expired, timed_out = self.grants.prune()
+            for a in expired:
+                self.record(kind="grant", host=a.name, action="expired", reason=f"grant {a.name} ({a.level}) expired")
+            for r in timed_out:
+                self.record(kind="grant", host=r.name, action="deny", reason=f"grant request {r.id} timed out")
+                self._grant_resolved(r)
+            if expired:
+                self.publish({"type": "grants"})
 
     # ------------------------------------------------------------------ events
     def publish(self, ev: dict) -> None:
@@ -284,6 +303,126 @@ class Gateway:
         raise KeyError(pending_id)
 
     # ------------------------------------------------------------------ mitmproxy hooks
+    # ------------------------------------------------------------------ grants
+    def _grant_resolved(self, r) -> None:
+        self.publish({"type": "grant_resolved", "request": r.to_dict()})
+        self.publish({"type": "grants"})
+        ev = self._grant_events.pop(r.id, None)
+        if ev:
+            ev.set()
+
+    def request_grant(self, name: str, level: str, ttl, reason: str, client: str):
+        """Called by the agent API. Returns the request (auto-approved levels are active immediately)."""
+        g = self.grants.defs.get(name)
+        if not g:
+            raise KeyError(name)
+        if g.approval.get(level) == "auto":
+            r = self.grants.new_request(name, level, ttl, reason, client)
+            self._approve(r, level, "auto")
+            return r
+        r = self.grants.new_request(name, level, ttl, reason, client)
+        if r.id not in self._grant_events:
+            self._grant_events[r.id] = asyncio.Event()
+            self.record(
+                kind="grant",
+                client=client,
+                host=name,
+                action="ask",
+                reason=f"agent requests grant {name} ({level}, {r.ttl // 60} min): {r.reason}",
+            )
+            self.publish({"type": "grant_request", "request": r.to_dict(), "grant": g.summary()})
+        return r
+
+    def _approve(self, r, level: str, by: str, ttl: int | None = None):
+        a = self.grants.activate(r.name, level, ttl or r.ttl, r.reason, by)
+        r.status, r.decided_by, r.grant_id, r.granted_level = "approved", by, a.id, level
+        self.record(
+            kind="grant",
+            host=r.name,
+            action="allow",
+            reason=f"grant {r.name} ({level}) active until {time.strftime('%H:%M', time.localtime(a.expires))} by {by}",
+        )
+        self._grant_resolved(r)
+        return a
+
+    def decide_grant(self, rid: str, decision: str, by: str, ttl=None) -> dict:
+        r = self.grants.requests.get(rid)
+        if not r or r.status != "pending":
+            raise KeyError(rid)
+        g = self.grants.defs.get(r.name)
+        if decision == "deny" or not g:
+            r.status, r.decided_by = "denied", by
+            self.record(kind="grant", host=r.name, action="deny", reason=f"grant request for {r.name} denied by {by}")
+            self._grant_resolved(r)
+            return r.to_dict()
+        level = "read" if decision == "read" else r.level
+        if level not in g.levels:
+            raise ValueError(f"grant {g.name} has no {level} level")
+        from egressgw.grants import parse_ttl
+
+        self._approve(r, level, by, parse_ttl(ttl) if ttl else None)
+        return r.to_dict()
+
+    def activate_grant(self, name: str, level: str, ttl, by: str) -> dict:
+        from egressgw.grants import parse_ttl
+
+        g = self.grants.defs[name]
+        a = self.grants.activate(name, level, parse_ttl(ttl) if ttl else g.default_ttl, "activated by admin", by)
+        self.record(kind="grant", host=name, action="allow", reason=f"grant {name} ({level}) activated by {by}")
+        self.publish({"type": "grants"})
+        return a.to_dict()
+
+    def revoke_grant(self, active_id: str, by: str) -> dict:
+        a = self.grants.revoke(active_id)
+        self.record(kind="grant", host=a.name, action="deny", reason=f"grant {a.name} revoked by {by}")
+        self.publish({"type": "grants"})
+        return a.to_dict()
+
+    async def wait_grant(self, rid: str, timeout: float) -> None:
+        ev = self._grant_events.get(rid)
+        if ev:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(ev.wait(), timeout)
+
+    async def _grant_connect(self, data, host: str, port: int, proto: str, client: str, block) -> bool:
+        """Handle a connection covered by an active grant. Returns True if handled (allowed or blocked)."""
+        m = self._grant_match(host, port)
+        if not m:
+            return False
+        a, g, t = m
+        if t.address:
+            ips = [t.address]
+        elif is_ip(host):
+            ips = [host.strip("[]")]
+        else:
+            try:
+                ips = await self.resolve(host, port)
+            except OSError as e:
+                block(f"dns failure: {e}")
+                return True
+        problem = self.grants.address_problem(g, t, ips)
+        if not problem and not t.lan:
+            problem = self.policy.hard_denied(host, port, ips)
+        if problem or not ips:
+            block(problem or "no address", ips)
+            return True
+        self.record(
+            kind="conn",
+            proto=proto,
+            client=client,
+            host=host,
+            port=port,
+            ips=ips,
+            action="allow",
+            reason=f"grant {g.name} ({a.level})",
+        )
+        self.conn_grant[data.server.id] = (a.id, host, t)
+        self.orig_host[data.server.id] = host
+        data.server.address = (ips[0], port)
+        if t.scheme == "https" and not is_ip(host):
+            data.server.sni = host
+        return True
+
     async def server_connect(self, data: server_hooks.ServerConnectionHookData) -> None:
         if data.server.address is None:
             data.server.error = "egress policy: no destination"
@@ -300,7 +439,13 @@ class Gateway:
             data.server.error = f"egress policy: blocked ({reason})"
 
         if is_ip(host):
+            if await self._grant_connect(data, host, port, proto, client, block):
+                return
             ips = [host.strip("[]")]
+            if hint := self._grant_hint(host, port):
+                dec = self.policy.evaluate(host, port, ips, proto)
+                if dec.action != "allow":
+                    return block(f"{dec.reason}; {hint}", ips)
             dec = await self.decide(host, port, ips, proto, client)
         else:
             if not host.isascii():  # mitmproxy hands us IDNs decoded; prompts and rules use punycode
@@ -311,8 +456,13 @@ class Gateway:
             if not valid_hostname(host):
                 return block("invalid hostname")
             host = host.lower().rstrip(".")
+            if await self._grant_connect(data, host, port, proto, client, block):
+                return
             # 1) decide on the name alone: denied / not-yet-approved names are never resolved
             pre = self.policy.evaluate_name(host, port)
+            hint = self._grant_hint(host, port)
+            if hint and (pre is None or pre.action != "allow"):
+                return block(f"{pre.reason if pre else 'not allowed'}; {hint}")
             if pre is not None and pre.action == "ask":
                 pre = await self.ask(host, port, [], proto, client)
             if pre is not None and pre.action == "deny":
@@ -325,8 +475,11 @@ class Gateway:
             if not ips:
                 return block("no address")
             dec = await self.decide(host, port, ips, proto, client)
+        reason = dec.reason
+        if dec.action != "allow" and (hint := self._grant_hint(host, port)):
+            reason = f"{reason}; {hint}"
         self.record(
-            kind="conn", proto=proto, client=client, host=host, port=port, ips=ips, action=dec.action, reason=dec.reason
+            kind="conn", proto=proto, client=client, host=host, port=port, ips=ips, action=dec.action, reason=reason
         )
         if dec.action != "allow":
             data.server.error = f"egress policy: blocked ({dec.reason})"
@@ -340,17 +493,143 @@ class Gateway:
             if host in self.intercept_hosts:
                 data.server.sni = host
 
+    def _grant_match(self, host: str, port: int):
+        """Active grant for host:port - unless the policy already allows the name: grants only ADD
+        access, they never narrow what the rules allow."""
+        m = self.grants.match(host, port)
+        if m and not is_ip(host):
+            pre = self.policy.evaluate_name(host, port)
+            if pre is not None and pre.action == "allow":
+                return None
+        return m
+
+    def _grant_hint(self, host: str, port: int) -> str | None:
+        names = self.grants.defined_for(host, port)
+        return f"available via grant {', '.join(names)} (agent: tallygate request {names[0]})" if names else None
+
     def server_disconnected(self, data: server_hooks.ServerConnectionHookData) -> None:
         self.orig_host.pop(data.server.id, None)
+        self.conn_grant.pop(data.server.id, None)
 
     def tls_clienthello(self, data: tls.ClientHelloData) -> None:
+        b = self.conn_grant.get(data.context.server.id)
+        if b:
+            # http(s) grant targets are ALWAYS intercepted so method/path/Host can be enforced; tcp
+            # targets are passed through untouched.
+            if b[2].scheme == "tcp":
+                data.ignore_connection = True
+            return
         orig = self.orig_host.get(data.context.server.id)
         sni = (data.client_hello.sni or "").lower()
         if orig and orig in self.intercept_hosts and sni == orig:
             return  # intercept: credential injection and/or read-only enforcement
         data.ignore_connection = True  # end-to-end TLS, untouched
 
+    def tls_start_server(self, data: tls.TlsData) -> None:
+        """Per-target upstream TLS for grant targets: pinned leaf fingerprint (self-signed LAN services)
+        or, if explicitly configured, no verification."""
+        b = self.conn_grant.get(data.context.server.id)
+        if not b or (not b[2].tls_fingerprint and b[2].tls_verify):
+            return
+        if data.ssl_conn is None:  # script addons run before the built-in TlsConfig: let it build the
+            tlsconfig = ctx.master.addons.get("tlsconfig")  # connection, then adjust verification
+            tlsconfig.tls_start_server(data)
+        t = b[2]
+        if t.tls_fingerprint:
+            from cryptography.hazmat.primitives import hashes
+            from OpenSSL import SSL
+
+            want = t.tls_fingerprint
+
+            def verify(_conn, cert, _errno, depth, _ok) -> bool:
+                if depth > 0:
+                    return True  # chain is irrelevant: the leaf itself is pinned
+                return cert.to_cryptography().fingerprint(hashes.SHA256()).hex() == want
+
+            data.ssl_conn.set_verify(SSL.VERIFY_PEER, verify)
+        elif not t.tls_verify:
+            from OpenSSL import SSL
+
+            data.ssl_conn.set_verify(SSL.VERIFY_NONE, None)
+
+    def tcp_start(self, flow) -> None:
+        b = self.conn_grant.get(flow.server_conn.id)
+        if b and b[2].scheme != "tcp":
+            self._grant_refuse_raw(flow, b, "non-HTTP traffic to an HTTP grant target")
+
+    def websocket_start(self, flow: http.HTTPFlow) -> None:
+        b = self.conn_grant.get(flow.server_conn.id)
+        if b and (a := self.grants.active.get(b[0])) is not None and a.level == "read":
+            self._grant_refuse_raw(flow, b, "websocket on a read-only grant")
+
+    def _grant_refuse_raw(self, flow, b, reason: str) -> None:
+        self.record(
+            kind="conn",
+            proto="grant",
+            client=flow.client_conn.peername[0] if flow.client_conn.peername else "?",
+            host=b[1],
+            port=b[2].port,
+            action="deny",
+            reason=reason,
+        )
+        flow.kill()
+
+    def _grant_request(self, flow: http.HTTPFlow) -> bool:
+        """Enforce an active grant on an HTTP request. Returns True if the request was handled."""
+        b = self.conn_grant.get(flow.server_conn.id)
+        if b is None and flow.request.scheme == "http" and not self.orig_host.get(flow.server_conn.id):
+            # plain-HTTP proxy request: this hook runs before the server connection exists
+            m = self._grant_match(flow.request.host.lower().rstrip("."), flow.request.port)
+            if m and m[2].scheme == "http":
+                b = (m[0].id, flow.request.host.lower().rstrip("."), m[2])
+        if b is None:
+            return False
+        aid, host, t = b
+        if t.scheme == "tcp":
+            return True  # tcp grants pass traffic through untouched (mitmproxy may still parse HTTP)
+        a = self.grants.active.get(aid)
+        g: GrantDef | None = self.grants.defs.get(a.name) if a else None
+        req = flow.request
+        client = flow.client_conn.peername[0] if flow.client_conn.peername else "?"
+
+        def refuse(why: str) -> bool:
+            self.record(
+                kind="conn",
+                proto="http",
+                client=client,
+                host=host,
+                port=t.port,
+                action="deny",
+                reason=f"{why}: {req.method} {req.path[:120]}",
+            )
+            flow.response = http.Response.make(403, f"egress policy: {why}\n".encode(), {"Content-Type": "text/plain"})
+            return True
+
+        if a is None or g is None or a.expires <= time.time():
+            return refuse("grant expired or revoked")
+        if t.scheme == "https" and req.scheme != "https":
+            return refuse("plain HTTP to an https grant target")
+        if req.pretty_host.lower().rstrip(".") != host:
+            return refuse("Host header does not match the granted target")
+        if not path_ok(req.path, t.paths):
+            return refuse(f"path not covered by grant {g.name}")
+        if a.level == "read" and (
+            req.method.upper() not in READ_METHODS or "upgrade" in req.headers.get("connection", "").lower()
+        ):
+            return refuse(f"grant {g.name} is read-only")
+        rules = [i for i in g.inject if i["host"] == host and t.scheme == "https"]
+        if rules:
+            for name in {*self.strip_headers, *(i["header"] for i in rules)}:
+                req.headers.pop(name, None)
+            for i in rules:
+                value = render(i["value"], self.secrets)
+                if value is not None:
+                    req.headers[i["header"]] = value
+        return True
+
     def request(self, flow: http.HTTPFlow) -> None:
+        if self._grant_request(flow):
+            return
         # The real destination: the connection's checked target (TLS) or the absolute-form URL host
         # (plain HTTP proxy requests, whose server connection is opened after this hook).
         target = (self.orig_host.get(flow.server_conn.id) or flow.request.host or "").lower().rstrip(".")

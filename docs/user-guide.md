@@ -38,6 +38,15 @@ approval, so IPs show as "not resolved yet". A destination you approve can still
 deny (LAN, host, metadata…). At most `max_pending` (10) requests wait at once; further unknown destinations
 are denied immediately until you have answered.
 
+## Grants
+
+For access the normal rules would refuse, especially services on your home network, define **grants**:
+named bundles with targets, read/write levels, LAN access, credentials and a duration. The agent requests
+them (`tallygate request homeassistant --write --reason "…"`). Grant requests appear at the top of
+**Approvals** and in Telegram/Matrix, where you can approve, approve read-only, or deny. The **Grants** tab
+lists definitions and active grants (with *Revoke*), has an editor for UI-defined grants, and holds the
+write-only secrets used for credential injection. Full guide: [grants.md](grants.md).
+
 ## Log
 
 ![Log](images/log.png)

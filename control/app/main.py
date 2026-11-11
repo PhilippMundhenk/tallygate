@@ -69,6 +69,12 @@ GW_ALLOW = [
     ("POST", r"/presets/[A-Za-z_][A-Za-z0-9_]*"),
     ("GET", r"/secrets"),
     ("PUT", r"/secrets/[a-z0-9_]+"),
+    ("GET", r"/grants"),
+    ("PUT", r"/grants/[a-z0-9][a-z0-9_-]{0,47}"),
+    ("DELETE", r"/grants/[a-z0-9][a-z0-9_-]{0,47}"),
+    ("POST", r"/grants/[a-z0-9][a-z0-9_-]{0,47}/activate"),
+    ("DELETE", r"/active-grants/[a-f0-9]+"),
+    ("POST", r"/grant-requests/[a-f0-9]+/decide"),
     ("GET", r"/info"),
 ]
 
@@ -295,9 +301,12 @@ async def api_gw(request: web.Request):
     if not any(m == request.method and re.fullmatch(rx, sub) for m, rx in GW_ALLOW):
         return web.json_response({"error": "not allowed"}, status=404)
     body = await request.json() if request.can_read_body else None
-    if sub.endswith("/decide") and isinstance(body, dict):
-        body["by"] = f"web:{request['user']}"
+    by = f"web:{request['user']}"
+    if (sub.endswith("/decide") or sub.endswith("/activate")) and isinstance(body, dict):
+        body["by"] = by  # attribution is set here, never taken from the browser
     qs = ("?" + request.query_string) if request.query_string else ""
+    if sub.startswith("/active-grants/"):
+        qs = "?" + urllib.parse.urlencode({"by": by})
     try:
         status, data = await gw(request.app, request.method, sub + qs, body)
     except (TimeoutError, aiohttp.ClientError) as e:
@@ -453,7 +462,12 @@ async def term_ws(request: web.Request):
 async def on_startup(app: web.Application):
     app["http"] = aiohttp.ClientSession(trust_env=False)
     app["notifier"] = notify.Notifier(
-        app, decide=lambda pid, scope, by: gw(app, "POST", f"/pending/{pid}/decide", {"scope": scope, "by": by})
+        app,
+        decide_grant=lambda rid, decision, by: gw(
+            app, "POST", f"/grant-requests/{rid}/decide", {"decision": decision, "by": by}
+        ),
+        revoke_grant=lambda aid, by: gw(app, "DELETE", f"/active-grants/{aid}?" + urllib.parse.urlencode({"by": by})),
+        decide=lambda pid, scope, by: gw(app, "POST", f"/pending/{pid}/decide", {"scope": scope, "by": by}),
     )
     app["bg"] = [asyncio.create_task(watch_gateway(app)), *app["notifier"].start()]
 
@@ -480,7 +494,7 @@ async def watch_gateway(app: web.Application):
                     line = line.decode().strip()
                     if line.startswith("data: "):
                         ev = json.loads(line[6:])
-                        if ev.get("type") in ("ask", "resolved"):
+                        if ev.get("type") in ("ask", "resolved", "grant_request", "grant_resolved"):
                             await app["notifier"].handle(ev)
         except asyncio.CancelledError:
             raise

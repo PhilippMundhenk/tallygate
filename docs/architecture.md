@@ -231,10 +231,11 @@ Concurrent connections to the same `host:port` share one pending request (one no
 | Event log | `state/gateway/events.db` | egress-gw | SQLite/WAL, pruned after `log_keep_days`. |
 | Secrets | `state/gateway/secrets.json` | egress-gw | Mode 0600, never returned by the API. |
 | Gateway CA | `state/gateway/mitmproxy/` | egress-gw | Public cert exported to the `ca` volume for the agent. |
-| Static gateway config | `config/gateway.yaml` | operator | Mounted read-only: injection hosts, service ports. |
+| Static gateway config | `config/gateway.yaml` | operator | Mounted read-only: injection hosts, service ports, hard-deny floor, config grants. |
+| UI-defined grants | `state/gateway/grants.yaml` | egress-gw | Active grants and pending requests live in memory (a restart ends them: fail closed). |
 | Agent home | `state/agent-home/` | agent (uid 1000) | Claude login, settings, skills, `.gitconfig`, tmux/shell history. |
 | Workspace | `state/workspace/` | agent | Repositories. |
-| Control | – | – | Stateless (sessions are signed cookies). |
+| Control | – | – | Sessions in memory (a restart logs everyone out). |
 
 ## Process model
 
@@ -243,6 +244,35 @@ Concurrent connections to the same `host:port` share one pending request (one no
 | egress-gw | `python run.py` → `exec mitmdump` | mitmproxy event loop with the tallygate addon and the aiohttp API server on the same loop |
 | control | `python -m app.main` | aiohttp server, gateway SSE subscriber, Telegram long-poll, Matrix `/sync` loop |
 | agent | `tini` → `entrypoint.sh` | supervisor loop (5 s) restarting: tmux session `rc` (`claude remote-control` in a restart loop), ttyd × 3, `status.py` |
+
+## Grants
+
+Grants are named, time-limited bundles of access to destinations the policy would otherwise refuse, such as
+LAN services ([user documentation](grants.md), [ADR-0012](adr/0012-grants-for-scoped-temporary-access.md)).
+
+```mermaid
+sequenceDiagram
+    participant A as agent (tallygate CLI)
+    participant G as egress-gw
+    participant C as control / bots
+    participant H as Operator
+    A->>G: POST :8079/v1/grants/homeassistant/request {write, 30m, reason}
+    G-->>C: SSE grant_request
+    C->>H: card / Telegram buttons / Matrix message
+    H->>C: Approve read-only
+    C->>G: POST /grant-requests/{id}/decide {read}
+    G-->>A: (long poll) approved, granted_level=read
+    A->>G: GET http://ha.lan:8123/api/states (via proxy)
+    G->>G: active grant → resolve, LAN exemption for this target, pin IP
+    G->>G: per request: Host == ha.lan, path /api/*, method GET ✔
+    A->>G: POST /api/services/light/turn_off
+    G-->>A: 403 grant homeassistant is read-only
+```
+
+An active grant is consulted **before** the rules, but only when the rules would not already allow the
+name: grants add access, they never narrow it. HTTP(S) grant targets are always intercepted, so method,
+path and Host can be enforced on every request. Non-HTTP bytes on such targets are cut, and `tcp`
+targets are passed through.
 
 ## Ports and addresses
 
@@ -253,6 +283,7 @@ Concurrent connections to the same `host:port` share one pending request (one no
 | DNS (NXDOMAIN) | 172.31.10.2 | 53/udp | agent-net |
 | Service ports | 172.31.10.2 | per config | agent-net |
 | Gateway API | 172.31.11.2 | 8081 | control-net (control only) |
+| Grant request API | 172.31.10.2 | 8079 | agent-net (list / request / poll only) |
 | Control UI | 172.31.12.3 | 8080 | mgmt / published to `CONTROL_PUBLISH` |
 | Agent status | 172.31.10.10 | 7680 | agent-net (control) |
 | ttyd rc/bash/claude | 172.31.10.10 | 7681–7683 | agent-net (control) |

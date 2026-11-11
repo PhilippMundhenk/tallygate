@@ -40,3 +40,21 @@ services: []
 #    listen: 15432
 #    target: db.example.org:5432
 #    allow_private: false      # true = exempt this exact target from hard_deny (e.g. a LAN host)
+
+# Grants: named, time-limited access the agent can request and you approve (docs/grants.md).
+# grants_lan_allow: [192.168.1.0/24]   # LAN ranges that grants defined in the UI may reach
+# grants:
+#   homeassistant:
+#     description: Home Assistant REST API
+#     targets:
+#       - {host: ha.lan, port: 8123, scheme: http, paths: ["/api/*"], lan: true}
+#     levels: [read, write]
+#     approval: {read: auto, write: ask}
+#     default_ttl: 1h
+#     max_ttl: 4h
+#   nas-ssh:
+#     description: SSH to the NAS
+#     targets: [{host: nas.lan, port: 22, scheme: tcp, lan: true}]
+#     levels: [write]
+#     default_ttl: 30m
+#     max_ttl: 1h

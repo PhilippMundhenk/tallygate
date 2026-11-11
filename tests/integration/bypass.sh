@@ -56,6 +56,8 @@ expect "control UI not on agent-net"          000          http://172.31.10.3:80
 expect "mgmt-net not routable"                000          http://172.31.12.3:8080/healthz
 expect "IPv6 link-local of the gateway unreachable" 000     -g "http://[fe80::1%25eth0]:3128/"
 expect "unknown host is held, not connected"  '000|403|502' -x "http://$GW:3128" "https://exfil-$(date +%s).invalid/"
+expect "grant API: listing works for the agent" 200       "http://$GW:8079/v1/grants"
+expect "grant API: no admin endpoints"           404       "http://$GW:8079/grants"
 expect "allowed path works (api.anthropic.com)" '[1-4][0-9][0-9]' -x "http://$GW:3128" https://api.anthropic.com/
 
 echo "== in-agent self-test"

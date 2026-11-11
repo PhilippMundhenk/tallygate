@@ -43,8 +43,11 @@ RUN apt-get update -qq \
  && claude --version && gh --version | head -1 && ttyd --version
 
 COPY managed-settings.json /etc/claude-code/managed-settings.json
+# managed memory: tells Claude about the gateway and how to request grants
+COPY CLAUDE.md /etc/claude-code/CLAUDE.md
 COPY entrypoint.sh status.py /usr/local/bin/
-RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/status.py
+COPY tallygate-cli.py /usr/local/bin/tallygate
+RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/status.py /usr/local/bin/tallygate
 
 ENV HOME=/home/agent DISABLE_AUTOUPDATER=1 TERM=xterm-256color
 USER 1000:1000

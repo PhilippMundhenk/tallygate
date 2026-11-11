@@ -36,3 +36,22 @@ td code{font-size:12px}table.log td{font-size:12.5px}
 pre{white-space:pre-wrap;word-break:break-all}pre.copy{background:var(--bg);padding:8px;border-radius:6px;cursor:copy}
 #toast{position:fixed;bottom:18px;right:18px;background:#000c;padding:10px 14px;border-radius:8px;display:none;max-width:420px}
 .results td{font-size:13px}
+/* grants */
+.badge.ok{background:var(--green);color:#000}
+.tag{display:inline-block;border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--muted)}
+.tag.warn{border-color:var(--amber);color:var(--amber)}
+.row-between{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.card .btns,#grantEditor .btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.row-between .btns{margin-top:0}
+.card .meta{color:var(--muted);font-size:12px;margin:6px 0 0}.meta.warn{color:var(--amber)}
+.pending.grantreq{border-color:var(--blue)}
+.grid4{display:grid;grid-template-columns:repeat(2,minmax(0,1fr)) repeat(2,minmax(0,1fr));gap:4px 14px}
+@media(max-width:800px){.grid4{grid-template-columns:1fr 1fr}}
+.grid2 input,.grid4 input,.grid4 select{width:100%}
+h4{font-size:13px;margin:14px 0 4px}
+.target-row,.inject-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.target-row .t-host{flex:2;min-width:160px}.target-row .t-port{width:90px}.target-row .t-paths{flex:2;min-width:140px}
+.target-row .t-address{width:150px}.target-row .t-fp{flex:2;min-width:200px}.target-row label{margin:0;display:flex;gap:4px;align-items:center}
+.inject-row .i-host{width:200px}.inject-row .i-header{width:150px}.inject-row .i-value{flex:1;min-width:200px}
+#secretList .row-between{padding:4px 0;border-bottom:1px solid var(--line)}
+label.check{display:flex;gap:6px;align-items:center;margin-top:30px;color:var(--fg)}
+label.check input,.grid4 label.check input{display:inline-block;width:auto;margin:0}

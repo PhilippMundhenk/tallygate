@@ -162,3 +162,46 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 import urllib.parse  # noqa: E402  (used in Api.call)
+
+
+def proxy_request(
+    proxy_port: int,
+    host_port: str,
+    path: str,
+    method: str = "GET",
+    headers: dict | None = None,
+    timeout: float = TIMEOUT,
+) -> tuple[int, bytes]:
+    """Plain-HTTP proxy request with full control over method, path (sent verbatim) and headers."""
+    hdrs = {"Host": host_port, "Connection": "close", "Content-Length": "0", **(headers or {})}
+    head = f"{method} http://{host_port}{path} HTTP/1.1\r\n" + "".join(f"{k}: {v}\r\n" for k, v in hdrs.items())
+    with socket.create_connection(("127.0.0.1", proxy_port), timeout=timeout) as s:
+        s.sendall(head.encode() + b"\r\n")
+        return _read_response(s)
+
+
+def tls_request(
+    proxy_port: int,
+    target: str,
+    sni: str,
+    cafile: str,
+    method: str = "GET",
+    path: str = "/",
+    headers: dict | None = None,
+    timeout: float = TIMEOUT,
+) -> tuple[int, bytes]:
+    """CONNECT + TLS + one request with arbitrary method/headers. Returns (0, b"") if the gateway cut it."""
+    raw, status_line = connect_tunnel(proxy_port, target, timeout)
+    if " 200" not in status_line:
+        raw.close()
+        return -1, status_line.encode()
+    ctx = ssl.create_default_context(cafile=cafile)
+    try:
+        with ctx.wrap_socket(raw, server_hostname=sni) as tls:
+            hdrs = {"Host": sni, "Connection": "close", "Content-Length": "0", **(headers or {})}
+            tls.sendall(
+                (f"{method} {path} HTTP/1.1\r\n" + "".join(f"{k}: {v}\r\n" for k, v in hdrs.items()) + "\r\n").encode()
+            )
+            return _read_response(tls)
+    except (OSError, ssl.SSLError):
+        return 0, b""

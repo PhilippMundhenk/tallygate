@@ -3,11 +3,15 @@
 Telegram: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALLOWED_USER_IDS (comma list, required).
 Matrix:   MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN, MATRIX_ROOM_ID, MATRIX_ALLOWED_USERS (comma list, required).
           Use an UNENCRYPTED room (the bot does not do E2EE); host it on your own homeserver.
+
+Two kinds of prompts: connection requests (scopes below) and grant requests (approve / read-only /
+deny, then revoke). Both share one short-number space for Matrix text replies.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import html
 import json
 import logging
@@ -29,6 +33,8 @@ BUTTONS = [  # (scope, label, matrix reaction)
     ("deny_always", "Block forever", "⛔"),
 ]
 REACTION_TO_SCOPE = {r: s for s, _, r in BUTTONS}
+GRANT_REACTIONS = {"👍": "approve", "📖": "read", "👎": "deny"}
+GRANT_WORDS = {"approve": "approve", "allow": "approve", "read": "read", "deny": "deny", "block": "deny"}
 TEXT_TO_SCOPE = {
     "allow": "once",
     "once": "once",
@@ -59,9 +65,12 @@ def _scope_label(scope: str, label: str, p: dict) -> str:
 
 
 class Notifier:
-    def __init__(self, app, decide) -> None:
+    def __init__(self, app, decide, decide_grant=None, revoke_grant=None) -> None:
         self.app = app
         self.decide = decide  # async (pending_id, scope, by) -> (status, data)
+        self.decide_grant = decide_grant  # async (request_id, decision, by) -> (status, data)
+        self.revoke_grant = revoke_grant  # async (active_id, by) -> (status, data)
+        self.gmsgs: dict[str, dict] = {}  # grant request id -> {"tg", "mx", "short", "text", "aid", "expires"}
         self.public_url = os.environ.get("PUBLIC_URL", "")
         self.tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
         self.tg_base = os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
@@ -108,6 +117,10 @@ class Notifier:
                 await self._on_ask(ev["pending"])
             elif ev["type"] == "resolved":
                 await self._on_resolved(ev)
+            elif ev["type"] == "grant_request":
+                await self._on_grant_request(ev["request"], ev.get("grant") or {})
+            elif ev["type"] == "grant_resolved":
+                await self._on_grant_resolved(ev["request"])
         except Exception as e:  # noqa: BLE001
             log.warning("notification failed: %s", e)
 
@@ -153,6 +166,108 @@ class Notifier:
                     "m.relates_to": {"m.in_reply_to": {"event_id": entry["mx"]}},
                 },
             )
+
+    # ---------------------------------------------------------------- grants
+    def _next_short(self, key: str) -> int:
+        now = time.time()
+        for rid, e in list(self.gmsgs.items()):  # forget entries well past their lifetime
+            if e.get("expires", now) < now - 300:
+                self.short.pop(e["short"], None)
+                del self.gmsgs[rid]
+        self._n = self._n % 999 + 1
+        while self._n in self.short:
+            self._n = self._n % 999 + 1
+        self.short[self._n] = key
+        return self._n
+
+    async def _on_grant_request(self, r: dict, g: dict) -> None:
+        short = self._next_short("g:" + r["id"])
+        targets = "\n".join("  " + t for t in g.get("targets", []))
+        text = (
+            f"🔑 Grant request: {r['name']} ({r['level']}) for {r['ttl_label']}\n"
+            f"{g.get('description', '')}\n{targets}\n"
+            f"Agent's reason (unverified): {r.get('reason') or '(none)'}"
+        )
+        entry = {"short": short, "text": text, "expires": r["expires"]}
+        self.gmsgs[r["id"]] = entry
+        timeout = int(r["expires"] - time.time())
+        if self.describe()["telegram"]:
+            kb = [[{"text": f"✅ Approve {r['level']} ({r['ttl_label']})", "callback_data": f"g:{r['id']}:approve"}]]
+            if r["level"] == "write" and "read" in g.get("levels", []):
+                kb.append([{"text": "📖 Approve read-only", "callback_data": f"g:{r['id']}:read"}])
+            kb.append([{"text": "⛔ Deny", "callback_data": f"g:{r['id']}:deny"}])
+            res = await self._tg(
+                "sendMessage",
+                chat_id=self.tg_chat,
+                text=f"{text}\nAuto-deny in {timeout}s.",
+                reply_markup={"inline_keyboard": kb},
+                disable_web_page_preview=True,
+            )
+            entry["tg"] = res["message_id"]
+        if self.describe()["matrix"]:
+            body = f"#{short} {text}\nReact: 👍 approve  📖 read-only  👎 deny — or reply: approve|read|deny {short}"
+            html_body = html.escape(body).replace("\n", "<br/>")
+            res = await self._mx_put(
+                f"/rooms/{self._room()}/send/m.room.message/{uuid.uuid4().hex}",
+                {"msgtype": "m.text", "body": body, "format": "org.matrix.custom.html", "formatted_body": html_body},
+            )
+            entry["mx"] = res["event_id"]
+            for reaction in GRANT_REACTIONS:
+                try:
+                    await self._mx_put(
+                        f"/rooms/{self._room()}/send/m.reaction/{uuid.uuid4().hex}",
+                        {"m.relates_to": {"rel_type": "m.annotation", "event_id": entry["mx"], "key": reaction}},
+                    )
+                except Exception:  # noqa: BLE001
+                    break
+
+    async def _on_grant_resolved(self, r: dict) -> None:
+        entry = self.gmsgs.get(r["id"])
+        if not entry:
+            return
+        if r["status"] == "approved":
+            until = time.strftime("%H:%M", time.localtime(time.time() + r["ttl"]))
+            outcome = f"✅ {r['granted_level']} until {until} (by {r['decided_by']})"
+            entry["aid"], entry["expires"] = r["grant_id"], time.time() + r["ttl"]
+        else:
+            outcome = f"⛔ {r['status']}" + (f" (by {r['decided_by']})" if r.get("decided_by") else "")
+            self.short.pop(entry["short"], None)
+            self.gmsgs.pop(r["id"], None)
+        if entry.get("tg"):
+            markup = (
+                {"inline_keyboard": [[{"text": "Revoke", "callback_data": f"r:{r['grant_id']}"}]]}
+                if r["status"] == "approved"
+                else {"inline_keyboard": []}
+            )
+            await self._tg(
+                "editMessageText",
+                chat_id=self.tg_chat,
+                message_id=entry["tg"],
+                text=f"{entry['text']}\n→ {outcome}",
+                reply_markup=markup,
+            )
+        if entry.get("mx"):
+            note = f"#{entry['short']} → {outcome}" + (
+                f" — reply 'revoke {entry['short']}' to end it" if r["status"] == "approved" else ""
+            )
+            await self._mx_put(
+                f"/rooms/{self._room()}/send/m.room.message/{uuid.uuid4().hex}",
+                {"msgtype": "m.notice", "body": note, "m.relates_to": {"m.in_reply_to": {"event_id": entry["mx"]}}},
+            )
+
+    async def _apply_grant(self, rid: str, decision: str, by: str) -> str:
+        if decision == "revoke":
+            entry = self.gmsgs.get(rid, {})
+            if not entry.get("aid") or not self.revoke_grant:
+                return "nothing to revoke"
+            status, data = await self.revoke_grant(entry["aid"], by)
+        else:
+            if not self.decide_grant:
+                return "grants not supported"
+            status, data = await self.decide_grant(rid, decision, by)
+        if status == 200:
+            return "ok"
+        return data.get("error", f"error {status}") if isinstance(data, dict) else f"error {status}"
 
     async def _apply(self, pid: str, scope: str, by: str) -> str:
         status, data = await self.decide(pid, scope, by)
@@ -206,12 +321,26 @@ class Notifier:
                     if chat != str(self.tg_chat) or (self.tg_users and uid not in self.tg_users):
                         await self._tg("answerCallbackQuery", callback_query_id=cq["id"], text="Not authorised")
                         continue
-                    try:
-                        _, pid, scope = cq["data"].split(":")
-                    except ValueError:
-                        continue
                     who = cq["from"].get("username") or uid
-                    result = await self._apply(pid, scope, f"telegram:{who}")
+                    parts = cq["data"].split(":")
+                    if parts[0] == "d" and len(parts) == 3:
+                        result = await self._apply(parts[1], parts[2], f"telegram:{who}")
+                    elif parts[0] == "g" and len(parts) == 3:
+                        result = await self._apply_grant(parts[1], parts[2], f"telegram:{who}")
+                    elif parts[0] == "r" and len(parts) == 2 and self.revoke_grant:
+                        status, _ = await self.revoke_grant(parts[1], f"telegram:{who}")
+                        result = "revoked" if status == 200 else "already ended"
+                        msg = cq.get("message", {})
+                        with contextlib.suppress(Exception):
+                            await self._tg(
+                                "editMessageText",
+                                chat_id=self.tg_chat,
+                                message_id=msg.get("message_id"),
+                                text=f"{msg.get('text', '')}\n→ revoked by {who}",
+                                reply_markup={"inline_keyboard": []},
+                            )
+                    else:
+                        continue
                     await self._tg("answerCallbackQuery", callback_query_id=cq["id"], text=result[:180])
             except asyncio.CancelledError:
                 raise
@@ -308,6 +437,21 @@ class Notifier:
             return
         content = ev.get("content", {})
         pid = scope = None
+        if ev.get("type") == "m.reaction":  # grant prompt?
+            rel = content.get("m.relates_to", {})
+            rid = next((k for k, v in self.gmsgs.items() if v.get("mx") == rel.get("event_id")), None)
+            decision = GRANT_REACTIONS.get(rel.get("key", "").replace("️", ""))
+            if rid and decision:
+                return await self._mx_grant(rid, decision, sender)
+        elif ev.get("type") == "m.room.message":
+            words = content.get("body", "").strip().lower().split()
+            if len(words) == 2 and words[1].lstrip("#").isdigit():
+                key = self.short.get(int(words[1].lstrip("#")), "")
+                if key.startswith("g:"):
+                    decision = "revoke" if words[0] == "revoke" else GRANT_WORDS.get(words[0])
+                    if decision:
+                        return await self._mx_grant(key[2:], decision, sender)
+                    return
         if ev.get("type") == "m.reaction":
             rel = content.get("m.relates_to", {})
             key = rel.get("key", "").replace("️", "")
@@ -318,10 +462,26 @@ class Notifier:
             if len(words) == 2 and words[0] in TEXT_TO_SCOPE and words[1].lstrip("#").isdigit():
                 scope = TEXT_TO_SCOPE[words[0]]
                 pid = self.short.get(int(words[1].lstrip("#")))
-        if pid and scope:
+        if pid and scope and not pid.startswith("g:"):
             result = await self._apply(pid, scope, f"matrix:{sender}")
             if result != "ok":
                 await self._mx_put(
                     f"/rooms/{self._room()}/send/m.room.message/{uuid.uuid4().hex}",
                     {"msgtype": "m.notice", "body": f"Could not apply: {result}"},
                 )
+
+    async def _mx_grant(self, rid: str, decision: str, sender: str) -> None:
+        result = await self._apply_grant(rid, decision, f"matrix:{sender}")
+        if result != "ok":
+            await self._mx_put(
+                f"/rooms/{self._room()}/send/m.room.message/{uuid.uuid4().hex}",
+                {"msgtype": "m.notice", "body": f"Could not apply: {result}"},
+            )
+        elif decision == "revoke":
+            entry = self.gmsgs.pop(rid, None)
+            if entry:
+                self.short.pop(entry["short"], None)
+            await self._mx_put(
+                f"/rooms/{self._room()}/send/m.room.message/{uuid.uuid4().hex}",
+                {"msgtype": "m.notice", "body": f"Grant revoked by {sender}"},
+            )

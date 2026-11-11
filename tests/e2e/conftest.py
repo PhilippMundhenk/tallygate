@@ -61,7 +61,9 @@ def make_cert(tmp: Path) -> tuple[Path, Path]:
         .not_valid_before(now - datetime.timedelta(minutes=5))
         .not_valid_after(now + datetime.timedelta(days=1))
         .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName("gh.test"), x509.DNSName("other.test"), x509.DNSName("ro.test")]),
+            x509.SubjectAlternativeName(
+                [x509.DNSName("gh.test"), x509.DNSName("other.test"), x509.DNSName("ro.test"), x509.DNSName("sec.test")]
+            ),
             critical=False,
         )
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
@@ -78,21 +80,30 @@ def make_cert(tmp: Path) -> tuple[Path, Path]:
 # ------------------------------------------------------------------ upstream echo servers
 class Echo(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.headers.get("Content-Length"):
+            self.rfile.read(int(self.headers["Content-Length"]))
         body = json.dumps(
-            {"path": self.path, "auth": self.headers.get("Authorization"), "host": self.headers.get("Host")}
+            {
+                "path": self.path,
+                "auth": self.headers.get("Authorization"),
+                "host": self.headers.get("Host"),
+                "method": self.command,
+            }
         ).encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
+    do_POST = do_PUT = do_DELETE = do_PATCH = do_GET
+
     def log_message(self, *a):
         pass
 
 
-def start_echo(tls: tuple[Path, Path] | None = None) -> int:
+def start_echo(tls: tuple[Path, Path] | None = None, bind: str = "127.0.0.1") -> int:
     port = free_port()
-    srv = ThreadingHTTPServer(("127.0.0.1", port), Echo)
+    srv = ThreadingHTTPServer((bind, port), Echo)
     if tls:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(str(tls[0]), str(tls[1]))
@@ -105,7 +116,12 @@ def start_echo(tls: tuple[Path, Path] | None = None) -> int:
 def upstream(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("upstream")
     cert = make_cert(tmp)
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+
     return {
+        "fingerprint": x509.load_pem_x509_certificate(cert[0].read_bytes()).fingerprint(hashes.SHA256()).hex(),
+        "lan": start_echo(bind="127.0.0.2"),
         "http": start_echo(),
         "http2": start_echo(),
         "https": start_echo(cert),
@@ -121,7 +137,9 @@ def gateway(tmp_path_factory, upstream):
         pytest.skip("mitmproxy not installed (pip install -r gateway/requirements.txt)")
     data = tmp_path_factory.mktemp("gw-data")
     ca_dir = tmp_path_factory.mktemp("gw-ca")
-    ports = {k: free_port() for k in ("http", "socks", "dns", "api", "svc")}
+    ports = {k: free_port() for k in ("http", "socks", "dns", "api", "svc", "grants")}
+    http_t = {"scheme": "http", "port": upstream["http"]}
+    https_t = {"scheme": "https", "port": upstream["https"]}
     (data / "config.yaml").write_text(
         yaml.safe_dump(
             {
@@ -131,9 +149,47 @@ def gateway(tmp_path_factory, upstream):
                 ],
                 "services": [{"name": "echo", "listen": ports["svc"], "target": f"127.0.0.1:{upstream['http']}"}],
                 # tests talk to 127.0.0.1 upstreams, so the floor is narrowed here (static config only)
-                "hard_deny_floor": ["192.168.0.0/16", "10.0.0.0/8"],
+                "hard_deny_floor": ["192.168.0.0/16", "10.0.0.0/8", "127.0.0.2/32"],
                 "readonly": ["ro.test"],
                 "max_pending": 3,
+                # 127.0.0.2 plays the LAN: hard-denied by the floor, reachable only via a lan grant
+                "grants_never": ["169.254.0.0/16"],
+                "grants_lan_allow": ["127.0.0.2/32"],
+                "grant_api_rate": 1000,
+                "grants": {
+                    "svc": {
+                        "description": "echo API",
+                        "targets": [{"host": "svc.test", "paths": ["/api/*"], **http_t}],
+                        "levels": ["read", "write"],
+                        "approval": {"read": "auto", "write": "ask"},
+                    },
+                    "sec": {
+                        "description": "TLS service with injected token",
+                        "targets": [{"host": "sec.test", **https_t}],
+                        "levels": ["read", "write"],
+                        "inject": [{"host": "sec.test", "header": "Authorization", "value": "Bearer ${grant_token}"}],
+                    },
+                    "lanhttp": {
+                        "targets": [{"host": "lanecho.test", "scheme": "http", "port": upstream["lan"], "lan": True}],
+                        "levels": ["write"],
+                    },
+                    "nolan": {
+                        "targets": [{"host": "lanecho.test", "scheme": "http", "port": upstream["lan"]}],
+                        "levels": ["write"],
+                    },
+                    "pinned": {
+                        "targets": [{"host": "pin.test", "tls_fingerprint": upstream["fingerprint"], **https_t}],
+                        "approval": "auto",
+                    },
+                    "badpin": {
+                        "targets": [{"host": "badpin.test", "tls_fingerprint": "00" * 32, **https_t}],
+                        "approval": "auto",
+                    },
+                    "raw": {
+                        "targets": [{"host": "raw.test", "scheme": "tcp", "port": upstream["http2"]}],
+                        "levels": ["write"],
+                    },
+                },
             }
         )
     )
@@ -166,7 +222,9 @@ def gateway(tmp_path_factory, upstream):
         GW_API_PORT=ports["api"],
         GW_API_TOKEN=API_TOKEN,
         PRESET_DIR=ROOT / "gateway" / "presets",
-        GW_TEST_STATIC_HOSTS="gh.test=127.0.0.1,other.test=127.0.0.1,badcert.test=127.0.0.1,lan.test=192.168.99.99,ro.test=127.0.0.1",
+        GW_TEST_STATIC_HOSTS="gh.test=127.0.0.1,other.test=127.0.0.1,badcert.test=127.0.0.1,lan.test=192.168.99.99,ro.test=127.0.0.1,"
+        "svc.test=127.0.0.1,sec.test=127.0.0.1,lanecho.test=127.0.0.2,pin.test=127.0.0.1,badpin.test=127.0.0.1,raw.test=127.0.0.1",
+        GW_GRANTS_PORT=ports["grants"],
         GW_EXTRA_ARGS=f"--set ssl_verify_upstream_trusted_ca={upstream['cert']}",
     )
     log = open(data / "gateway.log", "w")
@@ -182,6 +240,7 @@ def gateway(tmp_path_factory, upstream):
         yield {
             "ports": ports,
             "api": Api(f"http://127.0.0.1:{ports['api']}", token=API_TOKEN),
+            "agent": Api(f"http://127.0.0.1:{ports['grants']}"),
             "ca": str(ca_dir / "egress-gw-ca.pem"),
             "log": data / "gateway.log",
             "data": data,

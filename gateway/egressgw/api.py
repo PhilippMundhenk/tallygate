@@ -174,6 +174,68 @@ def build_app(gw: Gateway) -> web.Application:
         gw.record(kind="admin", action="secret", reason=f"secret {name} {'set' if body.get('value') else 'removed'}")
         return _json({"names": gw.secrets.names()})
 
+    # ---------------------------------------------------------------- grants (admin)
+    @routes.get("/grants")
+    async def grants(_):
+        g = gw.grants
+        needed = {}
+        for d in g.defs.values():
+            missing = sorted({n for i in d.inject for n in _secret_names(i["value"])} - set(gw.secrets.names()))
+            if missing:
+                needed[d.name] = missing
+        return _json(
+            {
+                "defs": [d.to_dict() for d in g.defs.values()],
+                "active": [a.to_dict() for a in g.active.values() if a.expires > time.time()],
+                "requests": [r.to_dict() for r in g.pending()],
+                "lan_allow_ui": [str(n) for n in g.ui_lan_allow],
+                "missing_secrets": needed,
+            }
+        )
+
+    @routes.put("/grants/{name}")
+    async def put_grant(request):
+        name = request.match_info["name"]
+        d = gw.grants.upsert_ui(name, await request.json())
+        gw.record(kind="admin", action="grant", host=name, reason=f"grant {name} defined/changed via API")
+        gw.publish({"type": "grants"})
+        return _json(d.to_dict())
+
+    @routes.delete("/grants/{name}")
+    async def delete_grant(request):
+        name = request.match_info["name"]
+        gw.grants.delete_ui(name)
+        gw.record(kind="admin", action="grant", host=name, reason=f"grant {name} deleted via API")
+        gw.publish({"type": "grants"})
+        return _json({"deleted": name})
+
+    @routes.post("/grants/{name}/activate")
+    async def activate_grant(request):
+        body = await request.json()
+        return _json(
+            gw.activate_grant(
+                request.match_info["name"],
+                str(body.get("level", "read")),
+                body.get("ttl"),
+                str(body.get("by", "api"))[:64],
+            )
+        )
+
+    @routes.delete("/active-grants/{aid}")
+    async def revoke_grant(request):
+        by = request.query.get("by", "api")[:64]
+        return _json(gw.revoke_grant(request.match_info["aid"], by))
+
+    @routes.post("/grant-requests/{rid}/decide")
+    async def decide_grant(request):
+        body = await request.json()
+        decision = str(body.get("decision", ""))
+        if decision not in ("approve", "read", "deny"):
+            raise ValueError("decision must be approve | read | deny")
+        return _json(
+            gw.decide_grant(request.match_info["rid"], decision, str(body.get("by", "api"))[:64], body.get("ttl"))
+        )
+
     @routes.get("/info")
     async def info(_):
         from egressgw.core import CA_EXPORT
