@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
 import time
@@ -316,3 +317,36 @@ def test_punycode_names_are_flagged_in_prompts(gateway):
     assert p["host"] == "xn--gthub-cta.com" and p["idn"] is True
     gateway["api"].call("POST", f"/pending/{p['id']}/decide", {"scope": "deny", "by": "e2e"})
     t.join(10)
+
+
+def _tls_any_sni(proxy_port, target, sni, method="GET", headers=None) -> bytes:
+    """CONNECT + TLS with an arbitrary (or no) SNI; the certificate is not checked. Returns the raw response."""
+    import ssl
+
+    raw, line = connect_tunnel(proxy_port, target)
+    assert " 200" in line
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
+    hdrs = {"Host": target.split(":")[0], "Connection": "close", "Content-Length": "0", **(headers or {})}
+    data = b""
+    with ctx.wrap_socket(raw, server_hostname=sni) as tls:
+        tls.sendall((f"{method} /x HTTP/1.1\r\n" + "".join(f"{k}: {v}\r\n" for k, v in hdrs.items()) + "\r\n").encode())
+        with contextlib.suppress(OSError):
+            while chunk := tls.recv(65536):
+                data += chunk
+    return data
+
+
+@pytest.mark.parametrize("sni", [None, "gh.test.", "other.test", "GH.TEST"])
+def test_inject_host_is_intercepted_whatever_the_sni(gateway, upstream, sni):
+    """#9: without a matching SNI the TLS was passed through, and the agent's own token reached the host."""
+    gateway["api"].call("PUT", "/secrets/github_token", {"value": "ghp_E2E"})
+    target = f"gh.test:{upstream['https']}"
+    data = _tls_any_sni(gateway["ports"]["http"], target, sni, headers={"Authorization": "token AGENT"})
+    assert json.loads(data.partition(b"\r\n\r\n")[2])["auth"] == "Bearer ghp_E2E"  # stripped, then injected
+
+
+@pytest.mark.parametrize("sni", [None, "ro.test.", "other.test"])
+def test_readonly_host_is_intercepted_whatever_the_sni(gateway, upstream, sni):
+    data = _tls_any_sni(gateway["ports"]["http"], f"ro.test:{upstream['https']}", sni, method="PUT")
+    assert data.startswith(b"HTTP/1.1 403") and b"read-only" in data

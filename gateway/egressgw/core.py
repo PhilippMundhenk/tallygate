@@ -144,8 +144,8 @@ class Gateway:
         )
         self.secrets = Secrets(DATA_DIR / "secrets.json")
         self.inject = [dict(i) for i in self.config.get("inject") or []]
-        self.inject_hosts = {i["host"].lower() for i in self.inject}
-        self.readonly_hosts = {str(h).lower() for h in self.config.get("readonly") or []}
+        self.inject_hosts = {i["host"].lower().rstrip(".") for i in self.inject}
+        self.readonly_hosts = {str(h).lower().rstrip(".") for h in self.config.get("readonly") or []}
         self.intercept_hosts = self.inject_hosts | self.readonly_hosts
         self.strip_headers = [str(h) for h in self.config.get("inject_strip_headers") or ["Authorization", "Cookie"]]
         self.max_pending = int(self.config.get("max_pending", 10))
@@ -568,9 +568,10 @@ class Gateway:
                 data.ignore_connection = True
             return
         orig = self.orig_host.get(data.context.server.id)
-        sni = (data.client_hello.sni or "").lower()
-        if orig and orig in self.intercept_hosts and sni == orig:
-            return  # intercept: credential injection and/or read-only enforcement
+        if orig in self.intercept_hosts:
+            # Always intercept, whatever the SNI says (none, trailing dot, another name): a passthrough would
+            # skip credential stripping and the read-only check. Injection stays gated by the Host header.
+            return
         data.ignore_connection = True  # end-to-end TLS, untouched
 
     @fail_closed
@@ -702,7 +703,7 @@ class Gateway:
         # Never forward the agent's own credentials to an injection host: otherwise it could act as
         # (and exfiltrate to) an account of its choosing, e.g. when no secret is configured yet.
         for rule in self.inject:
-            if rule["host"].lower() == target:
+            if rule["host"].lower().rstrip(".") == target:
                 flow.request.headers.pop(rule.get("header", "Authorization"), None)
         for name in self.strip_headers:
             flow.request.headers.pop(name, None)
@@ -710,7 +711,7 @@ class Gateway:
         if flow.request.scheme != "https" or host != target:
             return  # inject only over TLS and only if Host/:authority matches the checked target
         for rule in self.inject:
-            if rule["host"].lower() != target:
+            if rule["host"].lower().rstrip(".") != target:
                 continue
             value = render(rule["value"], self.secrets)
             if value is not None:  # secret not configured: request goes out without credentials

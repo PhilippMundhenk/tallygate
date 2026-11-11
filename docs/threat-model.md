@@ -64,7 +64,7 @@ service, **E**levation of privilege.
 | T4 | Data exfiltration via DNS queries (agent's own lookups **or** names it asks the proxy for) | I | Agent DNS → gateway → NXDOMAIN, logged; the gateway resolves a name only after it is allowed/approved | e2e DNS + "denied names are never resolved" |
 | T5 | IPv6 side channel (incl. link-local on internal networks) | E, I | IPv6 disabled on all networks and by sysctl in every container; IPv6 targets subject to hard deny/policy | `bypass.sh`, self-test |
 | T6 | Agent steals the GitHub token | I | Token only in gateway; injected in flight; never returned by API; placeholders in agent | e2e (secrets write-only, no token in logs) |
-| T7 | Agent obtains injected token by spoofing SNI/Host towards another server | S, I | Injection requires CONNECT target = SNI = Host = configured host; plaintext never injected | e2e SNI-spoofing test |
+| T7 | Agent obtains injected token by spoofing SNI/Host towards another server | S, I | Injection requires CONNECT target = Host = configured host; TLS to inject/read-only hosts is always intercepted (no SNI-based passthrough); plaintext never injected | e2e SNI tests (both directions) |
 | T8 | MITM of intercepted upstream (gateway trusts a bad cert) | S, I | Upstream TLS verified against the configured hostname | e2e bad-cert test |
 | T9 | Agent changes policy (calls gateway API or control UI) | E | API bound to control-net only + bearer token; UI bound to mgmt only; agent on neither | `bypass.sh`, self-test |
 | T10 | Agent uses the Docker socket to escape | E | No docker.sock in any container | `bypass.sh` structure check |
