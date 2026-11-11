@@ -91,6 +91,7 @@ service, **E**levation of privilege.
 | T30 | UI compromise defines a grant to arbitrary LAN hosts | E | UI grants may use `lan` only inside `grants_lan_allow` (config file); `grants_never` always applies | unit + e2e |
 | T31 | Self-signed LAN service impersonated on the path | S, I | Leaf certificate pinned by SHA-256 (`tls_fingerprint`); disabling verification needs an explicit setting and UI confirmation | e2e pinned/badpin |
 | T32 | Access outlives the task | E | Grants expire (≤ 7 days, capped per grant), are revocable from UI/Telegram/Matrix, end on restart; open HTTP connections are re-checked per request | e2e revoke test |
+| T33 | An internal error (broken config entry, full disk, locked event log) lets a connection through unchecked | E, I | Every mitmproxy hook fails closed: an exception refuses the connection/flow; the error is set before the event is recorded; CIDRs are validated at startup (the gateway does not start otherwise) | e2e (`test_fail_closed.py`) |
 
 ## Residual risks
 

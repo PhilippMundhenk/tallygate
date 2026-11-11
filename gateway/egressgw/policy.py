@@ -86,6 +86,21 @@ def is_ip(value: str) -> bool:
         return False
 
 
+def parse_cidrs(values, what: str) -> list[str]:
+    """Normalised CIDR strings; a clear error naming the setting for anything that is not a network."""
+    if isinstance(values, str) or not isinstance(values, (list, tuple)):
+        raise ValueError(f"{what}: expected a list of CIDRs")
+    out = []
+    for c in values:
+        try:
+            net = str(ipaddress.ip_network(str(c), strict=False))
+        except ValueError as e:
+            raise ValueError(f"{what}: invalid CIDR {c!r} ({e})") from None
+        if net not in out:
+            out.append(net)
+    return out
+
+
 def host_matches(pattern: str, host: str) -> bool:
     """'*' = any; '*.example.com' = example.com and all subdomains; else fnmatch (case-insensitive)."""
     pattern = pattern.lower().rstrip(".")
