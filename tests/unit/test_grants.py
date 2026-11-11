@@ -140,6 +140,22 @@ def test_agent_sees_no_secrets(tmp_path):
     assert "inject" not in s and "PVEAPIToken" not in str(s)
 
 
+def test_ui_grants_cannot_inject_or_disable_tls_verification(tmp_path):
+    """#12: a UI session must not be able to send a stored secret to a host of its choosing."""
+    import yaml
+
+    g = make(tmp_path)
+    target = {"host": "x.example", "port": 443}
+    inject = [{"host": "x.example", "header": "Authorization", "value": "Bearer ${github_token}"}]
+    for bad in ({"targets": [target], "inject": inject}, {"targets": [{**target, "tls_verify": False}]}):
+        with pytest.raises(ValueError, match="config file"):
+            g.upsert_ui("exfil", bad)
+        assert GrantDef.from_dict("ok", bad, "config")  # still fine in the config file
+    # a UI grant with inject saved by an older version is ignored at startup instead of being used
+    (tmp_path / "grants.yaml").write_text(yaml.safe_dump({"old": {"targets": [target], "inject": inject}}))
+    assert "old" not in Grants({"grants": {"ha": HA}}, tmp_path).defs
+
+
 def test_clean_reason():
     assert clean_reason("a\nb\tc" + "x" * 500)[:5] == "a b c" and len(clean_reason("x" * 500)) == 300
 
