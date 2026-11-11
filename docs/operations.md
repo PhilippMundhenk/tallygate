@@ -9,6 +9,7 @@
 - [First-time setup](#first-time-setup)
 - [Day-to-day](#day-to-day)
 - [Upgrades](#upgrades)
+- [Resource limits](#resource-limits)
 - [Backup and restore](#backup-and-restore)
 - [Monitoring](#monitoring)
 - [Troubleshooting](#troubleshooting)
@@ -18,8 +19,8 @@
 ## Requirements
 
 - Linux host or VM with Docker Engine ≥ 25 and the Compose plugin (amd64 or arm64).
-- ~6 GB free disk for images plus your workspace. Keep an eye on the root filesystem: a full disk makes
-  Claude Code fail with `ENOSPC` in confusing places.
+- ~6 GB free disk for images plus your workspace. Keep an eye on the disk: see
+  [resource limits](#resource-limits).
 - A claude.ai subscription (Pro/Max/Team/Enterprise) for Remote Control. API keys don't work with Remote
   Control.
 - Recommended: a reverse proxy with TLS and SSO (Caddy, Traefik, nginx + Authelia/Authentik/oauth2-proxy).
@@ -187,7 +188,25 @@ Then clone repositories in the *bash* console: `gh repo clone owner/repo /worksp
 
 Running sessions are reconnected by Remote Control after a restart if you're back within about 4 hours.
 
-## Backup and restore
+## Resource limits
+
+The agent is limited to `AGENT_MEM_LIMIT` (6 GB) of memory, 1024 processes and a 1 GB `/tmp`. CPU is unlimited
+by default; set `AGENT_CPUS` (e.g. `2`) so a busy or looping agent leaves CPU for the gateway, the UI and the
+host.
+
+Disk is the limit Docker does not enforce. The workspace and the agent home grow without bound, and by default
+they share a filesystem with Docker itself (`/var/lib/docker`) and the gateway's event log. A runaway or
+hostile agent can fill it, and then Claude Code fails with `ENOSPC` in confusing places and other containers
+on the host suffer too. On a host that runs more than tallygate:
+
+- Put the workspace on its own filesystem or a dataset with a quota (LVM volume, ZFS/btrfs dataset, a loop
+  file) and point `WORKSPACE` (and `AGENT_HOME`) there. Keep `GATEWAY_DATA` on a different filesystem, so the
+  gateway can still log and decide while the agent's disk is full.
+- Alternatively give Docker's data root its own filesystem.
+- Monitor free space; `docker system df` shows what Docker uses.
+
+The gateway's event log is capped by `log_max_events` and `log_keep_days`, and identical events are coalesced.
+
 
 Back up the volumes (or the directories in `GATEWAY_DATA`, `AGENT_HOME`, `WORKSPACE`), plus `.env` and your
 `gateway.yaml` if you have them:
