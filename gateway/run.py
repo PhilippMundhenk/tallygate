@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import os
 import secrets
-import sys
 from pathlib import Path
 
 import yaml
@@ -41,7 +40,9 @@ def build_args(env: dict, data: Path) -> list[str]:
     ]
     for s in cfg.get("services") or []:
         modes.append(f"reverse:tcp://{s['target']}@{listen}:{int(s['listen'])}")
-    args = ["mitmdump", "-q", "-s", str(Path(__file__).parent / "egressgw" / "addon.py")]
+    # no -q: it forces termlog_verbosity=error over the --set below and hides the security warnings
+    # (test-only switches active, API disabled); flow_detail=0 keeps per-flow output off
+    args = ["mitmdump", "-s", str(Path(__file__).parent / "egressgw" / "addon.py")]
     for m in modes:
         args += ["--mode", m]
     for opt in (
