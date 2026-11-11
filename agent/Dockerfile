@@ -1,7 +1,8 @@
 # tallygate agent: minimal Claude Code workspace. No route to the internet - all egress via egress-gw.
 FROM docker.io/library/debian:trixie-slim
 
-# Bump deliberately; there is no auto-updater inside the agent.
+# The single source of the Claude Code version. Bump deliberately: there is no auto-updater inside the agent.
+# .github/workflows/claude-code.yml opens a PR when a new version is published.
 ARG CLAUDE_VERSION=2.1.304
 # Extra Debian packages for your toolchains, e.g. "build-essential golang-go"
 ARG EXTRA_PACKAGES=""

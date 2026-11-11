@@ -15,6 +15,8 @@ All notable changes to this project are documented here. The format follows
   volumes, and a UI password is generated and printed once to the control log. Environment variables still
   take precedence. `docker compose exec control python -m app.passwd` changes the stored password.
 - `compose.build.yaml` to build the images from a checkout (`make up`).
+- A weekly workflow opens a PR when a new Claude Code version is published; `agent/Dockerfile` is the
+  single place that pins the version (#17).
 - Health check for the agent; services start in order of health (`depends_on: condition: service_healthy`).
 
 ### Changed

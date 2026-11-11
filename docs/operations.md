@@ -182,7 +182,7 @@ Then clone repositories in the *bash* console: `gh repo clone owner/repo /worksp
 |---|---|
 | tallygate (Compose) | Read the [CHANGELOG](../CHANGELOG.md) → `docker compose pull && docker compose up -d` → self-test or `bash bypass.sh`. Download the new `compose.yaml` when the changelog says so. |
 | tallygate (from source) | `git pull` → read `CHANGELOG.md` → `make up` → `make bypass-test`. |
-| Claude Code | Part of the agent image, which has no auto-updater by design: update tallygate. From source, set `CLAUDE_VERSION` in `.env` and run `make up`. |
+| Claude Code | Part of the agent image, which has no auto-updater by design. New Claude Code versions arrive as tallygate patch releases: update tallygate. From source, set `CLAUDE_VERSION` in `.env` and run `make up`. |
 | Base images / dependencies | Published images are rebuilt for every release. From source: `docker compose -f compose.yaml -f compose.build.yaml build --pull && make up`. |
 
 Running sessions are reconnected by Remote Control after a restart if you're back within about 4 hours.

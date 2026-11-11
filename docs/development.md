@@ -105,3 +105,9 @@ curl -x http://127.0.0.1:3128 https://example.org/    # appears in Approvals at 
    and creates the GitHub release with `compose.yaml`, `.env.example`, `gateway.yaml` and `bypass.sh`
    attached. Every push to `main` also publishes `:main` and `:sha-<commit>`.
 4. Check the release page and pull the new images once (`TALLYGATE_VERSION=X.Y.Z docker compose pull`).
+
+**Claude Code updates.** The agent image pins Claude Code (`ARG CLAUDE_VERSION` in `agent/Dockerfile`)
+and has no auto-updater. Every Monday, `.github/workflows/claude-code.yml` compares it with the latest
+version on npm and opens a PR that bumps it, then starts CI for that branch. Merge it and cut a patch
+release, so `:X.Y` and `:latest` carry the new version. It can also be run by hand (*Actions → Claude Code
+update → Run workflow*).
