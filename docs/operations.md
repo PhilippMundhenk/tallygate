@@ -147,7 +147,12 @@ password. It is honoured only from `TRUSTED_PROXIES` (control refuses to start w
 8080 unreachable except through the proxy.
 
 If the Docker host has a public IP (VPS), add it to `hard_deny_floor` in `config/gateway.yaml` so the agent
-cannot reach host services through the egress path.
+cannot reach host services through the egress path. Entries there are added to the built-in list
+(RFC 1918, loopback, metadata, ...), which always stays in force:
+
+```yaml
+hard_deny_floor: [203.0.113.7/32]   # your host's public IP; the built-in ranges still apply
+```
 
 ## First-time setup
 

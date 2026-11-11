@@ -56,6 +56,8 @@ WRITE_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
 # TEST ONLY: "name=ip,name=ip" static resolution used by the e2e test-suite instead of /etc/hosts.
 # Never set this in production; the gateway logs a loud warning when it is active.
 STATIC_HOSTS = dict(kv.split("=", 1) for kv in os.environ.get("GW_TEST_STATIC_HOSTS", "").split(",") if "=" in kv)
+# TEST ONLY: the configured hard_deny_floor replaces the built-in list (the e2e upstreams live on 127.0.0.1).
+FLOOR_REPLACE = os.environ.get("GW_TEST_FLOOR_REPLACE") == "1"
 
 
 def fail_closed(hook):
@@ -127,9 +129,11 @@ class Gateway:
         self.config = yaml.safe_load(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
         self.config = self.config or {}
         self.policy_path = DATA_DIR / "policy.yaml"
-        # The hard-deny floor comes only from the (read-only mounted) static config, never from the API.
-        # Validated here: a broken entry must stop the gateway, not fail per connection.
-        self.hard_deny_floor = parse_cidrs(self.config.get("hard_deny_floor") or DEFAULT_HARD_DENY, "hard_deny_floor")
+        # The hard-deny floor comes only from the (read-only mounted) static config, never from the API:
+        # the built-in list plus `hard_deny_floor`. Validated here: a broken entry must stop the gateway.
+        configured = parse_cidrs(self.config.get("hard_deny_floor") or [], "hard_deny_floor")
+        builtin = [] if FLOOR_REPLACE and configured else DEFAULT_HARD_DENY
+        self.hard_deny_floor = parse_cidrs([*builtin, *configured], "hard_deny_floor")
         if not self.policy_path.exists():
             preset = PRESET_DIR / f"{self.config.get('initial_preset', 'baseline')}.yaml"
             self.policy = Policy.load(preset) if preset.exists() else Policy()
@@ -163,7 +167,7 @@ class Gateway:
 
     def adopt(self, policy: Policy) -> Policy:
         """Attach the static parts (floor, service exceptions) to a policy loaded from file/API."""
-        policy.hard_deny_floor = self.hard_deny_floor
+        policy.use_floor(self.hard_deny_floor)
         self.policy = policy
         self._apply_service_exceptions()
         return policy
@@ -179,6 +183,8 @@ class Gateway:
     async def running(self) -> None:
         if STATIC_HOSTS:
             log.warning("GW_TEST_STATIC_HOSTS is set - test-only name resolution is ACTIVE: %s", STATIC_HOSTS)
+        if FLOOR_REPLACE:
+            log.warning("GW_TEST_FLOOR_REPLACE is set - the built-in hard-deny floor is NOT active (test only)")
         if len(self.api_token) < 24:
             log.warning("GW_API_TOKEN missing or shorter than 24 chars - API disabled")
         else:

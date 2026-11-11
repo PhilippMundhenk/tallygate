@@ -30,6 +30,7 @@ def test_ip_approval_does_not_resolve_names_before_the_decision(make_gateway, up
         {"hard_deny_floor": ["203.0.113.0/24"]},
         {"default": "ask", "ask_timeout": 5, "rules": []},
         GW_TEST_STATIC_HOSTS="probe.test=127.0.0.1,probe2.test=198.51.100.9",
+        GW_TEST_FLOOR_REPLACE="1",
     )
     port = free_port()
     assert approve_soon(gw, port, "always")["rule"]["cidr"] == "127.0.0.1"
