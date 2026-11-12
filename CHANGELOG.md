@@ -72,6 +72,17 @@ All notable changes to this project are documented here. The format follows
 - `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
 
 ### Fixed
+- Web UI (#23):
+  - Log tab: history loads even after live events arrived; "Load older" no longer duplicates rows.
+  - After an event-stream reconnect, pending asks and grant requests from the gap are reloaded; a stream
+    closed by an ended session leads to the login page.
+  - Rules tab: a policy change elsewhere no longer overwrites unsaved edits (the field is marked instead).
+  - Console: UTF-8 split across frames is no longer garbled; pastes over 64 KiB no longer kill the console;
+    reconnecting after the session ended shows "session expired" instead of looping.
+  - Approval and grant cards do not move under the cursor when another one goes away, and their buttons are
+    disabled while a decision is sent.
+  - The session cookie is `SameSite=Lax`, so links in Telegram/Matrix messages arrive logged in.
+  - Invalid JSON, non-JSON gateway replies and an unreachable GitHub return `{"error": …}` with 400/502.
 - Notifications: Telegram and Matrix are sent concurrently and fail independently, so an outage of one no
   longer hides prompts on the other. A queue decouples delivery from the gateway event stream, and chat API
   calls time out after 15 s (#22).

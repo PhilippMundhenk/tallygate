@@ -28,10 +28,10 @@ function showTab(name) {
   $$("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "tab-" + name));
   $$("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   history.replaceState(null, "", "#" + name);
-  if (name === "rules") loadPolicy();
-  if (name === "grants") { loadGrants(); loadSecrets(); }
-  if (name === "setup") loadSetup();
-  if (name === "log" && !$("#logBody").children.length) loadLog();
+  if (name === "rules") guard(loadPolicy)();
+  if (name === "grants") { guard(loadGrants)(); guard(loadSecrets)(); }
+  if (name === "setup") guard(loadSetup)();
+  if (name === "log" && !logLoaded) guard(loadLog)();
 }
 $$("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
@@ -43,29 +43,58 @@ async function loadPending() {
   pending = await gw("GET", "/pending");
   renderPending();
 }
+// Cards are kept per id. A card that went away (decided elsewhere, expired) while the pointer is over the
+// list stays in place, greyed out, until the pointer leaves: the next click must not land on another card.
+function syncCards(list, items, build) {
+  const byId = new Map($$(":scope > .pending", list).map((el) => [el.dataset.id, el]));
+  const hovered = list.matches(":hover");
+  for (const [id, el] of byId) {
+    if (items.some((it) => it.id === id)) continue;
+    if (hovered) { el.classList.add("gone"); $$("button", el).forEach((b) => (b.disabled = true)); }
+    else el.remove();
+  }
+  for (const it of items) {
+    const sig = JSON.stringify(it);
+    const old = byId.get(it.id);
+    if (old && (old.dataset.sig === sig || old.classList.contains("busy"))) continue;
+    const el = build(it); el.dataset.id = it.id; el.dataset.sig = sig;
+    if (old) old.replaceWith(el); else list.appendChild(el);
+  }
+  if (hovered && !list._leave) {
+    list._leave = () => { $$(":scope > .pending.gone", list).forEach((el) => el.remove()); };
+    list.addEventListener("mouseleave", list._leave);
+  }
+}
+// Disables the card's buttons while its decision is in flight (no double submits).
+const decide = (el, fn) => async () => {
+  el.classList.add("busy"); $$("button", el).forEach((b) => (b.disabled = true));
+  try { await fn(); } catch (e) {
+    toast(e.message, true); el.classList.remove("busy"); $$("button", el).forEach((b) => (b.disabled = false));
+  }
+};
 function renderPending() {
-  const list = $("#pendingList"); list.innerHTML = "";
+  syncCards($("#pendingList"), pending, pendingCard);
   $("#pendingEmpty").classList.toggle("hidden", pending.length > 0);
   updateBadges();
-  for (const p of pending) {
-    const el = document.createElement("div"); el.className = "pending";
-    // Host names are chosen by the agent: show the registrable domain separately (look-alikes such as
-    // github.com.evil.example) and warn about punycode names.
-    el.innerHTML = `<div class="dest">${esc(p.host)}:${esc(p.port)}</div>
-      ${p.domain && p.domain !== p.host ? `<div class="meta">domain <b>${esc(p.domain)}</b></div>` : ""}
-      ${p.idn ? `<div class="meta warn">⚠ internationalised (punycode) name – check for look-alikes</div>` : ""}
-      <div class="meta">${esc(p.proto)} · IPs ${esc((p.ips || []).join(", ") || "not resolved yet")} · attempts ${esc(p.attempts)} ·
-      <span class="countdown" data-exp="${Number(p.expires)}"></span></div><div class="btns"></div>`;
-    for (const [scope, label, cls] of SCOPES) {
-      if (scope === "domain" && !p.domain) continue;  // no registrable domain (IP, public suffix)
-      const b = document.createElement("button"); if (cls) b.className = cls;
-      b.textContent = scope === "domain" ? `Always (*.${p.domain})` : label;
-      b.onclick = guard(async () => { await gw("POST", `/pending/${p.id}/decide`, { scope }); await loadPending(); });
-      $(".btns", el).appendChild(b);
-    }
-    list.appendChild(el);
-  }
   tickCountdowns();
+}
+function pendingCard(p) {
+  const el = document.createElement("div"); el.className = "pending";
+  // Host names are chosen by the agent: show the registrable domain separately (look-alikes such as
+  // github.com.evil.example) and warn about punycode names.
+  el.innerHTML = `<div class="dest">${esc(p.host)}:${esc(p.port)}</div>
+    ${p.domain && p.domain !== p.host ? `<div class="meta">domain <b>${esc(p.domain)}</b></div>` : ""}
+    ${p.idn ? `<div class="meta warn">⚠ internationalised (punycode) name – check for look-alikes</div>` : ""}
+    <div class="meta">${esc(p.proto)} · IPs ${esc((p.ips || []).join(", ") || "not resolved yet")} · attempts ${esc(p.attempts)} ·
+    <span class="countdown" data-exp="${Number(p.expires)}"></span></div><div class="btns"></div>`;
+  for (const [scope, label, cls] of SCOPES) {
+    if (scope === "domain" && !p.domain) continue;  // no registrable domain (IP, public suffix)
+    const b = document.createElement("button"); if (cls) b.className = cls;
+    b.textContent = scope === "domain" ? `Always (*.${p.domain})` : label;
+    b.onclick = decide(el, async () => { await gw("POST", `/pending/${p.id}/decide`, { scope }); await loadPending(); });
+    $(".btns", el).appendChild(b);
+  }
+  return el;
 }
 function tickCountdowns() {
   const now = Date.now() / 1000;
@@ -74,9 +103,21 @@ function tickCountdowns() {
 setInterval(tickCountdowns, 1000);
 
 /* ---------------- log ---------------- */
-let oldestId = null;
+let oldestId = null, logLoaded = false;
+const logIds = new Set();
+// Rows are ordered by event id (newest first) and shown once, whether they came live or from history.
+function addLogRow(e, trim = true) {
+  if (logIds.has(e.id)) return;
+  logIds.add(e.id);
+  const body = $("#logBody"), tr = logRow(e);
+  let next = body.firstElementChild;
+  while (next && Number(next.dataset.id) > e.id) next = next.nextElementSibling;
+  body.insertBefore(tr, next);
+  while (trim && body.children.length > 2000) { logIds.delete(Number(body.lastElementChild.dataset.id)); body.lastElementChild.remove(); }
+  oldestId = Number(body.lastElementChild.dataset.id);
+}
 function logRow(e) {
-  const tr = document.createElement("tr");
+  const tr = document.createElement("tr"); tr.dataset.id = e.id;
   const dest = `${e.host ?? ""}${e.port ? ":" + e.port : ""}`;
   tr.dataset.kind = e.kind; tr.dataset.action = e.action;
   tr.dataset.text = `${dest} ${e.action} ${e.reason}`.toLowerCase();
@@ -104,10 +145,11 @@ function applyLogFilter(tr) {
   tr.classList.toggle("hidden", !!hide);
 }
 async function loadLog(older = false) {
-  const q = older && oldestId ? `?limit=200&before=${oldestId}` : "?limit=200";
+  const q = older && oldestId !== null ? `?limit=200&before=${oldestId}` : "?limit=200";
   const rows = await gw("GET", "/events" + q);
-  if (!older) $("#logBody").innerHTML = "";
-  for (const e of rows) { $("#logBody").appendChild(logRow(e)); oldestId = e.id; }
+  rows.forEach((e) => addLogRow(e, !older));  // "Load older" may grow the table beyond 2000
+  logLoaded = true;
+  if (older && !rows.length) toast("No older events");
 }
 ["#logFilter", "#logHideDns", "#logOnlyBlocked"].forEach((s) => $(s).addEventListener("input", () => $$("#logBody tr").forEach(applyLogFilter)));
 $("#logMore").onclick = guard(() => loadLog(true));
@@ -127,12 +169,20 @@ function parsePort(s) {
   };
   return s.includes(",") ? s.split(",").map(one) : one(s);
 }
-async function loadPolicy() {
+// Editable policy fields remember unsaved edits; a policy event (change elsewhere) leaves them alone.
+const POLICY_FIELDS = ["#defaultAction", "#askTimeout", "#hardDeny", "#rawPolicy"];
+POLICY_FIELDS.forEach((s) => $(s).addEventListener("input", () => ($(s).dataset.dirty = "1")));
+function setField(sel, value, keepEdits) {
+  const el = $(sel);
+  if (keepEdits && el.dataset.dirty) { el.classList.add("stale"); el.title = "Changed elsewhere since you started editing"; return; }
+  el.value = value; delete el.dataset.dirty; el.classList.remove("stale"); el.title = "";
+}
+async function loadPolicy(keepEdits = false) {
   policy = await gw("GET", "/policy");
-  $("#defaultAction").value = policy.default; $("#askTimeout").value = policy.ask_timeout;
+  setField("#defaultAction", policy.default, keepEdits); setField("#askTimeout", policy.ask_timeout, keepEdits);
   $("#hardDenyFloor").textContent = (policy.hard_deny_floor || []).join("  ");
-  $("#hardDeny").value = policy.hard_deny.join("\n");
-  $("#rawPolicy").value = JSON.stringify(policy, null, 2);
+  setField("#hardDeny", policy.hard_deny.join("\n"), keepEdits);
+  setField("#rawPolicy", JSON.stringify(policy, null, 2), keepEdits);
   const body = $("#rulesBody"); body.innerHTML = "";
   policy.rules.forEach((r, i) => {
     const tr = document.createElement("tr");
@@ -151,7 +201,11 @@ $("#saveMode").onclick = guard(() => putPolicy({ ...policy, default: $("#default
 $("#saveHard").onclick = guard(() => {
   return putPolicy({ ...policy, hard_deny: $("#hardDeny").value.split(/\s+/).filter(Boolean) });
 });
-$("#saveRaw").onclick = guard(() => putPolicy(JSON.parse($("#rawPolicy").value)));
+$("#saveRaw").onclick = guard(() => {
+  let p;
+  try { p = JSON.parse($("#rawPolicy").value); } catch (e) { throw new Error(`Invalid JSON: ${e.message}`); }
+  return putPolicy(p);
+});
 $("#nrAdd").onclick = guard(async () => {
   const rule = { action: $("#nrAction").value, [$("#nrKind").value]: $("#nrMatch").value.trim(), port: parsePort($("#nrPort").value) };
   if ($("#nrNote").value) rule.note = $("#nrNote").value;
@@ -178,26 +232,26 @@ function grantTargets(d) {
   return d.targets.map((t) => `<code>${esc(t.scheme)}://${esc(t.host)}:${esc(t.port)}${t.paths && t.paths.join(",") !== "/*" ? esc(" " + t.paths.join(",")) : ""}</code>${t.lan ? ' <span class="tag warn">LAN</span>' : ""}`).join("<br>");
 }
 function renderGrantRequests() {
-  const box = $("#grantReqList"); box.innerHTML = "";
-  $("#grantReqBox").classList.toggle("hidden", !grants.requests.length);
-  for (const r of grants.requests) {
-    const d = grants.defs.find((x) => x.name === r.name) || { targets: [], levels: [], description: "" };
-    const el = document.createElement("div"); el.className = "pending grantreq";
-    el.innerHTML = `<div class="dest">🔑 ${esc(r.name)} <span class="tag ${r.level === "write" ? "warn" : ""}">${esc(r.level)}</span> for ${esc(r.ttl_label)}</div>
-      <div class="meta">${esc(d.description)}</div><div class="meta">${grantTargets(d)}</div>
-      <div class="meta">Agent's reason: <i>${esc(r.reason || "(none given)")}</i></div>
-      <div class="meta"><span class="countdown" data-exp="${Number(r.expires)}"></span></div><div class="btns"></div>`;
-    const btn = (label, decision, cls = "") => {
-      const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls;
-      b.onclick = guard(async () => { await gw("POST", `/grant-requests/${r.id}/decide`, { decision }); await loadGrants(); });
-      $(".btns", el).appendChild(b);
-    };
-    btn(`Approve ${r.level} (${r.ttl_label})`, "approve");
-    if (r.level === "write" && d.levels.includes("read")) btn("Approve read-only", "read", "secondary");
-    btn("Deny", "deny", "danger");
-    box.appendChild(el);
-  }
+  syncCards($("#grantReqList"), grants.requests, grantRequestCard);
+  $("#grantReqBox").classList.toggle("hidden", !$("#grantReqList").children.length);
   updateBadges(); tickCountdowns();
+}
+function grantRequestCard(r) {
+  const d = grants.defs.find((x) => x.name === r.name) || { targets: [], levels: [], description: "" };
+  const el = document.createElement("div"); el.className = "pending grantreq";
+  el.innerHTML = `<div class="dest">🔑 ${esc(r.name)} <span class="tag ${r.level === "write" ? "warn" : ""}">${esc(r.level)}</span> for ${esc(r.ttl_label)}</div>
+    <div class="meta">${esc(d.description)}</div><div class="meta">${grantTargets(d)}</div>
+    <div class="meta">Agent's reason: <i>${esc(r.reason || "(none given)")}</i></div>
+    <div class="meta"><span class="countdown" data-exp="${Number(r.expires)}"></span></div><div class="btns"></div>`;
+  const btn = (label, decision, cls = "") => {
+    const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls;
+    b.onclick = decide(el, async () => { await gw("POST", `/grant-requests/${r.id}/decide`, { decision }); await loadGrants(); });
+    $(".btns", el).appendChild(b);
+  };
+  btn(`Approve ${r.level} (${r.ttl_label})`, "approve");
+  if (r.level === "write" && d.levels.includes("read")) btn("Approve read-only", "read", "secondary");
+  btn("Deny", "deny", "danger");
+  return el;
 }
 function renderGrants() {
   const act = $("#activeGrants"); act.innerHTML = "";
@@ -350,16 +404,31 @@ $$(".wizard [data-term]").forEach((b) => (b.onclick = () => openTerm(b.dataset.t
 $$("pre.copy").forEach((p) => (p.onclick = () => navigator.clipboard.writeText(p.textContent).then(() => toast("Copied"))));
 
 /* ---------------- live stream ---------------- */
+let streamOpened = false;
+// After every (re)connect, reload what may have changed during the gap (sleep, network change, gateway
+// restart): otherwise asks and grant requests from the gap stay invisible until they are auto-denied.
 function connectStream() {
   const es = new EventSource("/api/stream");
-  es.onopen = () => $("#conn").classList.add("ok");
-  es.onerror = () => { $("#conn").classList.remove("ok"); };
+  es.onopen = () => {
+    $("#conn").classList.add("ok"); $("#conn").title = "event stream: connected";
+    if (streamOpened) {
+      loadPending().catch(() => {}); loadGrants().catch(() => {});
+      if (logLoaded) loadLog().catch(() => {});
+    }
+    streamOpened = true;
+  };
+  es.onerror = () => {
+    $("#conn").classList.remove("ok"); $("#conn").title = "event stream: reconnecting";
+    if (es.readyState !== EventSource.CLOSED) return;  // the browser retries by itself
+    // Closed for good (e.g. 401 after the session ended): api() sends us to the login page on 401.
+    setTimeout(() => api("GET", "/api/meta").then(connectStream, connectStream), 3000);
+  };
   es.onmessage = (m) => {
     const ev = JSON.parse(m.data);
-    if (ev.type === "event") { const body = $("#logBody"); body.insertBefore(logRow(ev.event), body.firstChild); while (body.children.length > 2000) body.lastChild.remove(); }
+    if (ev.type === "event") addLogRow(ev.event);
     if (ev.type === "ask" || ev.type === "resolved") loadPending().catch(() => {});
     if (ev.type === "ask" && document.hidden && Notification?.permission === "granted") new Notification("tallygate: approval needed", { body: `${ev.pending.host}:${ev.pending.port}` });
-    if (ev.type === "policy" && !$("#tab-rules").classList.contains("hidden")) loadPolicy().catch(() => {});
+    if (ev.type === "policy" && !$("#tab-rules").classList.contains("hidden")) loadPolicy(true).catch(() => {});
     if (["grant_request", "grant_resolved", "grants"].includes(ev.type)) loadGrants().catch(() => {});
     if (ev.type === "grant_request" && document.hidden && Notification?.permission === "granted") new Notification("tallygate: grant requested", { body: `${ev.request.name} (${ev.request.level})` });
   };

@@ -88,5 +88,7 @@ Used by the bundled web UI; documented for scripting and review.
 | GET (WS) | `/term/{name}/ws` | session + Origin | Filtered relay to the agent's ttyd `name`: browser → `0` input / `1` resize, agent → `0` output only; control adds the ttyd credential |
 
 **CSRF rule:** non-GET requests under `/api/` must carry `X-Tallygate: 1` and, if an `Origin` header is
-present, it must match the host. Session cookies are `HttpOnly`, `SameSite=Strict` and `Secure` (unless
-`COOKIE_SECURE=0`).
+present, it must match the host. Session cookies are `HttpOnly`, `SameSite=Lax` and `Secure` (unless
+`COOKIE_SECURE=0`). `Lax` lets the `PUBLIC_URL` link in a notification open the UI logged in; cross-site
+POSTs still carry no cookie, and the header and Origin checks do not depend on it. API errors are JSON
+`{"error": …}`: 400 for an invalid request body, 502 when the gateway, the agent or GitHub fails.

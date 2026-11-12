@@ -326,7 +326,7 @@ def ttyd_port(tmp_path_factory):
 
 def start_control(tmp: Path, gateway: dict, extra: dict, ttyd_port: int | None = None):
     port = free_port()
-    env = clean_env(
+    defaults = dict(
         GW_URL=f"http://127.0.0.1:{gateway['ports']['api']}",
         GW_API_TOKEN=API_TOKEN,
         CONTROL_BIND_HOST="127.0.0.1",
@@ -339,8 +339,8 @@ def start_control(tmp: Path, gateway: dict, extra: dict, ttyd_port: int | None =
         TTYD_CREDENTIAL=TTYD_CREDENTIAL,
         TERMINALS=f"bash:{ttyd_port or free_port()}",
         PYTHONPATH=ROOT / "control",
-        **extra,
     )
+    env = clean_env(**{**defaults, **extra})  # extra may override any default
     log = open(tmp / f"control-{port}.log", "w")
     proc = subprocess.Popen(
         [sys.executable, "-m", "app.main"], cwd=ROOT / "control", env=env, stdout=log, stderr=subprocess.STDOUT
