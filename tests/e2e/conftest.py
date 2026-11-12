@@ -101,9 +101,13 @@ class Echo(BaseHTTPRequestHandler):
         pass
 
 
-def start_echo(tls: tuple[Path, Path] | None = None, bind: str = "127.0.0.1") -> int:
+class KeepAliveEcho(Echo):
+    protocol_version = "HTTP/1.1"  # keeps the upstream connection open between requests
+
+
+def start_echo(tls: tuple[Path, Path] | None = None, bind: str = "127.0.0.1", handler=Echo) -> int:
     port = free_port()
-    srv = ThreadingHTTPServer((bind, port), Echo)
+    srv = ThreadingHTTPServer((bind, port), handler)
     if tls:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(str(tls[0]), str(tls[1]))
@@ -124,6 +128,7 @@ def upstream(tmp_path_factory):
         "lan": start_echo(bind="127.0.0.2"),
         "http": start_echo(),
         "http2": start_echo(),
+        "keepalive_tls": start_echo(cert, handler=KeepAliveEcho),
         "https": start_echo(cert),
         "cert": cert[0],
         "closed": free_port(),
@@ -135,6 +140,7 @@ def upstream(tmp_path_factory):
 def gateway(tmp_path_factory, upstream):
     if not shutil.which("mitmdump"):
         pytest.skip("mitmproxy not installed (pip install -r gateway/requirements.txt)")
+    pytest.importorskip("aiohttp", reason="the gateway API needs aiohttp (pip install -r gateway/requirements.txt)")
     data = tmp_path_factory.mktemp("gw-data")
     ports = {k: free_port() for k in ("http", "socks", "dns", "api", "svc", "grants")}
     http_t = {"scheme": "http", "port": upstream["http"]}
@@ -294,6 +300,7 @@ def make_gateway(tmp_path, upstream):
 # ------------------------------------------------------------------ control
 @pytest.fixture(scope="session")
 def mockbots():
+    pytest.importorskip("aiohttp", reason="the mock bot APIs need aiohttp (pip install -r control/requirements.txt)")
     from .mockbots import MockBots
 
     m = MockBots()
@@ -320,8 +327,9 @@ def ttyd_port(tmp_path_factory):
 
 
 def start_control(tmp: Path, gateway: dict, extra: dict, ttyd_port: int | None = None):
+    pytest.importorskip("aiohttp", reason="control needs aiohttp (pip install -r control/requirements.txt)")
     port = free_port()
-    env = clean_env(
+    defaults = dict(
         GW_URL=f"http://127.0.0.1:{gateway['ports']['api']}",
         GW_API_TOKEN=API_TOKEN,
         CONTROL_BIND_HOST="127.0.0.1",
@@ -334,8 +342,8 @@ def start_control(tmp: Path, gateway: dict, extra: dict, ttyd_port: int | None =
         TTYD_CREDENTIAL=TTYD_CREDENTIAL,
         TERMINALS=f"bash:{ttyd_port or free_port()}",
         PYTHONPATH=ROOT / "control",
-        **extra,
     )
+    env = clean_env(**{**defaults, **extra})  # extra may override any default
     log = open(tmp / f"control-{port}.log", "w")
     proc = subprocess.Popen(
         [sys.executable, "-m", "app.main"], cwd=ROOT / "control", env=env, stdout=log, stderr=subprocess.STDOUT
