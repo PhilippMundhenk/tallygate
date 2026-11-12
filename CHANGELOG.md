@@ -29,6 +29,13 @@ All notable changes to this project are documented here. The format follows
 - Grants defined in the UI or API can no longer use `inject` or `tls_verify: false` (config-file grants
   only): a UI session could send stored secrets to any host. Such UI grants saved earlier are ignored at
   startup ([#12](https://github.com/PhilippMundhenk/tallygate/issues/12)).
+- Rules reject null or non-integer ports (they matched every port; the UI produced them from typos such as
+  `443,` or `https`), and IPv4-mapped IPv6 literals are matched like IPv4 by rules and approvals
+  ([#13](https://github.com/PhilippMundhenk/tallygate/issues/13)).
+- Grant enforcement: plain HTTP to an `https` grant target is refused instead of skipping the per-request
+  checks; LAN grants also work while a rule (e.g. the `open` preset) allows the name; re-approving a grant
+  keeps its id, so open connections survive; agent credentials are stripped on inject hosts reached
+  through a grant ([#14](https://github.com/PhilippMundhenk/tallygate/issues/14)).
 ### Added
 - **Docker Compose with prebuilt images is the recommended installation.** Multi-arch images
   (`linux/amd64`, `linux/arm64`) `ghcr.io/philippmundhenk/tallygate-{gateway,control,agent}` are published
@@ -65,6 +72,39 @@ All notable changes to this project are documented here. The format follows
 - `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
 
 ### Security
+- A `CONTROL_PASSWORD_HASH` that is not an scrypt hash refuses every login instead of falling back to
+  `CONTROL_PASSWORD` (#27).
+
+### Fixed
+- e2e tests skip instead of erroring without aiohttp, and cover password hash formats, idle and absolute
+  session expiry, dropped console frames, grant deny and revoke through Telegram and Matrix (#27).
+### Fixed
+- Web UI (#23):
+  - Log tab: history loads even after live events arrived; "Load older" no longer duplicates rows.
+  - After an event-stream reconnect, pending asks and grant requests from the gap are reloaded; a stream
+    closed by an ended session leads to the login page.
+  - Rules tab: a policy change elsewhere no longer overwrites unsaved edits (the field is marked instead).
+  - Console: UTF-8 split across frames is no longer garbled; pastes over 64 KiB no longer kill the console;
+    reconnecting after the session ended shows "session expired" instead of looping.
+  - Approval and grant cards do not move under the cursor when another one goes away, and their buttons are
+    disabled while a decision is sent.
+  - The session cookie is `SameSite=Lax`, so links in Telegram/Matrix messages arrive logged in.
+  - Invalid JSON, non-JSON gateway replies and an unreachable GitHub return `{"error": …}` with 400/502.
+- Accessibility and mobile layout (#24): tables scroll inside their own container, rows wrap on phones, tabs
+  are ARIA tabs (arrow keys work), the toast is a live region, the connection state is shown in words, and
+  every input has a label. Browser notifications are enabled with a button in Setup (browsers ignore a
+  permission request without a user gesture).
+- Notifications: Telegram and Matrix are sent concurrently and fail independently, so an outage of one no
+  longer hides prompts on the other. A queue decouples delivery from the gateway event stream, and chat API
+  calls time out after 15 s (#22).
+### Security
+- The event stream and the web console end within 10 s of logout or session expiry, and console input is
+  checked before it reaches the agent (#21).
+- Login flood: bodies over 4 KiB are refused unread (413), more than 5 queued password checks get 429 at once,
+  and the per-address failure limit is re-checked and recorded inside the password lock (#20).
+- `TRUST_PROXY_SECRET`: forwarded and auth headers are believed only when the proxy also sends the
+  shared secret in `X-Tallygate-Proxy-Secret`. The docs describe the safe proxy-auth setup (proxy container
+  on `mgmt` with a fixed address, nothing else published) (#19).
 - The agent could reach services on the Docker host that listen on all interfaces through the host's
   address on `agent-net` (`172.31.10.1`), bypassing the gateway. `agent-net` and `control-net` no longer
   give the host an address (`com.docker.network.bridge.inhibit_ipv4`), and `bypass.sh` checks it with a
@@ -78,6 +118,12 @@ secrets in `.env` keep working. If you changed `config/gateway.yaml`, mount it a
 published images with `docker compose pull && docker compose up -d`.
 Recreate the networks so the new network option takes effect: `docker compose down && docker compose up -d`
 (compose warns that the network configuration changed).
+
+### Fixed
+- Gateway robustness: "repeated N×" counts are no longer lost when a new event replaces an unflushed one;
+  re-applying a preset with a TTL keeps its permanent rules permanent; policy, UI grants and secrets are
+  fsynced before the atomic rename; per-connection state is released when an upstream connect fails
+  ([#15](https://github.com/PhilippMundhenk/tallygate/issues/15)).
 
 ## [0.3.0] - 2026-11-11
 
