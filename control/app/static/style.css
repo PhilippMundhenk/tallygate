@@ -77,3 +77,8 @@ label.filebtn input{position:absolute;opacity:0;width:1px;height:1px}label.fileb
 th button.sort{background:none;color:inherit;padding:0;font:inherit;font-size:12px}th[aria-sort=ascending] button.sort::after{content:" ▲"}th[aria-sort=descending] button.sort::after{content:" ▼"}
 .suggest{border:1px solid var(--blue);border-radius:8px;padding:8px 12px;margin:8px 0}.suggest p{margin:0 0 6px}
 ul.checklist{list-style:none;padding:0;margin:6px 0 10px}ul.checklist label{display:flex;gap:6px;align-items:baseline;margin:3px 0;color:var(--fg);overflow-wrap:anywhere}
+/* log search (#80) */
+.search-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px 12px;align-items:end}
+.search-grid label{margin:0}.search-grid input,.search-grid select{width:100%}.search-grid .btns{grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap}
+button.link{background:none;color:var(--fg);padding:0;font:12px ui-monospace,monospace;text-decoration:underline dotted;text-align:left;overflow-wrap:anywhere}
+#lsSaved{margin-bottom:8px}#lsDest h4{margin:0}

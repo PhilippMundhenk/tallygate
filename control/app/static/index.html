@@ -47,6 +47,7 @@
 
   <!-- LOG -->
   <section id="tab-log" role="tabpanel" aria-labelledby="tabbtn-log" class="hidden">
+    <details class="card" id="searchCard"><summary>Search, time ranges and export</summary><div id="searchBox"></div></details>
     <div class="toolbar">
       <input id="logFilter" type="search" aria-label="Filter log" placeholder="filter host / action / reason">
       <label><input type="checkbox" id="logHideDns"> hide DNS</label>
@@ -257,4 +258,5 @@ git config --global user.email "id+user@users.noreply.github.com"</pre>
 <script src="/static/app.js"></script>
 <script src="/static/history.js"></script>
 <script src="/static/usage.js"></script>
+<script src="/static/logsearch.js"></script>
 </body></html>

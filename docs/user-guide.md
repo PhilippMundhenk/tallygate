@@ -56,6 +56,25 @@ Live view of every decision: connections (`conn`), approval requests (`ask`), bl
 admin changes. Filter by text, hide DNS noise, or show only blocked entries. The **allow / deny** buttons
 create a rule for exactly that host:port.
 
+### Search, time ranges and export
+
+The live view filters only the rows it has loaded. **Search, time ranges and export** (above the table)
+searches the whole event log on the gateway, which keeps `log_keep_days` (30) days:
+
+- **Show** *events*, *destinations* (every host:port with its number of events, allowed, denied and asked,
+  first seen and last seen) or *new destinations* (first seen inside the time range).
+- **Host**: an exact name or IP, or `*.example.com` for the domain and all its subdomains. **Kind** and
+  **Action** narrow it further, **Text** searches host, action and reason.
+- **Time**: the last hour, 24 hours, today, 7 or 30 days, everything, or a custom range.
+- **Filters**: one click for *Denied today*, *New destinations (24 h)*, *Approvals asked (7 days)* and
+  *Admin changes (7 days)*. *Save filter* keeps the current one in this browser (under the text or host you
+  searched for); ✕ deletes it.
+- **A destination** (click it) shows what the policy decides for it now and which rule decides, its counts
+  and its latest events. The decision is made on the name, without resolving it: the hard deny on the
+  resolved address still applies when the agent connects.
+- **Export CSV / JSON** downloads every matching row (up to 50,000 events) for an audit. Cells that a
+  spreadsheet would run as a formula are prefixed with `'`.
+
 ## Rules
 
 ![Rules](images/rules.png)

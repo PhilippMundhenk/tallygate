@@ -39,6 +39,7 @@ class EventLog:
                 host TEXT, port INTEGER, ips TEXT, action TEXT, reason TEXT, extra TEXT)"""
         )
         self.db.execute("CREATE INDEX IF NOT EXISTS events_ts ON events(ts)")
+        self.db.execute("CREATE INDEX IF NOT EXISTS events_host ON events(host, port)")  # log search (#80)
         # per-rule hit counters (flushed from memory by housekeeping) and approvals, for suggestions (#70)
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS rule_hits(rule_id TEXT PRIMARY KEY, hits INTEGER NOT NULL, last REAL, since REAL NOT NULL)"
@@ -124,9 +125,11 @@ class EventLog:
         if row and row[0] and row[0] > self.max_events:
             self.db.execute("DELETE FROM events WHERE id <= ?", (row[0] - self.max_events,))
 
-    def recent(self, limit: int = 200, before_id: int | None = None, q: str | None = None) -> list[dict]:
+    def recent(self, limit: int = 200, before_id: int | None = None, q: str | None = None, **filters) -> list[dict]:
+        """Newest first. Filters (#80): host (exact, or `*.domain` for the domain and its subdomains), port,
+        kind and action (one value or a list), since/until (unix time, until exclusive)."""
         sql = "SELECT id,ts,kind,proto,client,host,port,ips,action,reason,extra FROM events"
-        cond, args = [], []
+        cond, args = _filters(**filters)
         if before_id:
             cond.append("id < ?")
             args.append(before_id)
@@ -155,6 +158,76 @@ class EventLog:
                 }
             )
         return out
+
+    def destinations(self, limit: int = 200, only_new: bool = False, q: str | None = None, **filters) -> list[dict]:
+        """Connection destinations (host:port) in the time range with counts, most recent first. `first_seen` is
+        the first event for it in the whole log; `new` = first seen inside the range."""
+        cond, args = _filters(**filters)
+        cond += ["kind IN ('conn', 'ask')", "host IS NOT NULL"]
+        if q:
+            cond.append("host LIKE ?")
+            args.append(f"%{q}%")
+        sql = (  # fixed SQL: the conditions come from _filters, every value is bound
+            "SELECT host, port, COUNT(*), MIN(ts), MAX(ts), SUM(action = 'allow'), SUM(action = 'deny'),"  # noqa: S608
+            " SUM(kind = 'ask'), (SELECT MIN(e2.ts) FROM events e2 WHERE e2.host = events.host"
+            " AND e2.port IS events.port AND e2.kind IN ('conn', 'ask')) AS first_seen"
+            f" FROM events WHERE {' AND '.join(cond)} GROUP BY host, port"
+        )
+        since = filters.get("since")
+        if only_new and since:
+            sql += " HAVING first_seen >= ?"
+            args.append(since)
+        sql += " ORDER BY MAX(ts) DESC LIMIT ?"
+        args.append(max(1, min(int(limit), 2000)))
+        out = []
+        for host, port, n, first, last, allowed, denied, asked, first_seen in self.db.execute(sql, args):
+            out.append(
+                {
+                    "host": host,
+                    "port": port,
+                    "events": n,
+                    "first": first,
+                    "last": last,
+                    "allowed": allowed,
+                    "denied": denied,
+                    "asked": asked,
+                    "first_seen": first_seen,
+                    "new": bool(since) and first_seen >= since,
+                }
+            )
+        return out
+
+
+EVENT_KINDS = ("conn", "ask", "dns", "admin", "grant")
+
+
+def _filters(host=None, port=None, kind=None, action=None, since=None, until=None) -> tuple[list[str], list]:
+    """WHERE conditions for the log search. Values are bound, never formatted into the SQL."""
+    cond, args = [], []
+    if host:
+        host = host.lower().rstrip(".")
+        if host.startswith("*."):
+            base = host[2:]
+            cond.append("(host = ? OR host LIKE ? ESCAPE '\\')")
+            args += [base, "%." + base.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")]
+        else:
+            cond.append("host = ?")
+            args.append(host)
+    if port is not None:
+        cond.append("port = ?")
+        args.append(int(port))
+    for col, val in (("kind", kind), ("action", action)):
+        vals = [val] if isinstance(val, str) else list(val or [])
+        if vals:
+            cond.append(f"{col} IN ({','.join('?' * len(vals))})")
+            args += vals
+    if since is not None:
+        cond.append("ts >= ?")
+        args.append(float(since))
+    if until is not None:
+        cond.append("ts < ?")
+        args.append(float(until))
+    return cond, args
 
 
 class Secrets:

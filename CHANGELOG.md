@@ -77,6 +77,9 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - **Rule usage:** hit counters and the last match per rule, sortable and filterable in the Rules tab; permanent
   rules that did not match for `rule_stale_days` are offered for removal, and destinations you keep approving
   for a limited time are offered as a permanent rule (#70).
+- **Log search:** server-side search of the event log by host (`*.domain` too), kind, action and time range,
+  saved filters, a destinations view with new destinations, a page per destination with the rule that decides
+  it, and CSV or JSON export (#80).
 
 ### Changed
 - **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie

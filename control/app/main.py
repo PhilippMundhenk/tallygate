@@ -81,6 +81,8 @@ GW_ALLOW = [
     ("GET", r"/pending"),
     ("POST", r"/pending/[a-f0-9]+/decide"),
     ("GET", r"/events"),
+    ("GET", r"/destinations"),
+    ("GET", r"/destinations/detail"),
     ("POST", r"/test"),
     ("GET", r"/presets"),
     ("POST", r"/presets/[A-Za-z_][A-Za-z0-9_]*"),

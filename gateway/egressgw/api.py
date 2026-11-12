@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import hmac
 import json
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -202,8 +203,38 @@ def build_app(gw: Gateway) -> web.Application:
     @routes.get("/events")
     async def events(request):
         q = request.query
+        before = int(q["before"]) if q.get("before") else None
+        return _json(gw.events.recent(int(q.get("limit", 200)), before, q.get("q"), **_search(q)))
+
+    @routes.get("/destinations")
+    async def destinations(request):
+        """Destinations (host:port) seen in a time range, with counts; `new=1` only those first seen in it."""
+        q = request.query
+        f = _search(q)
+        for k in ("host", "port", "kind", "action"):  # a destination list is filtered by time and text only
+            f.pop(k, None)
+        rows = gw.events.destinations(int(q.get("limit", 200)), q.get("new") == "1", q.get("q"), **f)
+        return _json(rows)
+
+    @routes.get("/destinations/detail")
+    async def destination(request):
+        """One destination: counts, what the policy decides for it now (on the name, without resolving it),
+        and its latest events."""
+        q = request.query
+        host, port = str(q.get("host", "")).lower().rstrip("."), int(q.get("port", 443))
+        if not (is_ip(host) or valid_hostname(host)):
+            raise ValueError("host must be a host name or an IP address")
+        stats = gw.events.destinations(1, host=host, port=port)
+        d = gw.policy.evaluate(host, port, [host]) if is_ip(host) else gw.policy.evaluate_name(host, port)
+        rule = next((r.to_dict() for r in gw.policy.rules if r.id == d.rule_id), None)
         return _json(
-            gw.events.recent(int(q.get("limit", 200)), int(q["before"]) if q.get("before") else None, q.get("q"))
+            {
+                "host": host,
+                "port": port,
+                "stats": stats[0] if stats else None,
+                "decision": {"action": d.action, "reason": d.reason, "rule_id": d.rule_id, "rule": rule},
+                "events": gw.events.recent(int(q.get("limit", 100)), host=host, port=port),
+            }
         )
 
     @routes.get("/stream")
@@ -456,6 +487,34 @@ def build_app(gw: Gateway) -> web.Application:
     app = web.Application(middlewares=[auth], client_max_size=1024 * 1024)
     app.add_routes(routes)
     return app
+
+
+def _search(q) -> dict:
+    """Validated log search filters from a query string (#80)."""
+    from egressgw.store import EVENT_KINDS
+
+    f: dict = {}
+    if q.get("host"):
+        host = q["host"].strip().lower()
+        if len(host) > 255 or not re.fullmatch(r"(\*\.)?[a-z0-9_.:\[\]-]+", host):
+            raise ValueError("host: an exact name or IP, or *.domain")
+        f["host"] = host
+    if q.get("port"):
+        f["port"] = int(q["port"])
+    if q.get("kind"):
+        kinds = q["kind"].split(",")
+        if not set(kinds) <= set(EVENT_KINDS):
+            raise ValueError(f"kind must be one of {list(EVENT_KINDS)}")
+        f["kind"] = kinds
+    if q.get("action"):
+        actions = q["action"].split(",")
+        if not all(re.fullmatch(r"[a-z+-]{1,32}", a) for a in actions):
+            raise ValueError("action: e.g. allow, deny, ask")
+        f["action"] = actions
+    for k in ("since", "until"):
+        if q.get(k):
+            f[k] = float(q[k])
+    return f
 
 
 def _by(request: web.Request) -> str:
