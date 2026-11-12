@@ -26,6 +26,18 @@
     </div>
     <h2>Pending connection requests</h2>
     <p class="hint">Connections are held until you decide or the timeout passes (then denied). Hard-denied targets (LAN etc.) never appear here.</p>
+    <details class="help"><summary>Which button should I use?</summary>
+      <ul>
+        <li><b>Allow 2 min</b>: one operation (an install, a clone). Follow-up connections in that time are covered.</li>
+        <li><b>Allow 1 h</b>: a working session with this host.</li>
+        <li><b>Always (host)</b>: a permanent rule for exactly this host and port.</li>
+        <li><b>Always (*.domain)</b>: the domain and every subdomain, e.g. all of <code>*.githubusercontent.com</code>.
+          Check the domain line first: <code>github.com.evil.example</code> belongs to <code>evil.example</code>.</li>
+        <li><b>Deny</b>: refuse now; the agent may ask again later. <b>Block forever</b>: a permanent deny rule, no more prompts.</li>
+      </ul>
+      <p>Every decision becomes a normal rule you can review or delete under <i>Rules</i>.
+        <a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#approvals" target="_blank" rel="noopener">More</a></p>
+    </details>
     <div id="pendingList"></div>
     <p id="pendingEmpty" class="muted">Nothing waiting. 🎉</p>
   </section>
@@ -85,6 +97,7 @@
       </div>
       <div class="card">
         <h3>Test a destination</h3>
+        <p class="hint">Dry run: what would happen if the agent connected now? Shows the decision and what made it.</p>
         <div class="row"><input id="testHost" aria-label="Host or IP to test" placeholder="host or IP"><input id="testPort" type="number" value="443" class="port" aria-label="Port"><button id="testBtn">Test</button></div>
         <pre id="testOut" class="muted"></pre>
       </div>
@@ -100,13 +113,29 @@
         <input id="nrTtl" type="number" aria-label="TTL in seconds (optional)" placeholder="TTL s" class="port">
         <button id="nrAdd">Add (top)</button>
       </div>
-      <p class="hint">First match wins. <code>*.example.com</code> matches example.com and all subdomains. CIDR allow rules require <i>all</i> resolved IPs inside.</p>
+      <dl class="fieldhelp">
+        <dt>Action</dt><dd><code>allow</code> lets it through, <code>deny</code> refuses without asking, <code>ask</code> holds it and asks you.</dd>
+        <dt>Host</dt><dd>An exact name (<code>pypi.org</code>), a domain with all subdomains (<code>*.github.com</code>, also matches <code>github.com</code>), or <code>*</code> for every host.</dd>
+        <dt>CIDR</dt><dd>An IP range such as <code>203.0.113.0/24</code>. <code>allow</code>/<code>ask</code> cover connections <i>to IPs</i> only, never names that resolve into the range; <code>deny</code> covers both.</dd>
+        <dt>Ports</dt><dd><code>443</code>, <code>80,443</code>, a range <code>8000-8100</code>, or <code>*</code> / empty for all ports.</dd>
+        <dt>TTL</dt><dd>Seconds until the rule expires, e.g. <code>3600</code>; empty = permanent.</dd>
+      </dl>
+      <details class="help"><summary>How are rules applied?</summary>
+        <p>The first matching rule from the top decides; new rules are added at the top. Before any rule, the
+          <b>hard deny</b> refuses the local network, the Docker host and cloud metadata, and no rule can change that.
+          Names are decided before they are resolved, so a denied name never reaches DNS. When no rule matches, the
+          mode decides (<i>ask</i>, <i>deny</i> or <i>allow</i>). Use <i>Test a destination</i> to see what a rule does.</p>
+        <p>Examples: <code>allow *.npmjs.org 443</code> &middot; <code>deny telemetry.example.org *</code> &middot;
+          <code>ask *.pastebin.com *</code> &middot; <code>allow 203.0.113.10/32 22</code>.
+          <a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/rules.md" target="_blank" rel="noopener">Rules by example</a></p>
+      </details>
     </div>
     <div class="table-wrap"><table class="rules"><thead><tr><th>#</th><th>Action</th><th>Match</th><th>Port</th><th>Note</th><th>Expires</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="rulesBody"></tbody></table></div>
     <details class="card"><summary>Hard deny (never reachable, never asked)</summary>
       <p class="hint">Floor (read-only): the built-in list plus <code>hard_deny_floor</code> from the gateway config file:</p>
       <p><code id="hardDenyFloor" class="muted"></code></p>
-      <p class="hint" id="hardDenyHint">Additional CIDRs (one per line), e.g. your Docker host's public IP:</p>
+      <p class="hint" id="hardDenyHint">Additional CIDRs (one per line), e.g. your Docker host's public IP
+        <code>203.0.113.7/32</code> or a provider range <code>198.51.100.0/24</code>. These can only add to the floor.</p>
       <textarea id="hardDeny" rows="5" aria-labelledby="hardDenyHint"></textarea><button id="saveHard">Save additional hard deny</button></details>
     <details class="card"><summary>Advanced: raw policy JSON</summary>
       <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><button id="saveRaw">Replace policy</button></details>
@@ -128,8 +157,11 @@
     <div id="grantEditor" class="card hidden">
       <h3 id="geTitle">New grant</h3>
       <div class="grid2">
-        <label>Name <input id="geName" placeholder="homeassistant" pattern="[a-z0-9][a-z0-9_-]{0,47}"></label>
-        <label>Description <input id="geDesc" placeholder="Home Assistant REST API"></label>
+        <label>Name <input id="geName" placeholder="homeassistant" pattern="[a-z0-9][a-z0-9_-]{0,47}">
+          <small>Lower case, digits, <code>-</code> and <code>_</code>. The agent requests it by this name:
+          <code>tallygate request homeassistant</code>.</small></label>
+        <label>Description <input id="geDesc" placeholder="Home Assistant REST API">
+          <small>Shown to you in every request.</small></label>
       </div>
       <div class="grid4">
         <label class="check"><input type="checkbox" id="geRead" checked> read level</label>
@@ -139,10 +171,26 @@
         <label>default duration <input id="geTtl" value="1h"></label>
         <label>max duration <input id="geMaxTtl" value="4h"></label>
       </div>
+      <p class="hint"><b>read</b> allows only GET, HEAD and OPTIONS (no uploads, no WebSockets); <b>write</b> allows
+        everything. <b>ask</b> means you approve each request; <b>auto</b> grants it without asking (sensible for read
+        on harmless APIs). Durations: <code>30m</code>, <code>2h</code>, <code>1d</code>; the agent may ask for less, never more than the maximum.</p>
       <h4>Targets</h4>
       <p class="hint">https/http targets are inspected per request (method, path, Host). tcp passes raw traffic (write level only).
         <b>LAN</b> exempts exactly this target from the hard deny (UI grants only within <code id="geLanAllow">–</code>).
         Self-signed certificate? Pin its SHA-256 fingerprint instead of disabling verification.</p>
+      <details class="help"><summary>Target examples</summary>
+        <ul>
+          <li>Home Assistant API, read-only: <code>http</code> &middot; <code>ha.lan</code> &middot; <code>8123</code> &middot; paths <code>/api/*</code> &middot; LAN</li>
+          <li>Proxmox with a self-signed cert: <code>https</code> &middot; <code>pve.lan</code> &middot; <code>8006</code> &middot; paths <code>/api2/json/*</code> &middot; LAN &middot; fingerprint from
+            <code>openssl s_client -connect pve.lan:8006 &lt;/dev/null | openssl x509 -noout -fingerprint -sha256</code></li>
+          <li>SSH to one machine: <code>tcp</code> &middot; <code>nas.lan</code> &middot; <code>22</code> &middot; LAN (tcp needs the write level)</li>
+          <li>A public API, only some paths: <code>https</code> &middot; <code>api.example.com</code> &middot; <code>443</code> &middot; paths <code>/v1/items/*, /v1/search</code></li>
+        </ul>
+        <p>Paths are globs: <code>*</code> matches any characters including <code>/</code>, so <code>/api/*</code> covers
+          <code>/api/states</code> and <code>/api/states/light.kitchen</code>; the query string is not part of the path. Several patterns are comma-separated.
+          <i>fixed IP</i> pins the address instead of resolving the name.
+          <a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/grants.md" target="_blank" rel="noopener">Grants guide</a></p>
+      </details>
       <div id="geTargets"></div>
       <button id="geAddTarget" class="small secondary">+ target</button>
       <p class="hint">Credential injection and disabling TLS verification are only available for grants in the

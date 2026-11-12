@@ -120,7 +120,8 @@ Details: [docs/operations.md#from-source](docs/operations.md#from-source)
 | [Threat model](docs/threat-model.md) | What's protected, how, and what isn't |
 | [Operations](docs/operations.md) | Install, upgrade, backup, troubleshooting |
 | [User guide](docs/user-guide.md) | UI, approvals, Telegram/Matrix, rule cookbook |
-| [Configuration](docs/configuration.md) | All settings |
+| [Rules by example](docs/rules.md) | How a connection is decided, with worked examples |
+| [Configuration](docs/configuration.md) | All settings, with examples |
 | [API](docs/api.md) | Gateway and control interfaces |
 | [Development](docs/development.md) | Layout, tests, contributing |
 | [Related work](docs/related-work.md) | Comparison with other sandboxes |

@@ -37,6 +37,10 @@ All notable changes to this project are documented here. The format follows
   keeps its id, so open connections survive; agent credentials are stripped on inject hosts reached
   through a grant ([#14](https://github.com/PhilippMundhenk/tallygate/issues/14)).
 ### Added
+- **Help and examples**: `docs/rules.md` (how a connection is decided, ~20 worked examples), an example for
+  every setting in the configuration reference and in `config/gateway.yaml`; in the UI, field help for rules
+  and grants, expandable explanations with examples, *Test a destination* explains which rule or check
+  decided, and host/CIDR typos are refused with a valid example (#35).
 - **Quick actions** in the Rules tab: allow the web or all ports for 15 min / 1 h, switch what happens with
   unknown destinations, an emergency stop, a guided path to a local-network grant, and **templates** for
   Python, Node.js, Go, Rust, Debian/Ubuntu apt, container registries and Hugging Face. Preset rules are

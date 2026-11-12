@@ -1,6 +1,6 @@
 # egress-gw static configuration. Built into the gateway image as /etc/egressgw/config.yaml ($GW_CONFIG);
 # to change it, save a copy next to compose.yaml and mount it over that path (see docs/configuration.md).
-initial_preset: baseline   # used only when /data/policy.yaml does not exist yet
+initial_preset: baseline   # used only when /data/policy.yaml does not exist yet; e.g. lockdown for a strict start
 log_keep_days: 30
 log_max_events: 500000     # hard cap on stored events (disk-fill protection)
 max_pending: 10            # at most this many approvals open at once; more are denied immediately
@@ -44,7 +44,12 @@ services: []
 #    allow_private: false      # true = exempt this exact target from hard_deny (e.g. a LAN host)
 
 # Grants: named, time-limited access the agent can request and you approve (docs/grants.md).
-# grants_lan_allow: [192.168.1.0/24]   # LAN ranges that grants defined in the UI may reach
+# grants_lan_allow: [192.168.1.0/24]   # LAN ranges that grants defined in the UI may reach (default: none)
+# grants_never: [127.0.0.0/8, 169.254.0.0/16]   # never reachable through any grant (default: loopback,
+#                                              # link-local, multicast, unspecified)
+# grant_request_timeout: 300          # seconds a grant request waits for your decision
+# grant_max_pending: 3                # open grant requests at once
+# grant_api_rate: 30                  # requests per minute the agent may send to the grant API
 # grants:
 #   homeassistant:
 #     description: Home Assistant REST API
