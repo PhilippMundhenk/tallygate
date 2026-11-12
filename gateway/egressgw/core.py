@@ -95,6 +95,18 @@ def fail_closed(hook):
     return wrapper
 
 
+def _body_buffered(req: http.Request) -> bool:
+    """True if mitmproxy reads this request's whole body before forwarding it, so that a 403 can be sent
+    instead. Bodies over stream_large_bodies (already marked `stream`) and bodies of unknown size (chunked,
+    HTTP/2 without Content-Length) may be streamed upstream before the `request` hook."""
+    if req.stream or "transfer-encoding" in req.headers:
+        return False
+    length = req.headers.get("content-length")
+    if length is None:
+        return req.http_version.startswith("HTTP/1")  # HTTP/1 without either header has no body
+    return length.strip().isdigit()
+
+
 @dataclass
 class Pending:
     host: str
@@ -642,50 +654,37 @@ class Gateway:
             reason=reason,
         )
 
-    def _grant_request(self, flow: http.HTTPFlow) -> bool:
-        """Enforce an active grant on an HTTP request. Returns True if the request was handled."""
+    def _grant_binding(self, flow: http.HTTPFlow) -> tuple[str, str, Target] | None:
+        """(active grant id, granted host, target) if this request belongs to a grant, else None."""
         b = self.conn_grant.get(flow.server_conn.id)
         if b is None and flow.request.scheme == "http" and not self.orig_host.get(flow.server_conn.id):
-            # plain-HTTP proxy request: this hook runs before the server connection exists. Any scheme:
+            # plain-HTTP proxy request: these hooks run before the server connection exists. Any scheme:
             # plain HTTP to an https target must be refused here, not slip through to the normal path.
             m = self._grant_match(flow.request.host.lower().rstrip("."), flow.request.port)
             if m:
                 b = (m[0].id, flow.request.host.lower().rstrip("."), m[2])
-        if b is None:
-            return False
+        return b
+
+    def _grant_checks(self, flow: http.HTTPFlow, b: tuple[str, str, Target]) -> str | None:
+        """Enforce an active grant on an HTTP request. Returns the reason to refuse it, or None."""
         aid, host, t = b
         if t.scheme == "tcp":
-            return True  # tcp grants pass traffic through untouched (mitmproxy may still parse HTTP)
+            return None  # tcp grants pass traffic through untouched (mitmproxy may still parse HTTP)
         a = self.grants.active.get(aid)
         g: GrantDef | None = self.grants.defs.get(a.name) if a else None
         req = flow.request
-        client = flow.client_conn.peername[0] if flow.client_conn.peername else "?"
-
-        def refuse(why: str) -> bool:
-            flow.response = http.Response.make(403, f"egress policy: {why}\n".encode(), {"Content-Type": "text/plain"})
-            self.record(
-                kind="conn",
-                proto="http",
-                client=client,
-                host=host,
-                port=t.port,
-                action="deny",
-                reason=f"{why}: {req.method} {req.path[:120]}",
-            )
-            return True
-
         if a is None or g is None or a.expires <= time.time():
-            return refuse("grant expired or revoked")
+            return "grant expired or revoked"
         if t.scheme == "https" and req.scheme != "https":
-            return refuse("plain HTTP to an https grant target")
+            return "plain HTTP to an https grant target"
         if req.pretty_host.lower().rstrip(".") != host:
-            return refuse("Host header does not match the granted target")
+            return "Host header does not match the granted target"
         if not path_ok(req.path, t.paths):
-            return refuse(f"path not covered by grant {g.name}")
+            return f"path not covered by grant {g.name}"
         if a.level == "read" and (
             req.method.upper() not in READ_METHODS or "upgrade" in req.headers.get("connection", "").lower()
         ):
-            return refuse(f"grant {g.name} is read-only")
+            return f"grant {g.name} is read-only"
         rules = [i for i in g.inject if i["host"] == host and t.scheme == "https"]
         if rules or host in self.inject_hosts:  # never forward the agent's own credentials to these hosts
             own = [i.get("header", "Authorization") for i in self.inject if i["host"].lower().rstrip(".") == host]
@@ -695,29 +694,14 @@ class Gateway:
                 value = render(i["value"], self.secrets)
                 if value is not None:
                     req.headers[i["header"]] = value
-        return True
+        return None
 
-    @fail_closed
-    def request(self, flow: http.HTTPFlow) -> None:
-        if self._grant_request(flow):
-            return
-        # The real destination: the connection's checked target (TLS) or the absolute-form URL host
-        # (plain HTTP proxy requests, whose server connection is opened after this hook).
-        target = (self.orig_host.get(flow.server_conn.id) or flow.request.host or "").lower().rstrip(".")
+    def _host_checks(self, flow: http.HTTPFlow, target: str) -> str | None:
+        """Read-only hosts and credential injection. Returns the reason to refuse the request, or None."""
         if target in self.readonly_hosts and flow.request.method.upper() in WRITE_METHODS:
-            flow.response = http.Response.make(403, b"egress policy: read-only host\n", {"Content-Type": "text/plain"})
-            self.record(
-                kind="conn",
-                proto="http",
-                client=flow.client_conn.peername[0] if flow.client_conn.peername else "?",
-                host=target,
-                port=flow.request.port,
-                action="deny",
-                reason=f"read-only host: {flow.request.method} refused",
-            )
-            return
+            return "read-only host"
         if target not in self.inject_hosts:
-            return
+            return None
         # Never forward the agent's own credentials to an injection host: otherwise it could act as
         # (and exfiltrate to) an account of its choosing, e.g. when no secret is configured yet.
         for rule in self.inject:
@@ -727,13 +711,60 @@ class Gateway:
             flow.request.headers.pop(name, None)
         host = flow.request.pretty_host.lower().rstrip(".")
         if flow.request.scheme != "https" or host != target:
-            return  # inject only over TLS and only if Host/:authority matches the checked target
+            return None  # inject only over TLS and only if Host/:authority matches the checked target
         for rule in self.inject:
             if rule["host"].lower().rstrip(".") != target:
                 continue
             value = render(rule["value"], self.secrets)
             if value is not None:  # secret not configured: request goes out without credentials
                 flow.request.headers[rule.get("header", "Authorization")] = value
+        return None
+
+    def _checks(self, flow: http.HTTPFlow) -> tuple[str, int, str] | None:
+        """All per-request checks; strips/injects credentials. Returns (host, port, reason) to refuse, or None."""
+        b = self._grant_binding(flow)
+        if b is not None:
+            why = self._grant_checks(flow, b)
+            return (b[1], b[2].port, why) if why else None
+        # The real destination: the connection's checked target (TLS) or the absolute-form URL host
+        # (plain HTTP proxy requests, whose server connection is opened after these hooks).
+        target = (self.orig_host.get(flow.server_conn.id) or flow.request.host or "").lower().rstrip(".")
+        why = self._host_checks(flow, target)
+        return (target, flow.request.port, why) if why else None
+
+    def _enforce(self, flow: http.HTTPFlow, early: bool) -> None:
+        refusal = self._checks(flow)
+        if refusal is None:
+            return
+        host, port, why = refusal
+        req = flow.request
+        if req.stream or (early and not _body_buffered(req)):
+            # A response cannot replace a streamed body: mitmproxy refuses to combine the two, and a body
+            # that grows past stream_large_bodies later would be streamed. Cut the request instead.
+            flow.kill()
+        else:
+            flow.response = http.Response.make(403, f"egress policy: {why}\n".encode(), {"Content-Type": "text/plain"})
+        self.record(
+            kind="conn",
+            proto="http",
+            client=flow.client_conn.peername[0] if flow.client_conn.peername else "?",
+            host=host,
+            port=port,
+            action="deny",
+            reason=f"{why}: {req.method} {req.path[:120]}",
+        )
+
+    @fail_closed
+    def requestheaders(self, flow: http.HTTPFlow) -> None:
+        """First line: runs before anything is sent upstream. Bodies larger than stream_large_bodies are
+        streamed right after this hook, so the `request` hook would come too late for them."""
+        self._enforce(flow, early=True)
+
+    @fail_closed
+    def request(self, flow: http.HTTPFlow) -> None:
+        """Second line, with the complete request. A response set here means: refused in requestheaders."""
+        if flow.response is None:
+            self._enforce(flow, early=False)
 
     @fail_closed
     def dns_request(self, flow: dns.DNSFlow) -> None:

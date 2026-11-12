@@ -168,6 +168,13 @@ cannot obtain the token by connecting to another server while claiming to be Git
 always intercepted: a missing, trailing-dot or different SNI must not turn it into an untouched passthrough
 that skips credential stripping and the read-only check. Both directions are covered by e2e tests.
 
+The per-request checks (read-only hosts, credential stripping and injection, grant method/path/Host) run in
+mitmproxy's `requestheaders` hook, before anything is sent upstream, and again in `request` as a second line.
+Bodies over `stream_large_bodies` (1 MB) are streamed upstream right after the headers, so a check in
+`request` alone would come too late for them. A refused request whose body is small and of known size gets a
+`403`; one whose body is streamed or of unknown size (chunked) is cut instead, because mitmproxy cannot send
+a response while it streams the body (#56).
+
 ### DNS
 
 The agent's `/etc/resolv.conf` points at Docker's embedded resolver, which forwards non-container names to
