@@ -1,0 +1,7 @@
+# All internet (all ports): Any public host on any port (SSH, databases, ...). The local network stays blocked. Use with a time limit.
+# Apply on top of your policy in the UI (Rules -> Quick actions) or with POST /presets/internet.
+title: "All internet (all ports)"
+category: internet
+description: "Any public host on any port (SSH, databases, ...). The local network stays blocked. Use with a time limit."
+rules:
+  - {id: internet-all, action: allow, host: "*", note: all public destinations}

@@ -1,0 +1,8 @@
+# Hugging Face: Models and datasets from the Hugging Face Hub, including its download CDN.
+# Apply on top of your policy in the UI (Rules -> Quick actions) or with POST /presets/huggingface.
+title: "Hugging Face"
+category: template
+description: "Models and datasets from the Hugging Face Hub, including its download CDN."
+rules:
+  - {id: hf-hub, action: allow, host: "*.huggingface.co", port: 443}
+  - {id: hf-cdn, action: allow, host: "*.hf.co", port: 443}

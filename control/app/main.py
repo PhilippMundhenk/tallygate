@@ -72,6 +72,7 @@ GW_ALLOW = [
     ("POST", r"/test"),
     ("GET", r"/presets"),
     ("POST", r"/presets/[A-Za-z_][A-Za-z0-9_]*"),
+    ("DELETE", r"/presets/[A-Za-z_][A-Za-z0-9_]*"),
     ("GET", r"/secrets"),
     ("PUT", r"/secrets/[a-z0-9_]+"),
     ("GET", r"/grants"),

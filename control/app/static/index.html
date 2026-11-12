@@ -44,6 +44,37 @@
 
   <!-- RULES -->
   <section id="tab-rules" role="tabpanel" aria-labelledby="tabbtn-rules" class="hidden">
+    <div class="card" id="quick">
+      <h3>Quick actions</h3>
+      <p class="hint">Common changes in one click. They add normal rules, tagged with their name, which you can see in the
+        table below and undo here.</p>
+      <h4>Internet</h4>
+      <div class="row wrap">
+        <button data-preset="open" data-ttl="900">Allow web (HTTP/HTTPS) for 15 min</button>
+        <button data-preset="open" data-ttl="3600">Allow web for 1 h</button>
+        <button data-preset="internet" data-ttl="900" class="secondary">Allow all ports for 15 min</button>
+      </div>
+      <div class="row wrap" role="group" aria-label="What happens with unknown destinations">
+        <span class="muted">Unknown destinations:</span>
+        <button data-mode="ask" class="secondary small" aria-pressed="false">ask me</button>
+        <button data-mode="deny" class="secondary small" aria-pressed="false">block</button>
+        <button data-mode="allow" class="secondary small" aria-pressed="false">allow (log only)</button>
+        <button id="qaStop" class="danger small">Emergency stop</button>
+      </div>
+      <p class="hint">Emergency stop blocks everything unknown, undoes the internet shortcuts above and revokes all
+        active grants. Claude itself stays reachable through your allow rules.</p>
+      <div id="qaActive"></div>
+      <h4>Local network</h4>
+      <p class="hint">The local network, the Docker host and cloud metadata addresses are <b>always blocked</b> (hard deny):
+        no rule can open them. To let the agent reach one device, define a <b>grant</b>: exact host and port, a time
+        limit, and your approval each time it is used.</p>
+      <button id="qaLan" class="secondary">Allow a device on the local network&hellip;</button>
+      <div id="qaLanHelp" class="hint hidden"></div>
+      <h4>Templates</h4>
+      <p class="hint">Allow everything a tool ecosystem needs. Optional time limit; <i>Undo</i> removes exactly the
+        template's rules.</p>
+      <div id="qaTemplates" class="templates"></div>
+    </div>
     <div class="grid2">
       <div class="card">
         <h3>Mode</h3>
@@ -56,8 +87,6 @@
         <h3>Test a destination</h3>
         <div class="row"><input id="testHost" aria-label="Host or IP to test" placeholder="host or IP"><input id="testPort" type="number" value="443" class="port" aria-label="Port"><button id="testBtn">Test</button></div>
         <pre id="testOut" class="muted"></pre>
-        <h3>Presets</h3>
-        <div class="row"><select id="presetSel" aria-label="Preset"></select><input id="presetTtl" type="number" aria-label="Preset TTL in seconds (optional)" placeholder="TTL s (optional)" class="port"><button id="presetBtn">Apply on top</button></div>
       </div>
     </div>
     <div class="card">

@@ -6,7 +6,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gateway"))
 
-from egressgw.policy import DEFAULT_HARD_DENY, Policy, Rule, host_matches, registrable_domain, rule_for_approval
+from egressgw.policy import (
+    DEFAULT_HARD_DENY,
+    Policy,
+    Rule,
+    host_matches,
+    load_preset,
+    registrable_domain,
+    rule_for_approval,
+)
 from egressgw.store import Secrets, render
 
 PRESETS = Path(__file__).resolve().parents[2] / "gateway" / "presets"
@@ -119,15 +127,25 @@ def test_ipv4_mapped_ipv6_is_matched_like_ipv4():
 
 def test_presets_load():
     for f in PRESETS.glob("*.yaml"):
-        Policy.load(f)
-    p = Policy.load(PRESETS / "baseline.yaml")
+        meta, pol = load_preset(f)
+        assert meta["title"] and meta["description"] and meta["category"] in ("policy", "internet", "template")
+        assert pol.rules, f.name
+        assert all(r.action == "allow" for r in pol.rules) or meta["category"] == "policy"
+    ids = [
+        r.id
+        for f in PRESETS.glob("*.yaml")
+        if load_preset(f)[0]["category"] != "policy"
+        for r in load_preset(f)[1].rules
+    ]
+    assert len(ids) == len(set(ids)), "template rule ids must be unique (undo works per template)"
+    p = load_preset(PRESETS / "baseline.yaml")[1]
     assert p.default == "ask"
     assert p.evaluate("api.anthropic.com", 443, ["160.79.104.10"]).action == "allow"
     assert p.evaluate("evil.example", 443, ["1.2.3.4"]).action == "ask"
 
 
 def test_roundtrip(tmp_path):
-    p = Policy.load(PRESETS / "baseline.yaml")
+    p = load_preset(PRESETS / "baseline.yaml")[1]
     p.save(tmp_path / "p.yaml")
     assert Policy.load(tmp_path / "p.yaml").to_dict() == p.to_dict()
 

@@ -1,0 +1,9 @@
+# Node.js (npm, Yarn): npm, pnpm and Yarn registries, and Node.js downloads.
+# Apply on top of your policy in the UI (Rules -> Quick actions) or with POST /presets/node.
+title: "Node.js (npm, Yarn)"
+category: template
+description: "npm, pnpm and Yarn registries, and Node.js downloads."
+rules:
+  - {id: node-npm, action: allow, host: "registry.npmjs.org", port: 443}
+  - {id: node-yarn, action: allow, host: "registry.yarnpkg.com", port: 443}
+  - {id: node-dist, action: allow, host: "nodejs.org", port: 443, note: Node.js releases}
