@@ -6,7 +6,7 @@
 # Uses a fresh, independent probe container (curlimages/curl) attached to agent-net, so a compromised
 # agent image cannot fake the results, plus structural checks of the compose networks and containers.
 set -uo pipefail
-cd "$(dirname "$0")/../.." || exit 2
+# Works from anywhere (also downloaded next to compose.yaml): it only talks to Docker, never to files.
 
 PROJECT=${COMPOSE_PROJECT_NAME:-tallygate}
 NET=${PROJECT}_agent-net
@@ -67,14 +67,13 @@ expect "control UI not on agent-net"          000          http://172.31.10.3:80
 expect "mgmt-net not routable"                000          http://172.31.12.3:8080/healthz
 expect "host services via the bridge address unreachable" 000 "http://${BRIDGE_IP:-172.31.10.1}:$HOST_PORT/"
 check "agent-net gives the host no address" test "$(docker network inspect -f '{{index .Options "com.docker.network.bridge.inhibit_ipv4"}}' "$NET")" = true
-expect "IPv6 link-local of the gateway unreachable" 000     -g "http://[fe80::1%25eth0]:3128/"
 expect "unknown host is held, not connected"  '000|403|502' -x "http://$GW:3128" "https://exfil-$(date +%s).invalid/"
 expect "grant API: listing works for the agent" 200       "http://$GW:8079/v1/grants"
 expect "grant API: no admin endpoints"           404       "http://$GW:8079/grants"
 expect "allowed path works (api.anthropic.com)" '[1-4][0-9][0-9]' -x "http://$GW:3128" https://api.anthropic.com/
 
 echo "== in-agent self-test"
-docker compose exec -T agent python3 /usr/local/bin/status.py --selftest || failed=1
+docker exec "$AGENT" python3 /usr/local/bin/status.py --selftest || failed=1
 
 echo
 if [[ $failed == 0 ]]; then echo "ALL CHECKS PASSED"; else echo "SOME CHECKS FAILED"; exit 1; fi

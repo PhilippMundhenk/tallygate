@@ -75,6 +75,8 @@ All notable changes to this project are documented here. The format follows
   process on the host.
 
 ### Fixed
+- `bypass.sh` works when downloaded next to `compose.yaml` (it no longer changes directory and runs the
+  self-test with `docker exec`); the meaningless IPv6 link-local probe is gone (the sysctl checks remain) (#65).
 - The gateway's warnings never reached its log: mitmdump ran with `-q`, which overrides the log level (#27).
 - Agent status responses larger than one network read were cut off and reported as an error (#27).
 - The managed setting `skipDangerousModePermissionPrompt` was nested under `permissions`, where Claude Code
