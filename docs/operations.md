@@ -230,7 +230,7 @@ Then clone repositories in the *bash* console: `gh repo clone owner/repo /worksp
 | Review traffic | UI → Log (filter, "only blocked", one-click allow/deny rule) |
 | Tighten/loosen policy | UI → Rules (mode, add/delete rules, presets with TTL, dry-run test) |
 | Temporarily open the internet | Rules → Presets → `open` with TTL `900` |
-| Emergency stop | Rules → default `deny`, or `docker compose stop agent` |
+| Emergency stop | Rules → Quick actions → *Emergency stop* (revokes grants, denies what is pending, removes the internet shortcuts, mode `deny`, suspends auto-approved grants), or `docker compose stop agent` |
 | Several sessions in parallel | New session in the Claude app on the same environment; `RC_ARGS=--spawn worktree` for isolated worktrees |
 | Shell in the agent | UI → Console → bash (or `docker compose exec agent bash`) |
 
