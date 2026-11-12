@@ -345,9 +345,7 @@ def start_control(tmp: Path, gateway: dict, extra: dict, ttyd_port: int | None =
     )
     env = clean_env(**{**defaults, **extra})  # extra may override any default
     log = open(tmp / f"control-{port}.log", "w")
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "app.main"], cwd=ROOT / "control", env=env, stdout=log, stderr=subprocess.STDOUT
-    )
+    proc = subprocess.Popen([sys.executable, "-m", "app.main"], cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
     wait_http(f"http://127.0.0.1:{port}/healthz")
     time.sleep(0.5)  # let the gateway event subscription come up
     return proc, port

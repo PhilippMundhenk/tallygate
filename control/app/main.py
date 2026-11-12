@@ -463,7 +463,9 @@ async def api_agent(request: web.Request):
         async with request.app["http"].get(
             f"http://{AGENT_HOST}:{AGENT_STATUS_PORT}/{what}", timeout=aiohttp.ClientTimeout(total=90)
         ) as r:
-            raw = await r.content.read(AGENT_MAX_BYTES + 1)
+            raw = b""  # read() returns what has arrived so far: read until the end or the cap
+            while len(raw) <= AGENT_MAX_BYTES and (chunk := await r.content.read(AGENT_MAX_BYTES + 1 - len(raw))):
+                raw += chunk
             if len(raw) > AGENT_MAX_BYTES:
                 return web.json_response({"error": "agent response too large"}, status=502)
             data = json.loads(raw)

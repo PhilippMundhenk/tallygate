@@ -32,6 +32,22 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["egressgw", "app"]
 
+[tool.coverage.run]
+# Line coverage of every Python module, including the gateway and control processes the e2e tests start
+# (subprocesses are measured too). Gate: 95 % per module, see tools/coverage_gate.py and `make coverage`.
+source = ["gateway", "control", "agent", "tools"]
+omit = ["gateway/presets/*"]
+parallel = true
+patch = ["subprocess"]
+sigterm = true
+
+[tool.coverage.report]
+skip_empty = true
+show_missing = true
+
+[tool.coverage.html]
+directory = "htmlcov"
+
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/e2e"]
 addopts = "-ra"

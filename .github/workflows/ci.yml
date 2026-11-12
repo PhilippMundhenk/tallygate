@@ -41,7 +41,15 @@ jobs:
           curl -fsSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"
           echo "${TTYD_SHA256}  /usr/local/bin/ttyd" | sha256sum -c -
           chmod +x /usr/local/bin/ttyd
-      - run: make test
+      - name: Tests with coverage (gate 95 % per module)
+        run: make coverage
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: |
+            htmlcov/
+            coverage.json
 
   integration:
     # Builds all images, starts the real stack with ZERO configuration (no .env: secrets and the UI

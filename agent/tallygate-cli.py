@@ -109,7 +109,7 @@ def cmd_status(args) -> int:
     return 0 if _report(r) == 0 or r["status"] == "pending" else 1
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="tallygate", description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("grants", help="list grants").set_defaults(fn=cmd_grants)
@@ -124,7 +124,7 @@ def main() -> int:
     s = sub.add_parser("status", help="state of a request")
     s.add_argument("id")
     s.set_defaults(fn=cmd_status)
-    args = p.parse_args()
+    args = p.parse_args(argv)
     return args.fn(args)
 
 

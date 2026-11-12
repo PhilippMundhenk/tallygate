@@ -37,6 +37,8 @@ All notable changes to this project are documented here. The format follows
   keeps its id, so open connections survive; agent credentials are stripped on inject hosts reached
   through a grant ([#14](https://github.com/PhilippMundhenk/tallygate/issues/14)).
 ### Added
+- Line-coverage gate of 95 % per module in CI (`make coverage`), measuring the gateway and control
+  processes too; every module is now at 98-100 % (424 tests) (#27).
 - **Help and examples**: `docs/rules.md` (how a connection is decided, ~20 worked examples), an example for
   every setting in the configuration reference and in `config/gateway.yaml`; in the UI, field help for rules
   and grants, expandable explanations with examples, *Test a destination* explains which rule or check
@@ -73,6 +75,8 @@ All notable changes to this project are documented here. The format follows
   process on the host.
 
 ### Fixed
+- The gateway's warnings never reached its log: mitmdump ran with `-q`, which overrides the log level (#27).
+- Agent status responses larger than one network read were cut off and reported as an error (#27).
 - The managed setting `skipDangerousModePermissionPrompt` was nested under `permissions`, where Claude Code
   ignores it; it is now a top-level key, so the bypass-mode confirmation no longer appears (#26).
 
