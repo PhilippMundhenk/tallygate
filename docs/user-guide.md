@@ -52,6 +52,27 @@ approval, so IPs show as "not resolved yet". A destination you approve can still
 deny (LAN, host, metadata…). At most `max_pending` (10) requests wait at once; further unknown destinations
 are denied immediately until you have answered.
 
+### Keyboard shortcuts, compact list and sound
+
+For approving a lot. The switches above the list are kept in this browser.
+
+| Key | Effect (Approvals tab, outside text fields) |
+|---|---|
+| `j` / `k` | Select the next / previous request |
+| `a` | Allow 2 min; approve a grant request |
+| `h` | Allow 1 h |
+| `d` | Deny |
+| `?` | List the keys (anywhere; `Esc` closes) |
+
+`a`, `h` and `d` act on the selected request; without a selection the first press selects the first request,
+so a stray key never decides anything. After a decision the next request is selected. Single-key shortcuts
+can be switched off with **Keyboard shortcuts** (for screen readers and voice control).
+
+**Compact list** shows one line per connection request: destination, the registrable domain when it differs,
+the punycode warning and the buttons (the countdown and IPs are hidden). Grant requests keep their full card,
+because the agent's reason matters. **Sound** plays a short tone when a request arrives while the tab is in
+the background; turn it on with a click, as browsers allow sound only after one.
+
 ## Grants
 
 For access the normal rules would refuse, especially services on your home network, define **grants**:

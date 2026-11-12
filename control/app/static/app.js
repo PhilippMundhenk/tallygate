@@ -129,13 +129,13 @@ function pendingCard(p) {
   // Host names are chosen by the agent: show the registrable domain separately (look-alikes such as
   // github.com.evil.example) and warn about punycode names.
   el.innerHTML = `<div class="dest">${esc(p.host)}:${esc(p.port)}</div>
-    ${p.domain && p.domain !== p.host ? `<div class="meta">domain <b>${esc(p.domain)}</b></div>` : ""}
+    ${p.domain && p.domain !== p.host ? `<div class="meta domain">domain <b>${esc(p.domain)}</b></div>` : ""}
     ${p.idn ? `<div class="meta warn">⚠ internationalised (punycode) name – check for look-alikes</div>` : ""}
     <div class="meta">${esc(p.proto)} · IPs ${esc((p.ips || []).join(", ") || "not resolved yet")} · attempts ${esc(p.attempts)} ·
     <span class="countdown" data-exp="${Number(p.expires)}"></span></div><div class="btns"></div>`;
   for (const [scope, label, cls] of SCOPES) {
     if (scope === "domain" && !p.domain) continue;  // no registrable domain (IP, public suffix)
-    const b = document.createElement("button"); if (cls) b.className = cls;
+    const b = document.createElement("button"); if (cls) b.className = cls; b.dataset.scope = scope;
     b.textContent = scope === "domain" ? `Always (*.${p.domain})` : label;
     b.onclick = decide(el, async () => { await gw("POST", `/pending/${p.id}/decide`, { scope }); await loadPending(); });
     $(".btns", el).appendChild(b);
@@ -444,7 +444,7 @@ function grantRequestCard(r) {
     <div class="meta">Agent's reason: <i>${esc(r.reason || "(none given)")}</i></div>
     <div class="meta"><span class="countdown" data-exp="${Number(r.expires)}"></span></div><div class="btns"></div>`;
   const btn = (label, decision, cls = "") => {
-    const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls;
+    const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.dataset.decision = decision;
     b.onclick = decide(el, async () => { await gw("POST", `/grant-requests/${r.id}/decide`, { decision }); await loadGrants(); });
     $(".btns", el).appendChild(b);
   };

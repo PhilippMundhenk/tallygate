@@ -1,0 +1,10 @@
+/* keyboard shortcuts and compact approval list (keys.js) */
+#approvalOpts{font-size:13px;color:var(--muted)}#approvalOpts label{gap:5px}
+.pending.kbd-sel{outline:2px solid #93c5fd;outline-offset:2px}.pending:focus{outline:2px solid #93c5fd;outline-offset:2px}
+/* compact: one line per connection request (grant requests stay full: their reason matters) */
+.compact #pendingList .pending{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:6px 10px;margin-bottom:6px}
+.compact #pendingList .pending .dest{font-size:14px;overflow-wrap:anywhere}
+.compact #pendingList .pending .meta{margin:0}.compact #pendingList .pending .meta:not(.warn):not(.domain){display:none}
+.compact #pendingList .pending .btns{margin-left:auto}.compact #pendingList .pending .btns button{padding:3px 8px;font-size:12px}
+#keysHelp{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:16px;max-width:min(460px,calc(100vw - 32px))}
+#keysHelp::backdrop{background:#0008}kbd{border:1px solid var(--line);border-radius:4px;padding:0 5px;font-family:ui-monospace,monospace}

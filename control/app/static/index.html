@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>tallygate</title><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/wizard.css"><link rel="stylesheet" href="/static/overview.css"></head>
+<title>tallygate</title><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/wizard.css"><link rel="stylesheet" href="/static/overview.css"><link rel="stylesheet" href="/static/keys.css"></head>
 <body>
 <header>
   <span class="brand">🔐 tallygate</span>
@@ -41,6 +41,7 @@
 
   <!-- APPROVALS -->
   <section id="tab-approvals" role="tabpanel" aria-labelledby="tabbtn-approvals">
+    <div id="approvalOpts" class="toolbar" role="group" aria-label="Approval options"></div>
     <div id="grantReqBox" class="hidden">
       <h2>Grant requests</h2>
       <p class="hint">The agent asks for a predefined bundle of access. The reason is written by the agent – treat it as a claim, not a fact.</p>
@@ -304,4 +305,5 @@
 <script src="/static/app.js"></script>
 <script src="/static/wizard.js"></script>
 <script src="/static/overview.js"></script>
+<script src="/static/keys.js"></script>
 </body></html>

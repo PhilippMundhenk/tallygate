@@ -83,6 +83,9 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   a missing, refused or expiring GitHub token); the last hour (allowed/denied/asked, top and new
   destinations); emergency stop, *Allow web for 15 min* and the console as shortcuts. New gateway endpoint
   `GET /events/summary`; `/info` and the agent status report disk use (#68).
+- **Keyboard shortcuts** on the Approvals tab (`j`/`k` select, `a` allow 2 min, `h` allow 1 h, `d` deny,
+  `?` lists them; can be switched off), a **compact list** with one line per connection request, and an
+  optional **sound** when a request arrives while the tab is in the background (#79).
 
 ### Changed
 - **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie
