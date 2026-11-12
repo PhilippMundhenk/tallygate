@@ -71,6 +71,10 @@ All notable changes to this project are documented here. The format follows
 ### Removed
 - `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
 
+### Fixed
+- Notifications: Telegram and Matrix are sent concurrently and fail independently, so an outage of one no
+  longer hides prompts on the other. A queue decouples delivery from the gateway event stream, and chat API
+  calls time out after 15 s (#22).
 ### Security
 - The event stream and the web console end within 10 s of logout or session expiry, and console input is
   checked before it reaches the agent (#21).

@@ -545,7 +545,7 @@ async def watch_gateway(app: web.Application):
                     if line.startswith("data: "):
                         ev = json.loads(line[6:])
                         if ev.get("type") in ("ask", "resolved", "grant_request", "grant_resolved"):
-                            await app["notifier"].handle(ev)
+                            app["notifier"].enqueue(ev)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
