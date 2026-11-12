@@ -133,7 +133,7 @@ def test_emergency_stop_runs_every_step_and_suspends_auto_approval(gw):
     assert sorted(steps["deny_pending"]["denied"]) == ["ask.example:443", "done.example:443", "nofuture.example:443"]
     assert not gw.pending and p.future.result().action == "deny"
     assert steps["deny_grant_requests"]["denied"] == ["nas"] and req.status == "denied"
-    assert sorted(steps["remove_internet_presets"]["removed"]) == ["internet-all", "open-https"]
+    assert sorted(steps["remove_internet_presets"]["removed"]) == ["internet:all", "open:web"]
     assert [r.id for r in gw.policy.rules] == ["ok"]
     assert steps["mode_deny"]["previous"] == "ask" and gw.policy.default == "deny"
     assert gw.grants.auto_suspended["by"] == "web:admin"

@@ -88,7 +88,7 @@ def test_emergency_stop_revokes_denies_removes_and_suspends_auto_approval(stack)
     assert steps["revoke_grants"]["revoked"] == ["auto"]
     assert steps["deny_pending"]["denied"] == [f"127.0.0.1:{port}"]
     assert steps["deny_grant_requests"]["denied"] == ["nas"]
-    assert steps["remove_internet_presets"]["removed"] == ["internet-all"]
+    assert steps["remove_internet_presets"]["removed"] == ["internet:all"]
     t.join(5)
     assert not t.is_alive() and res["r"][0] != 200  # the waiting connection was refused at once
 
