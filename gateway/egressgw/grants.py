@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import fnmatch
 import ipaddress
+import logging
 import re
 import secrets as _secrets
 import time
@@ -23,7 +24,10 @@ from pathlib import Path
 
 import yaml
 
-from egressgw.policy import is_ip, valid_hostname
+from egressgw.policy import ip_addr, is_ip, valid_hostname
+from egressgw.store import atomic_write
+
+log = logging.getLogger("egressgw")
 
 LEVELS = ("read", "write")
 READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -74,7 +78,7 @@ def host_match(pattern: str, host: str) -> bool:
     if pattern.startswith("*."):
         return host.endswith(pattern[1:]) and host != pattern[2:]
     if is_ip(pattern) and is_ip(host):
-        return ipaddress.ip_address(pattern.strip("[]")) == ipaddress.ip_address(host.strip("[]"))
+        return ip_addr(pattern) == ip_addr(host)
     return pattern == host
 
 
@@ -214,6 +218,12 @@ class GrantDef:
             raise ValueError(f"grant {self.name}: approval must be one of {APPROVALS}")
         if not 60 <= self.default_ttl <= self.max_ttl <= MAX_TTL:
             raise ValueError(f"grant {self.name}: need 1m <= default_ttl <= max_ttl <= 7d")
+        if self.source != "config" and (self.inject or any(not t.tls_verify for t in self.targets)):
+            # A UI session or the API token must not be able to send stored secrets to a host of its choosing.
+            raise ValueError(
+                f"grant {self.name}: credential injection and tls_verify: false are only allowed in grants "
+                "from the gateway config file"
+            )
         if self.levels == ["read"] and all(t.scheme == "tcp" for t in self.targets):
             raise ValueError(f"grant {self.name}: tcp targets cannot be read-only (no protocol visibility)")
         https_hosts = {t.host for t in self.targets if t.scheme == "https" and not t.host.startswith("*.")}
@@ -305,7 +315,10 @@ class Grants:
             for name, d in (yaml.safe_load(self.ui_path.read_text()) or {}).items():
                 if name in self.defs:
                     continue  # config wins
-                self.defs[name] = GrantDef.from_dict(name, d or {}, "ui")
+                try:
+                    self.defs[name] = GrantDef.from_dict(name, d or {}, "ui")
+                except ValueError as e:  # e.g. saved by an older version that allowed inject in UI grants
+                    log.error("UI grant %s ignored: %s", name, e)
         self.active: dict[str, Active] = {}
         self.requests: dict[str, GrantRequest] = {}
 
@@ -316,9 +329,7 @@ class Grants:
             for n, g in self.defs.items()
             if g.source == "ui"
         }
-        tmp = self.ui_path.with_suffix(".tmp")
-        tmp.write_text(yaml.safe_dump(data, sort_keys=False))
-        tmp.replace(self.ui_path)
+        atomic_write(self.ui_path, yaml.safe_dump(data, sort_keys=False))
 
     def upsert_ui(self, name: str, d: dict) -> GrantDef:
         if name in self.defs and self.defs[name].source == "config":
@@ -347,9 +358,7 @@ class Grants:
     # ---------------------------------------------------------------- matching
     @staticmethod
     def _in(ip: str, nets) -> bool:
-        a = ipaddress.ip_address(ip.strip("[]"))
-        if a.version == 6 and a.ipv4_mapped:
-            a = a.ipv4_mapped
+        a = ip_addr(ip)
         return any(a in n for n in nets)
 
     def match(self, host: str, port: int) -> tuple[Active, GrantDef, Target] | None:
@@ -387,9 +396,12 @@ class Grants:
         if level not in g.levels:
             raise ValueError(f"grant {name} has no level {level!r}")
         ttl = max(60, min(int(ttl), g.max_ttl))
-        for old in [a for a in self.active.values() if a.name == name]:
-            del self.active[old.id]  # one active instance per grant: re-approval replaces it
         now = time.time()
+        for a in self.active.values():
+            if a.name == name:  # one active instance per grant: re-approval updates it in place, keeping
+                a.level, a.created, a.expires = level, now, now + ttl  # its id, so open connections survive
+                a.reason, a.approved_by = clean_reason(reason), by[:64]
+                return a
         a = Active(_secrets.token_hex(5), name, level, now, now + ttl, clean_reason(reason), by[:64])
         self.active[a.id] = a
         return a

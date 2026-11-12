@@ -101,9 +101,13 @@ class Echo(BaseHTTPRequestHandler):
         pass
 
 
-def start_echo(tls: tuple[Path, Path] | None = None, bind: str = "127.0.0.1") -> int:
+class KeepAliveEcho(Echo):
+    protocol_version = "HTTP/1.1"  # keeps the upstream connection open between requests
+
+
+def start_echo(tls: tuple[Path, Path] | None = None, bind: str = "127.0.0.1", handler=Echo) -> int:
     port = free_port()
-    srv = ThreadingHTTPServer((bind, port), Echo)
+    srv = ThreadingHTTPServer((bind, port), handler)
     if tls:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(str(tls[0]), str(tls[1]))
@@ -124,6 +128,7 @@ def upstream(tmp_path_factory):
         "lan": start_echo(bind="127.0.0.2"),
         "http": start_echo(),
         "http2": start_echo(),
+        "keepalive_tls": start_echo(cert, handler=KeepAliveEcho),
         "https": start_echo(cert),
         "cert": cert[0],
         "closed": free_port(),
@@ -135,8 +140,8 @@ def upstream(tmp_path_factory):
 def gateway(tmp_path_factory, upstream):
     if not shutil.which("mitmdump"):
         pytest.skip("mitmproxy not installed (pip install -r gateway/requirements.txt)")
+    pytest.importorskip("aiohttp", reason="the gateway API needs aiohttp (pip install -r gateway/requirements.txt)")
     data = tmp_path_factory.mktemp("gw-data")
-    ca_dir = tmp_path_factory.mktemp("gw-ca")
     ports = {k: free_port() for k in ("http", "socks", "dns", "api", "svc", "grants")}
     http_t = {"scheme": "http", "port": upstream["http"]}
     https_t = {"scheme": "https", "port": upstream["https"]}
@@ -148,7 +153,7 @@ def gateway(tmp_path_factory, upstream):
                     {"host": "badcert.test", "header": "Authorization", "value": "Bearer ${github_token}"},
                 ],
                 "services": [{"name": "echo", "listen": ports["svc"], "target": f"127.0.0.1:{upstream['http']}"}],
-                # tests talk to 127.0.0.1 upstreams, so the floor is narrowed here (static config only)
+                # tests talk to 127.0.0.1 upstreams: this floor replaces the built-in one (GW_TEST_FLOOR_REPLACE)
                 "hard_deny_floor": ["192.168.0.0/16", "10.0.0.0/8", "127.0.0.2/32"],
                 "readonly": ["ro.test"],
                 "max_pending": 3,
@@ -211,6 +216,25 @@ def gateway(tmp_path_factory, upstream):
             }
         )
     )
+    proc, gw = start_gateway(
+        data,
+        upstream,
+        ports,
+        GW_TEST_FLOOR_REPLACE="1",
+        GW_TEST_STATIC_HOSTS="gh.test=127.0.0.1,other.test=127.0.0.1,badcert.test=127.0.0.1,lan.test=192.168.99.99,ro.test=127.0.0.1,"
+        "svc.test=127.0.0.1,sec.test=127.0.0.1,lanecho.test=127.0.0.2,pin.test=127.0.0.1,badpin.test=127.0.0.1,raw.test=127.0.0.1",
+    )
+    try:
+        yield gw
+    finally:
+        proc.terminate()
+        proc.wait(10)
+
+
+def start_gateway(data: Path, upstream: dict, ports: dict | None = None, wait: bool = True, **env):
+    """Start egress-gw (mitmdump) on localhost with the config/policy already written to `data`."""
+    ports = ports or {k: free_port() for k in ("http", "socks", "dns", "api", "grants")}
+    ca_dir = data / "ca"
     env = clean_env(
         DATA_DIR=data,
         CA_EXPORT_DIR=ca_dir,
@@ -222,37 +246,61 @@ def gateway(tmp_path_factory, upstream):
         GW_API_PORT=ports["api"],
         GW_API_TOKEN=API_TOKEN,
         PRESET_DIR=ROOT / "gateway" / "presets",
-        GW_TEST_STATIC_HOSTS="gh.test=127.0.0.1,other.test=127.0.0.1,badcert.test=127.0.0.1,lan.test=192.168.99.99,ro.test=127.0.0.1,"
-        "svc.test=127.0.0.1,sec.test=127.0.0.1,lanecho.test=127.0.0.2,pin.test=127.0.0.1,badpin.test=127.0.0.1,raw.test=127.0.0.1",
         GW_GRANTS_PORT=ports["grants"],
         GW_EXTRA_ARGS=f"--set ssl_verify_upstream_trusted_ca={upstream['cert']}",
+        **env,
     )
     log = open(data / "gateway.log", "w")
     proc = subprocess.Popen(
         [sys.executable, str(ROOT / "gateway" / "run.py")], env=env, stdout=log, stderr=subprocess.STDOUT
     )
-    try:
-        wait_http(f"http://127.0.0.1:{ports['api']}/health")
+    gw = {
+        "proc": proc,
+        "ports": ports,
+        "api": Api(f"http://127.0.0.1:{ports['api']}", token=API_TOKEN),
+        "agent": Api(f"http://127.0.0.1:{ports['grants']}"),
+        "ca": str(ca_dir / "egress-gw-ca.pem"),
+        "log": data / "gateway.log",
+        "data": data,
+    }
+    if wait:
+        try:
+            wait_http(f"http://127.0.0.1:{ports['api']}/health")
+        except TimeoutError:
+            proc.terminate()
+            raise
         for _ in range(50):  # CA export happens in `running`
             if (ca_dir / "egress-gw-ca.pem").exists():
                 break
             time.sleep(0.1)
-        yield {
-            "ports": ports,
-            "api": Api(f"http://127.0.0.1:{ports['api']}", token=API_TOKEN),
-            "agent": Api(f"http://127.0.0.1:{ports['grants']}"),
-            "ca": str(ca_dir / "egress-gw-ca.pem"),
-            "log": data / "gateway.log",
-            "data": data,
-        }
-    finally:
-        proc.terminate()
-        proc.wait(10)
+    return proc, gw
+
+
+@pytest.fixture
+def make_gateway(tmp_path, upstream):
+    """Factory for a dedicated gateway with its own config: make_gateway(config, policy, **env)."""
+    procs = []
+
+    def factory(config: dict, policy: dict | None = None, wait: bool = True, **env) -> dict:
+        data = tmp_path / f"gw{len(procs)}"
+        data.mkdir()
+        (data / "config.yaml").write_text(yaml.safe_dump(config))
+        if policy is not None:
+            (data / "policy.yaml").write_text(yaml.safe_dump(policy))
+        proc, gw = start_gateway(data, upstream, wait=wait, **env)
+        procs.append(proc)
+        return gw
+
+    yield factory
+    for p in procs:
+        p.terminate()
+        p.wait(10)
 
 
 # ------------------------------------------------------------------ control
 @pytest.fixture(scope="session")
 def mockbots():
+    pytest.importorskip("aiohttp", reason="the mock bot APIs need aiohttp (pip install -r control/requirements.txt)")
     from .mockbots import MockBots
 
     m = MockBots()
@@ -279,8 +327,9 @@ def ttyd_port(tmp_path_factory):
 
 
 def start_control(tmp: Path, gateway: dict, extra: dict, ttyd_port: int | None = None):
+    pytest.importorskip("aiohttp", reason="control needs aiohttp (pip install -r control/requirements.txt)")
     port = free_port()
-    env = clean_env(
+    defaults = dict(
         GW_URL=f"http://127.0.0.1:{gateway['ports']['api']}",
         GW_API_TOKEN=API_TOKEN,
         CONTROL_BIND_HOST="127.0.0.1",
@@ -293,8 +342,8 @@ def start_control(tmp: Path, gateway: dict, extra: dict, ttyd_port: int | None =
         TTYD_CREDENTIAL=TTYD_CREDENTIAL,
         TERMINALS=f"bash:{ttyd_port or free_port()}",
         PYTHONPATH=ROOT / "control",
-        **extra,
     )
+    env = clean_env(**{**defaults, **extra})  # extra may override any default
     log = open(tmp / f"control-{port}.log", "w")
     proc = subprocess.Popen(
         [sys.executable, "-m", "app.main"], cwd=ROOT / "control", env=env, stdout=log, stderr=subprocess.STDOUT

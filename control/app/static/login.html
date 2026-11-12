@@ -6,12 +6,14 @@
   form{background:#181b22;padding:28px;border-radius:12px;width:min(320px,90vw);box-shadow:0 8px 30px #0006}
   h1{font-size:18px;margin:0 0 18px} input,button{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;font:inherit}
   input{background:#0f1115;border:1px solid #2c313c;color:inherit;margin-bottom:12px} button{background:#3b82f6;border:0;color:#fff;cursor:pointer}
-  .err{color:#f87171;font-size:13px;margin-bottom:10px;display:none}
+  .err{color:#f87171;font-size:13px;margin-bottom:10px;display:none} label{display:block;margin-bottom:6px;color:#9aa3b2}
+  input:focus-visible,button:focus-visible{outline:2px solid #93c5fd;outline-offset:2px}
 </style></head>
 <body><form method="post" action="/login">
   <h1>🔐 tallygate</h1>
-  <div class="err" id="err">Wrong password.</div>
-  <input type="password" name="password" placeholder="Password" autofocus autocomplete="current-password">
+  <div class="err" id="err" role="alert">Wrong password.</div>
+  <label for="password">Password</label>
+  <input type="password" id="password" name="password" autofocus autocomplete="current-password" required>
   <button>Sign in</button>
 </form>
 <script src="/static/login.js"></script></body></html>

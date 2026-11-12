@@ -80,7 +80,8 @@ jobs:
 
   images:
     # Multi-arch images on GHCR: :main and :sha-… from main, :X.Y.Z / :X.Y / :latest from v* tags.
-    # Pull requests build linux/amd64 only and push nothing, which tests the Dockerfiles and these actions.
+    # Everything else (pull requests, manual runs on other branches, e.g. the Claude Code update branch)
+    # builds linux/amd64 only and pushes nothing, which tests the Dockerfiles and these actions.
     needs: [integration]
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -99,7 +100,7 @@ jobs:
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -118,8 +119,8 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
-          push: ${{ github.event_name != 'pull_request' }}
+          platforms: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
           provenance: true
           sbom: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -129,7 +130,7 @@ jobs:
 
   image-scan:
     # Known vulnerabilities in the published images. Reports only (does not fail the build) for now.
-    if: github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     needs: [images]
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -141,9 +142,12 @@ jobs:
       matrix:
         image: [tallygate-gateway, tallygate-control, tallygate-agent]
     steps:
+      - id: ref
+        # image names must be lower case; the images job tags type=sha as sha-<7 characters>
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${{ matrix.image }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:sha-${{ github.sha }}
+          image-ref: ${{ steps.ref.outputs.image }}
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "0"
@@ -160,6 +164,11 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: v
+        # image tags carry no "v": v0.4.0 -> 0.4.0 and 0.4
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           generate_release_notes: true
@@ -169,5 +178,5 @@ jobs:
             config/gateway.yaml
             tests/integration/bypass.sh
           body: |
-            Images: `ghcr.io/${{ github.repository_owner }}/tallygate-{gateway,control,agent}:${{ github.ref_name }}` (linux/amd64, linux/arm64).
+            Images: `ghcr.io/${{ steps.v.outputs.owner }}/tallygate-{gateway,control,agent}:${{ steps.v.outputs.version }}` (linux/amd64, linux/arm64).
             Install or upgrade: see the [README](https://github.com/${{ github.repository }}#quick-start) and [CHANGELOG](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md).
