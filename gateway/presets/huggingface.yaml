@@ -2,7 +2,7 @@
 # Apply on top of your policy in the UI (Rules -> Quick actions) or with POST /presets/huggingface.
 title: "Hugging Face"
 category: template
-description: "Models and datasets from the Hugging Face Hub, including its download CDN."
+description: "Download models and datasets from the Hugging Face Hub and its CDN. Uploads and commits are refused: huggingface.co is read-only in the gateway config."
 rules:
   - {id: hf-hub, action: allow, host: "*.huggingface.co", port: 443}
   - {id: hf-cdn, action: allow, host: "*.hf.co", port: 443}

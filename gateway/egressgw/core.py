@@ -36,6 +36,7 @@ from egressgw.policy import (
     Decision,
     Exception_,
     Policy,
+    host_matches,
     ip_addr,
     is_ip,
     load_preset,
@@ -96,6 +97,41 @@ def fail_closed(hook):
                 refuse(self, data)
 
     return wrapper
+
+
+@dataclass(frozen=True)
+class ReadOnly:
+    """A `readonly` entry: PUT/PATCH/DELETE are refused; with `post_is_write` also POST, except on the
+    `read_posts` paths (POSTs that only read, e.g. a search or a batch lookup)."""
+
+    host: str
+    post_is_write: bool = False
+    read_posts: tuple[str, ...] = ()
+
+    def refuses(self, method: str, path: str) -> bool:
+        if method in WRITE_METHODS:
+            return True
+        return method == "POST" and self.post_is_write and not path_ok(path, list(self.read_posts))
+
+
+def parse_readonly(entries) -> list[ReadOnly]:
+    """Validate `readonly` from the static config. A broken entry stops the gateway (fail closed)."""
+    out = []
+    for e in entries:
+        spec = {"host": e} if isinstance(e, str) else e
+        if not isinstance(spec, dict) or set(spec) - {"host", "post_is_write", "read_posts"}:
+            raise ValueError(f"readonly: invalid entry {e!r} (a host, or {{host, post_is_write, read_posts}})")
+        host = str(spec.get("host", "")).lower().rstrip(".")
+        name = host[2:] if host.startswith("*.") else host
+        reads = spec.get("read_posts") or []
+        if (
+            not valid_hostname(name)
+            or not isinstance(reads, list)
+            or not all(str(r).startswith(("/", "*")) for r in reads)
+        ):
+            raise ValueError(f"readonly: invalid entry {e!r}")
+        out.append(ReadOnly(host, bool(spec.get("post_is_write", False)), tuple(str(r) for r in reads)))
+    return out
 
 
 def _refusing_tls(server_side: bool):
@@ -178,8 +214,7 @@ class Gateway:
         self.secrets = Secrets(DATA_DIR / "secrets.json")
         self.inject = [dict(i) for i in self.config.get("inject") or []]
         self.inject_hosts = {i["host"].lower().rstrip(".") for i in self.inject}
-        self.readonly_hosts = {str(h).lower().rstrip(".") for h in self.config.get("readonly") or []}
-        self.intercept_hosts = self.inject_hosts | self.readonly_hosts
+        self.readonly = parse_readonly(self.config.get("readonly") or [])
         self.strip_headers = [str(h) for h in self.config.get("inject_strip_headers") or ["Authorization", "Cookie"]]
         self.max_pending = int(self.config.get("max_pending", 10))
         self._dups: dict[tuple, list] = {}
@@ -578,8 +613,15 @@ class Gateway:
         # still verified against the hostname, not the IP.
         if not is_ip(host):
             data.server.address = (ips[0], port)
-            if host in self.intercept_hosts:
+            if self._intercepted(host):
                 data.server.sni = host
+
+    def _readonly(self, host: str) -> ReadOnly | None:
+        return next((r for r in self.readonly if host_matches(r.host, host)), None)
+
+    def _intercepted(self, host: str) -> bool:
+        """TLS to injection and read-only hosts is always intercepted (whatever the SNI says)."""
+        return host in self.inject_hosts or self._readonly(host) is not None
 
     def _grant_match(self, host: str, port: int):
         """Active grant for host:port - unless the policy already allows the name: grants only ADD
@@ -615,7 +657,7 @@ class Gateway:
                 data.ignore_connection = True
             return
         orig = self.orig_host.get(data.context.server.id)
-        if orig in self.intercept_hosts:
+        if orig and self._intercepted(orig):
             # Always intercept, whatever the SNI says (none, trailing dot, another name): a passthrough would
             # skip credential stripping and the read-only check. The upstream SNI is the checked name, and
             # the Host header must match it too.
@@ -764,7 +806,8 @@ class Gateway:
 
     def _host_checks(self, flow: http.HTTPFlow, target: str) -> str | None:
         """Read-only hosts and credential injection. Returns the reason to refuse the request, or None."""
-        if target in self.readonly_hosts and flow.request.method.upper() in WRITE_METHODS:
+        ro = self._readonly(target)
+        if ro and ro.refuses(flow.request.method.upper(), flow.request.path):
             return "read-only host"
         if target not in self.inject_hosts:
             return None

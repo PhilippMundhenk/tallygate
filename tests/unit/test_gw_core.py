@@ -580,3 +580,61 @@ def test_dns_requests_are_answered_nxdomain_and_logged(make):
     gw.dns_request(flow)
     assert flow.response.response_code == 3  # NXDOMAIN
     assert last_event(gw)["reason"] == "agent DNS is disabled (NXDOMAIN); use the proxy"
+
+
+# ------------------------------------------------------------------ read-only hosts (#58)
+def test_readonly_entries_are_validated():
+    ro = core.parse_readonly(["Reg.Example.", {"host": "*.q.example", "post_is_write": True, "read_posts": ["/s/*"]}])
+    assert ro[0] == core.ReadOnly("reg.example") and ro[1].read_posts == ("/s/*",)
+    for bad in (
+        [42],
+        [{"host": "x.example", "methods": ["POST"]}],
+        ["not a host"],
+        [{"host": "x.example", "read_posts": "/s"}],
+        [{"host": "x.example", "read_posts": ["s"]}],
+    ):
+        with pytest.raises(ValueError, match="readonly: invalid entry"):
+            core.parse_readonly(bad)
+
+
+def test_an_invalid_readonly_entry_stops_the_gateway(make):
+    with pytest.raises(ValueError):
+        make({"readonly": [{"host": "x.example", "post": "write"}]})
+
+
+def test_post_is_a_write_only_where_configured(make):
+    gw = make({"readonly": ["npm.example", {"host": "*.oci.example", "post_is_write": True, "read_posts": ["/q/*"]}]})
+    assert gw._intercepted("oci.example") and gw._intercepted("cdn.oci.example") and not gw._intercepted("x.example")
+    for host, method, path, refused in (
+        ("npm.example", "POST", "/-/npm/v1/security/audits", False),  # npm audit
+        ("npm.example", "PUT", "/pkg", True),
+        ("oci.example", "POST", "/v2/img/blobs/uploads/", True),
+        ("cdn.oci.example", "POST", "/q/lookup", False),
+        ("oci.example", "GET", "/v2/img/manifests/latest", False),
+        ("oci.example", "DELETE", "/v2/img/manifests/x", True),
+    ):
+        flow = tflow.tflow(req=tutils.treq(method=method.encode(), host=host, port=443, path=path.encode()))
+        flow.request.headers["Host"] = host
+        gw.request(flow)
+        assert (flow.response is not None and flow.response.status_code == 403) is refused, (host, method, path)
+
+
+def test_default_config_keeps_installs_and_pulls_working_and_refuses_publishing():
+    cfg = yaml.safe_load((Path(__file__).resolve().parents[2] / "config" / "gateway.yaml").read_text(encoding="utf-8"))
+    ro = {r.host: r for r in core.parse_readonly(cfg["readonly"])}
+    assert set(ro) >= {"registry.npmjs.org", "registry.yarnpkg.com", "crates.io", "registry-1.docker.io", "ghcr.io"}
+    assert ro["*.quay.io"].post_is_write and not ro["registry.npmjs.org"].post_is_write
+    hf = ro["huggingface.co"]
+    for method, path, refused in (
+        ("GET", "/org/model/resolve/main/config.json", False),
+        ("POST", "/api/models/org/model/paths-info/main", False),
+        ("POST", "/org/model.git/info/lfs/objects/batch", False),
+        ("POST", "/org/model/git-upload-pack", False),
+        ("POST", "/api/models/org/model/commit/main", True),
+        ("POST", "/api/models/org/model/preupload/main", True),
+        ("POST", "/api/repos/create", True),
+        ("POST", "/org/model/git-receive-pack", True),
+    ):
+        assert hf.refuses(method, path) is refused, (method, path)
+    assert ro["ghcr.io"].refuses("POST", "/v2/o/i/blobs/uploads/") and not ro["ghcr.io"].refuses("GET", "/token")
+    assert ro["crates.io"].refuses("PUT", "/api/v1/crates/new")

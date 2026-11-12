@@ -32,8 +32,26 @@ inject:
 
 # Read-only hosts: TLS is intercepted and PUT/PATCH/DELETE are refused (blocks e.g. `npm publish`
 # as an exfiltration path while installs keep working). Requires the agent to trust the gateway CA.
+# An entry is a host or `*.domain` (the domain and its subdomains), or a mapping: `post_is_write: true`
+# refuses POST too, except on the `read_posts` paths (glob patterns). The templates (Rules -> Templates)
+# for these registries are pull-only only as long as their hosts are listed here.
 readonly:
-  - registry.npmjs.org
+  - registry.npmjs.org           # npm publish is a PUT; POST stays allowed (npm audit is a POST)
+  - registry.yarnpkg.com         # proxies npm: publishing works there too
+  - host: crates.io              # cargo publish / yank / owner are PUT and DELETE
+    post_is_write: true
+  - host: registry-1.docker.io   # an image push starts with POST .../blobs/uploads/; pulls are GET/HEAD
+    post_is_write: true
+  - host: ghcr.io
+    post_is_write: true
+  - host: "*.quay.io"            # quay.io and its subdomains
+    post_is_write: true
+  - host: huggingface.co         # uploads and commits are POSTs; downloads are GET/HEAD
+    post_is_write: true
+    read_posts:                  # POSTs that only read
+      - /api/*/paths-info/*      # file metadata (huggingface_hub, datasets)
+      - "*/info/lfs/objects/batch"   # git-lfs download batch (git clone of a repo)
+      - "*/git-upload-pack"      # git clone/fetch (a push is git-receive-pack)
 
 # Service ports: fixed TCP forwards for non-HTTP protocols. The agent connects to
 # egress-gw:<listen>; the connection is still subject to the policy (ask/allow/deny) for <target>.
