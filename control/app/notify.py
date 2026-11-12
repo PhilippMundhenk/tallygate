@@ -23,6 +23,8 @@ import uuid
 import aiohttp
 
 log = logging.getLogger("notify")
+QUEUE_SIZE = 1000  # gateway events waiting for delivery; beyond that new events are dropped (logged)
+SEND_TIMEOUT = 15  # per chat API call (not the long polls): a hanging API delays later prompts at most this long
 
 BUTTONS = [  # (scope, label, matrix reaction)
     ("once", "Allow 2 min", "👍"),
@@ -91,6 +93,8 @@ class Notifier:
         self.msgs: dict[str, dict] = {}
         self.short: dict[int, str] = {}
         self._n = 0
+        # Gateway events wait here, so slow chat APIs never block the reader of the gateway stream.
+        self.queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=QUEUE_SIZE)
 
     def describe(self) -> dict:
         return {
@@ -99,7 +103,7 @@ class Notifier:
         }
 
     def start(self) -> list[asyncio.Task]:
-        tasks = []
+        tasks = [asyncio.create_task(self._worker())]
         if self.describe()["telegram"]:
             tasks.append(asyncio.create_task(self._tg_poll()))
         if self.describe()["matrix"]:
@@ -111,6 +115,32 @@ class Notifier:
         return self.app["http"]
 
     # ---------------------------------------------------------------- events from gateway
+    def enqueue(self, ev: dict) -> None:
+        """Called by the gateway stream reader; never waits."""
+        try:
+            self.queue.put_nowait(ev)
+        except asyncio.QueueFull:
+            log.warning("notification queue full, dropping %s event", ev.get("type"))
+
+    async def _worker(self) -> None:
+        while True:  # one event at a time, in order: a 'resolved' must not overtake its 'ask'
+            ev = await self.queue.get()
+            await self.handle(ev)
+
+    async def _channels(self, what: str, **sends) -> dict:
+        """Send to all channels concurrently, each on its own: a failing or slow channel neither stops
+        nor delays the other. Returns {channel: result} for the channels that succeeded."""
+        names = [n for n, coro in sends.items() if coro is not None]
+        results = await asyncio.gather(*(sends[n] for n in names), return_exceptions=True)
+        ok = {}
+        for name, res in zip(names, results, strict=True):
+            if isinstance(res, Exception):
+                msg = str(res).replace(self.tg_token, "<token>") if self.tg_token else str(res)
+                log.warning("%s: sending %s failed: %s", name, what, msg)
+            else:
+                ok[name] = res
+        return ok
+
     async def handle(self, ev: dict) -> None:
         try:
             if ev["type"] == "ask":
@@ -137,10 +167,13 @@ class Notifier:
         self.msgs[p["id"]] = entry
         self.short[self._n] = p["id"]
         timeout = int(p["expires"] - time.time())
-        if self.describe()["telegram"]:
-            entry["tg"] = await self._tg_send(p, timeout)
-        if self.describe()["matrix"]:
-            entry["mx"] = await self._mx_send(p, entry["short"], timeout)
+        on = self.describe()
+        sent = await self._channels(
+            "approval prompt",
+            tg=self._tg_send(p, timeout) if on["telegram"] else None,
+            mx=self._mx_send(p, entry["short"], timeout) if on["matrix"] else None,
+        )
+        entry.update(sent)
 
     async def _on_resolved(self, ev: dict) -> None:
         entry = self.msgs.pop(ev["id"], None)
@@ -150,15 +183,16 @@ class Notifier:
         outcome = (
             f"{ev.get('action')} ({ev.get('scope') or ev.get('reason')}{', by ' + ev['by'] if ev.get('by') else ''})"
         )
+        tg = mx = None
         if entry.get("tg"):
-            await self._tg(
+            tg = self._tg(
                 "editMessageText",
                 chat_id=self.tg_chat,
                 message_id=entry["tg"],
                 text=f"{'✅' if ev.get('action') == 'allow' else '⛔'} {entry['text']}\n→ {outcome}",
             )
         if entry.get("mx"):
-            await self._mx_put(
+            mx = self._mx_put(
                 f"/rooms/{self._room()}/send/m.room.message/{uuid.uuid4().hex}",
                 {
                     "msgtype": "m.notice",
@@ -166,6 +200,7 @@ class Notifier:
                     "m.relates_to": {"m.in_reply_to": {"event_id": entry["mx"]}},
                 },
             )
+        await self._channels("outcome", tg=tg, mx=mx)
 
     # ---------------------------------------------------------------- grants
     def _next_short(self, key: str) -> int:
@@ -191,35 +226,45 @@ class Notifier:
         entry = {"short": short, "text": text, "expires": r["expires"]}
         self.gmsgs[r["id"]] = entry
         timeout = int(r["expires"] - time.time())
-        if self.describe()["telegram"]:
-            kb = [[{"text": f"✅ Approve {r['level']} ({r['ttl_label']})", "callback_data": f"g:{r['id']}:approve"}]]
-            if r["level"] == "write" and "read" in g.get("levels", []):
-                kb.append([{"text": "📖 Approve read-only", "callback_data": f"g:{r['id']}:read"}])
-            kb.append([{"text": "⛔ Deny", "callback_data": f"g:{r['id']}:deny"}])
-            res = await self._tg(
-                "sendMessage",
-                chat_id=self.tg_chat,
-                text=f"{text}\nAuto-deny in {timeout}s.",
-                reply_markup={"inline_keyboard": kb},
-                disable_web_page_preview=True,
-            )
-            entry["tg"] = res["message_id"]
-        if self.describe()["matrix"]:
-            body = f"#{short} {text}\nReact: 👍 approve  📖 read-only  👎 deny — or reply: approve|read|deny {short}"
-            html_body = html.escape(body).replace("\n", "<br/>")
-            res = await self._mx_put(
-                f"/rooms/{self._room()}/send/m.room.message/{uuid.uuid4().hex}",
-                {"msgtype": "m.text", "body": body, "format": "org.matrix.custom.html", "formatted_body": html_body},
-            )
-            entry["mx"] = res["event_id"]
-            for reaction in GRANT_REACTIONS:
-                try:
-                    await self._mx_put(
-                        f"/rooms/{self._room()}/send/m.reaction/{uuid.uuid4().hex}",
-                        {"m.relates_to": {"rel_type": "m.annotation", "event_id": entry["mx"], "key": reaction}},
-                    )
-                except Exception:  # noqa: BLE001
-                    break
+        on = self.describe()
+        sent = await self._channels(
+            "grant prompt",
+            tg=self._tg_send_grant(r, g, text, timeout) if on["telegram"] else None,
+            mx=self._mx_send_grant(short, text) if on["matrix"] else None,
+        )
+        entry.update(sent)
+
+    async def _tg_send_grant(self, r: dict, g: dict, text: str, timeout: int) -> int:
+        kb = [[{"text": f"✅ Approve {r['level']} ({r['ttl_label']})", "callback_data": f"g:{r['id']}:approve"}]]
+        if r["level"] == "write" and "read" in g.get("levels", []):
+            kb.append([{"text": "📖 Approve read-only", "callback_data": f"g:{r['id']}:read"}])
+        kb.append([{"text": "⛔ Deny", "callback_data": f"g:{r['id']}:deny"}])
+        res = await self._tg(
+            "sendMessage",
+            chat_id=self.tg_chat,
+            text=f"{text}\nAuto-deny in {timeout}s.",
+            reply_markup={"inline_keyboard": kb},
+            disable_web_page_preview=True,
+        )
+        return res["message_id"]
+
+    async def _mx_send_grant(self, short: int, text: str) -> str:
+        body = f"#{short} {text}\nReact: 👍 approve  📖 read-only  👎 deny — or reply: approve|read|deny {short}"
+        html_body = html.escape(body).replace("\n", "<br/>")
+        res = await self._mx_put(
+            f"/rooms/{self._room()}/send/m.room.message/{uuid.uuid4().hex}",
+            {"msgtype": "m.text", "body": body, "format": "org.matrix.custom.html", "formatted_body": html_body},
+        )
+        event_id = res["event_id"]
+        for reaction in GRANT_REACTIONS:
+            try:
+                await self._mx_put(
+                    f"/rooms/{self._room()}/send/m.reaction/{uuid.uuid4().hex}",
+                    {"m.relates_to": {"rel_type": "m.annotation", "event_id": event_id, "key": reaction}},
+                )
+            except Exception:  # noqa: BLE001
+                break
+        return event_id
 
     async def _on_grant_resolved(self, r: dict) -> None:
         entry = self.gmsgs.get(r["id"])
@@ -233,13 +278,14 @@ class Notifier:
             outcome = f"⛔ {r['status']}" + (f" (by {r['decided_by']})" if r.get("decided_by") else "")
             self.short.pop(entry["short"], None)
             self.gmsgs.pop(r["id"], None)
+        tg = mx = None
         if entry.get("tg"):
             markup = (
                 {"inline_keyboard": [[{"text": "Revoke", "callback_data": f"r:{r['grant_id']}"}]]}
                 if r["status"] == "approved"
                 else {"inline_keyboard": []}
             )
-            await self._tg(
+            tg = self._tg(
                 "editMessageText",
                 chat_id=self.tg_chat,
                 message_id=entry["tg"],
@@ -250,10 +296,11 @@ class Notifier:
             note = f"#{entry['short']} → {outcome}" + (
                 f" — reply 'revoke {entry['short']}' to end it" if r["status"] == "approved" else ""
             )
-            await self._mx_put(
+            mx = self._mx_put(
                 f"/rooms/{self._room()}/send/m.room.message/{uuid.uuid4().hex}",
                 {"msgtype": "m.notice", "body": note, "m.relates_to": {"m.in_reply_to": {"event_id": entry["mx"]}}},
             )
+        await self._channels("grant outcome", tg=tg, mx=mx)
 
     async def _apply_grant(self, rid: str, decision: str, by: str) -> str:
         if decision == "revoke":
@@ -277,8 +324,9 @@ class Notifier:
 
     # ---------------------------------------------------------------- Telegram
     async def _tg(self, method: str, **params):
+        timeout = 40 if method == "getUpdates" else SEND_TIMEOUT  # getUpdates long-polls for 30 s
         async with self.http.post(
-            f"{self.tg_base}/bot{self.tg_token}/{method}", json=params, timeout=aiohttp.ClientTimeout(total=40)
+            f"{self.tg_base}/bot{self.tg_token}/{method}", json=params, timeout=aiohttp.ClientTimeout(total=timeout)
         ) as r:
             data = await r.json(content_type=None)
             if not data.get("ok"):
@@ -359,7 +407,7 @@ class Notifier:
             json=body,
             params=params,
             headers={"Authorization": f"Bearer {self.mx_token}"},
-            timeout=aiohttp.ClientTimeout(total=60),
+            timeout=aiohttp.ClientTimeout(total=60 if path == "/sync" else SEND_TIMEOUT),  # /sync long-polls
         ) as r:
             data = await r.json(content_type=None)
             if r.status >= 400:

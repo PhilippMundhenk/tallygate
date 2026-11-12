@@ -23,13 +23,14 @@ All variables are optional. Secrets are created on first start when they are not
 | `COOKIE_SECURE` | `1` | Session cookie only over HTTPS. Set `0` only for local plain-HTTP testing. |
 | `TRUST_FORWARDED_FOR` | `0` | `1` when the UI sits behind your reverse proxy: trust `X-Forwarded-For`/`-Host`/`-Proto` for rate limiting and origin checks — **only** from peers in `TRUSTED_PROXIES`. |
 | `TRUSTED_PROXIES` | – | Comma-separated CIDRs of your reverse/auth proxy as seen by control. Forwarded and auth headers from any other peer are ignored. With a published port this is the `mgmt` bridge gateway `172.31.12.1/32`, which every local process shares: see [reverse proxy](operations.md#reverse-proxy). |
-| `SESSION_IDLE` | `7200` | UI session idle timeout in seconds (absolute lifetime: `SESSION_TTL`, 12 h). Sessions are server-side: logout and restarts end them. |
+| `SESSION_IDLE` | `7200` | UI session idle timeout in seconds (absolute lifetime: `SESSION_TTL`, 12 h). Sessions are server-side: logout and restarts end them, and open event streams and consoles are closed within 10 s. |
 | `GW_API_TOKEN` | *(created in the `gw-token` volume)* | Bearer token between control and gateway (≥ 24 chars). |
 | `SESSION_SECRET` | *(created in `control-data`)* | HMAC key that signs session ids in the cookie. |
 | `TTYD_CREDENTIAL` | *(created in the `ttyd` volume)* | `user:password` shared by control and the agent's ttyd consoles. Added by control during the WebSocket handshake; the browser never sees it. |
 | `CONTROL_PASSWORD_HASH` | *(generated password)* | `scrypt:16:<salt>:<hash>` (scrypt N = 2^16), create with `python3 control/hashpw.py`. Without it (and without `CONTROL_PASSWORD`), control generates a password on first start, prints it once to its log and keeps the hash in `control-data`; change that one with `docker compose exec control python -m app.passwd`. The legacy `scrypt:<salt>:<hash>` (N = 2^14) is still accepted; regenerate it. |
 | `CONTROL_PASSWORD` | – | Plain-text password instead of a hash. Discouraged (logged as a warning). |
-| `TRUST_PROXY_AUTH_HEADER` | – | E.g. `Remote-User`: accept the user from this header set by an authenticating proxy (Authelia, oauth2-proxy). Requires `TRUSTED_PROXIES`; control refuses to start without it. |
+| `TRUST_PROXY_AUTH_HEADER` | – | E.g. `Remote-User`: accept the user from this header set by an authenticating proxy (Authelia, oauth2-proxy). Requires `TRUSTED_PROXIES`; control refuses to start without it. Trust only the proxy container's own address: see [reverse proxy](operations.md#reverse-proxy). |
+| `TRUST_PROXY_SECRET` | – | Shared secret (≥ 16 characters) that the proxy sends as `X-Tallygate-Proxy-Secret`. When set, forwarded and auth headers are believed only from `TRUSTED_PROXIES` **and** with this header (compared in constant time). Recommended with `TRUST_PROXY_AUTH_HEADER`. |
 | `RC_NAME` | `tallygate` | Remote Control session name shown in the Claude app. |
 | `RC_ENABLE` | `1` | Start `claude remote-control` automatically in the `rc` tmux session. |
 | `RC_ARGS` | – | Extra arguments for `claude remote-control`, e.g. `--spawn worktree`. |
@@ -53,7 +54,7 @@ initial_preset: baseline   # preset used to create policy.yaml on first start
 log_keep_days: 30          # event log retention
 log_max_events: 500000     # hard cap on stored events; identical events within 2 s are counted, not stored
 max_pending: 10            # open approvals at once; further unknown destinations are denied immediately
-# hard_deny_floor: [...]   # immutable hard deny (default: built-in list below). Only this file can change it.
+# hard_deny_floor: [...]   # ADDED to the built-in hard deny below (cannot remove from it). Only this file can change it.
 readonly:                  # TLS intercepted, PUT/PATCH/DELETE refused (e.g. blocks `npm publish`)
   - registry.npmjs.org
 # inject_strip_headers: [Authorization, Cookie]   # always removed from agent requests to inject hosts
@@ -120,8 +121,10 @@ Built-in hard-deny floor: `0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 16
 192.0.0.0/24, 192.0.2.0/24, 192.88.99.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24,
 224.0.0.0/4, 240.0.0.0/4, ::/96, ::ffff:0:0/96, 64:ff9b::/96, 64:ff9b:1::/48, 100::/64, 2001::/32,
 2001:db8::/32, 2002::/16, fc00::/7, fe80::/10, fec0::/10, ff00::/8` (NAT64, 6to4 and Teredo prefixes are
-included because they embed IPv4 addresses). The floor is set only by `hard_deny_floor` in the read-only
-gateway config; `policy.yaml`/the API can only add CIDRs. If the Docker host has a public IP (VPS), add it.
+included because they embed IPv4 addresses). The floor always contains this list; `hard_deny_floor` in the
+read-only gateway config **adds** to it (it cannot remove built-in ranges), and an invalid entry stops the
+gateway. `policy.yaml`/the API can only add further CIDRs. If the Docker host has a public IP (VPS), add it
+to `hard_deny_floor`.
 For LAN services use a service port with `allow_private: true` (exempts exactly that target, and only on
 that service port — not via the proxy or SOCKS) rather than shrinking the floor.
 
@@ -149,6 +152,7 @@ These are wired by the compose file and normally need no change.
 | egress-gw | `GW_CONFIG`, `DATA_DIR`, `CA_EXPORT_DIR`, `PRESET_DIR` | Paths. |
 | egress-gw | `GW_EXTRA_ARGS` | Extra mitmdump arguments (advanced). |
 | egress-gw | `GW_TEST_STATIC_HOSTS` | **Test suite only.** Never set in production (logged as a warning). |
+| egress-gw | `GW_TEST_FLOOR_REPLACE` | **Test suite only.** `1` = `hard_deny_floor` replaces the built-in list (the e2e upstreams run on loopback). Never set in production (logged as a warning). |
 | control | `CONTROL_BIND_HOST` / `CONTROL_PORT` | UI bind address (mgmt network only) / port. |
 | control | `GW_URL` | Gateway API base URL. |
 | control | `AGENT_HOST`, `AGENT_STATUS_PORT`, `TERMINALS` | Agent address, status port, `name:port` list of ttyd consoles. |

@@ -6,6 +6,11 @@ from __future__ import annotations
 import json
 import time
 
+import pytest
+
+# Skip, don't error, without the control dependencies: control and the mock bot APIs run on aiohttp.
+pytest.importorskip("aiohttp", reason="needs aiohttp (pip install -r control/requirements.txt)")
+
 from .conftest import free_port
 from .helpers import http_via_proxy
 

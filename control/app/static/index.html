@@ -4,21 +4,21 @@
 <body>
 <header>
   <span class="brand">🔐 tallygate</span>
-  <nav id="tabs">
-    <button data-tab="approvals">Approvals <span id="pendingCount" class="badge hidden">0</span></button>
-    <button data-tab="log">Log</button>
-    <button data-tab="rules">Rules</button>
-    <button data-tab="grants">Grants <span id="grantActiveCount" class="badge ok hidden">0</span></button>
-    <button data-tab="console">Console</button>
-    <button data-tab="setup">Setup</button>
+  <nav id="tabs" role="tablist" aria-label="Sections">
+    <button data-tab="approvals" id="tabbtn-approvals" role="tab" aria-selected="false" aria-controls="tab-approvals">Approvals <span id="pendingCount" class="badge hidden">0</span></button>
+    <button data-tab="log" id="tabbtn-log" role="tab" aria-selected="false" aria-controls="tab-log">Log</button>
+    <button data-tab="rules" id="tabbtn-rules" role="tab" aria-selected="false" aria-controls="tab-rules">Rules</button>
+    <button data-tab="grants" id="tabbtn-grants" role="tab" aria-selected="false" aria-controls="tab-grants">Grants <span id="grantActiveCount" class="badge ok hidden">0</span></button>
+    <button data-tab="console" id="tabbtn-console" role="tab" aria-selected="false" aria-controls="tab-console">Console</button>
+    <button data-tab="setup" id="tabbtn-setup" role="tab" aria-selected="false" aria-controls="tab-setup">Setup</button>
   </nav>
-  <span id="conn" class="dot" title="event stream"></span>
+  <span class="conn" role="status"><span id="conn" class="dot" aria-hidden="true"></span><span id="connText">connecting</span></span>
   <form method="post" action="/logout" class="logout"><button>Log out</button></form>
 </header>
 
 <main>
   <!-- APPROVALS -->
-  <section id="tab-approvals">
+  <section id="tab-approvals" role="tabpanel" aria-labelledby="tabbtn-approvals">
     <div id="grantReqBox" class="hidden">
       <h2>Grant requests</h2>
       <p class="hint">The agent asks for a predefined bundle of access. The reason is written by the agent – treat it as a claim, not a fact.</p>
@@ -31,19 +31,19 @@
   </section>
 
   <!-- LOG -->
-  <section id="tab-log" class="hidden">
+  <section id="tab-log" role="tabpanel" aria-labelledby="tabbtn-log" class="hidden">
     <div class="toolbar">
-      <input id="logFilter" placeholder="filter host / action / reason">
+      <input id="logFilter" type="search" aria-label="Filter log" placeholder="filter host / action / reason">
       <label><input type="checkbox" id="logHideDns"> hide DNS</label>
       <label><input type="checkbox" id="logOnlyBlocked"> only blocked</label>
       <button id="logMore">Load older</button>
     </div>
-    <table class="log"><thead><tr><th>Time</th><th>Kind</th><th>Proto</th><th>Destination</th><th>Action</th><th>Reason</th><th></th></tr></thead>
-      <tbody id="logBody"></tbody></table>
+    <div class="table-wrap"><table class="log"><thead><tr><th>Time</th><th>Kind</th><th>Proto</th><th>Destination</th><th>Action</th><th>Reason</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody id="logBody"></tbody></table></div>
   </section>
 
   <!-- RULES -->
-  <section id="tab-rules" class="hidden">
+  <section id="tab-rules" role="tabpanel" aria-labelledby="tabbtn-rules" class="hidden">
     <div class="grid2">
       <div class="card">
         <h3>Mode</h3>
@@ -54,37 +54,37 @@
       </div>
       <div class="card">
         <h3>Test a destination</h3>
-        <div class="row"><input id="testHost" placeholder="host or IP"><input id="testPort" type="number" value="443" class="port"><button id="testBtn">Test</button></div>
+        <div class="row"><input id="testHost" aria-label="Host or IP to test" placeholder="host or IP"><input id="testPort" type="number" value="443" class="port" aria-label="Port"><button id="testBtn">Test</button></div>
         <pre id="testOut" class="muted"></pre>
         <h3>Presets</h3>
-        <div class="row"><select id="presetSel"></select><input id="presetTtl" type="number" placeholder="TTL s (optional)" class="port"><button id="presetBtn">Apply on top</button></div>
+        <div class="row"><select id="presetSel" aria-label="Preset"></select><input id="presetTtl" type="number" aria-label="Preset TTL in seconds (optional)" placeholder="TTL s (optional)" class="port"><button id="presetBtn">Apply on top</button></div>
       </div>
     </div>
     <div class="card">
       <h3>Add rule</h3>
       <div class="row wrap">
-        <select id="nrAction"><option>allow</option><option>deny</option><option>ask</option></select>
-        <select id="nrKind"><option value="host">host</option><option value="cidr">cidr</option></select>
-        <input id="nrMatch" placeholder="*.example.com  or  203.0.113.0/24">
-        <input id="nrPort" placeholder="port(s): 443 | 80,443 | 8000-8100 | *" class="portw">
-        <input id="nrNote" placeholder="note">
-        <input id="nrTtl" type="number" placeholder="TTL s" class="port">
+        <select id="nrAction" aria-label="Rule action"><option>allow</option><option>deny</option><option>ask</option></select>
+        <select id="nrKind" aria-label="Match by"><option value="host">host</option><option value="cidr">cidr</option></select>
+        <input id="nrMatch" aria-label="Host or CIDR" placeholder="*.example.com  or  203.0.113.0/24">
+        <input id="nrPort" aria-label="Ports" placeholder="port(s): 443 | 80,443 | 8000-8100 | *" class="portw">
+        <input id="nrNote" aria-label="Note" placeholder="note">
+        <input id="nrTtl" type="number" aria-label="TTL in seconds (optional)" placeholder="TTL s" class="port">
         <button id="nrAdd">Add (top)</button>
       </div>
       <p class="hint">First match wins. <code>*.example.com</code> matches example.com and all subdomains. CIDR allow rules require <i>all</i> resolved IPs inside.</p>
     </div>
-    <table class="rules"><thead><tr><th>#</th><th>Action</th><th>Match</th><th>Port</th><th>Note</th><th>Expires</th><th></th></tr></thead><tbody id="rulesBody"></tbody></table>
+    <div class="table-wrap"><table class="rules"><thead><tr><th>#</th><th>Action</th><th>Match</th><th>Port</th><th>Note</th><th>Expires</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="rulesBody"></tbody></table></div>
     <details class="card"><summary>Hard deny (never reachable, never asked)</summary>
-      <p class="hint">Built-in floor (read-only; change only via <code>hard_deny_floor</code> in the gateway config file):</p>
+      <p class="hint">Floor (read-only): the built-in list plus <code>hard_deny_floor</code> from the gateway config file:</p>
       <p><code id="hardDenyFloor" class="muted"></code></p>
-      <p class="hint">Additional CIDRs (one per line), e.g. your Docker host's public IP:</p>
-      <textarea id="hardDeny" rows="5"></textarea><button id="saveHard">Save additional hard deny</button></details>
+      <p class="hint" id="hardDenyHint">Additional CIDRs (one per line), e.g. your Docker host's public IP:</p>
+      <textarea id="hardDeny" rows="5" aria-labelledby="hardDenyHint"></textarea><button id="saveHard">Save additional hard deny</button></details>
     <details class="card"><summary>Advanced: raw policy JSON</summary>
-      <textarea id="rawPolicy" rows="16" spellcheck="false"></textarea><button id="saveRaw">Replace policy</button></details>
+      <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><button id="saveRaw">Replace policy</button></details>
   </section>
 
-  <!-- CONSOLE -->
-  <section id="tab-grants" class="hidden">
+  <!-- GRANTS -->
+  <section id="tab-grants" role="tabpanel" aria-labelledby="tabbtn-grants" class="hidden">
     <h2>Active grants</h2>
     <div id="activeGrants"></div>
     <p id="activeEmpty" class="muted">No grant is active.</p>
@@ -116,9 +116,8 @@
         Self-signed certificate? Pin its SHA-256 fingerprint instead of disabling verification.</p>
       <div id="geTargets"></div>
       <button id="geAddTarget" class="small secondary">+ target</button>
-      <h4>Credential injection <span class="muted">(https targets; the agent never sees the value)</span></h4>
-      <div id="geInject"></div>
-      <button id="geAddInject" class="small secondary">+ header</button>
+      <p class="hint">Credential injection and disabling TLS verification are only available for grants in the
+        gateway config file: a UI session must not be able to send stored secrets to a host of its choosing.</p>
       <div class="btns">
         <button id="geSave">Save grant</button><button id="geCancel" class="secondary">Cancel</button>
       </div>
@@ -128,25 +127,26 @@
       <p class="hint">Write-only: values are stored in the gateway and can never be read back. Reference them in a
         header template as <code>${name}</code>, e.g. <code>Bearer ${ha_token}</code>.</p>
       <div id="secretList"></div>
-      <div class="row"><input id="secName" placeholder="name (a-z0-9_)"><input id="secValue" type="password" placeholder="value">
+      <div class="row"><label class="inline">Name <input id="secName" placeholder="a-z0-9_" autocomplete="off"></label>
+        <label class="inline">Value <input id="secValue" type="password" autocomplete="new-password"></label>
         <button id="secSave">Store</button></div>
     </details>
   </section>
 
-  <section id="tab-console" class="hidden">
-    <div class="toolbar" id="termButtons"></div>
+  <section id="tab-console" role="tabpanel" aria-labelledby="tabbtn-console" class="hidden">
+    <div class="toolbar" id="termButtons" role="group" aria-label="Consoles"></div>
     <p class="hint"><b>rc</b> = the Remote Control server (tmux; answer prompts here, detach is automatic). <b>bash</b> = shell in the agent. <b>claude</b> = interactive Claude Code.</p>
     <iframe id="termFrame" title="terminal"></iframe>
   </section>
 
   <!-- SETUP -->
-  <section id="tab-setup" class="hidden">
+  <section id="tab-setup" role="tabpanel" aria-labelledby="tabbtn-setup" class="hidden">
     <h2>Setup wizard</h2>
     <ol class="wizard">
       <li id="st-gw"><h3>1 · Gateway</h3><div class="status">…</div></li>
       <li id="st-gh"><h3>2 · GitHub token (stored in the gateway only)</h3>
         <p class="hint">Use a <b>fine-grained PAT</b> limited to the repos the agent may touch (Contents, Pull requests, Issues: read/write). The agent only ever sees a placeholder; the gateway injects the real token for github.com / api.github.com.</p>
-        <div class="row"><input id="ghToken" type="password" placeholder="github_pat_…" autocomplete="off"><button id="ghSave">Validate &amp; store</button><button id="ghRemove" class="secondary">Remove</button></div>
+        <div class="row"><input id="ghToken" type="password" aria-label="GitHub token" placeholder="github_pat_…" autocomplete="off"><button id="ghSave">Validate &amp; store</button><button id="ghRemove" class="secondary">Remove</button></div>
         <div class="status"></div></li>
       <li id="st-claude"><h3>3 · Claude login</h3>
         <p class="hint">Open the <b>bash</b> console and run <code>claude auth login</code>, open the shown URL, paste the code back. Needs a claude.ai subscription login (Remote Control does not work with API keys).</p>
@@ -162,9 +162,11 @@ git config --global user.email "id+user@users.noreply.github.com"</pre>
         <p class="hint">Runs inside the agent: direct internet, raw TCP, UDP DNS, LAN via proxy, gateway API and control UI must all be <b>blocked</b>; the proxy path to Anthropic must work.</p>
         <button id="selftestBtn">Run self-test</button><div class="status"></div></li>
     </ol>
-    <div class="card"><h3>Notifications</h3><div id="notifyStatus" class="muted"></div></div>
+    <div class="card"><h3>Notifications</h3><div id="notifyStatus" class="muted"></div>
+      <p class="hint">Browser notifications appear for new requests while this tab is in the background.</p>
+      <button id="notifyBtn" class="secondary">Enable browser notifications</button> <span id="notifyPerm" class="muted"></span></div>
   </section>
 </main>
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <script src="/static/app.js"></script>
 </body></html>

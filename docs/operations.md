@@ -127,10 +127,17 @@ With a proxy on the host talking to the published port, control sees the `mgmt` 
 `172.31.12.1` (check with `docker compose logs control` after a failed login). Every other process on the
 host that connects to the published port arrives from that address too, so trusting it means trusting the
 whole host. That is acceptable for `X-Forwarded-For` on a single-user host, but **not** together with
-`TRUST_PROXY_AUTH_HEADER`: then let the proxy container join the `mgmt` network with a fixed address and
-trust only that address.
+`TRUST_PROXY_AUTH_HEADER`: then use the [safe setup for an authenticating proxy](#authenticating-proxy) below.
 
-Caddy example with forward-auth:
+If the Docker host has a public IP (VPS), add it to `hard_deny_floor` in `config/gateway.yaml` so the agent
+cannot reach host services through the egress path. Entries there are added to the built-in list
+(RFC 1918, loopback, metadata, ...), which always stays in force:
+
+```yaml
+hard_deny_floor: [203.0.113.7/32]   # your host's public IP; the built-in ranges still apply
+```
+
+Caddy on the host, with SSO in front of the built-in password:
 
 ```caddy
 tallygate.example.org {
@@ -142,12 +149,62 @@ tallygate.example.org {
 }
 ```
 
-With an authenticating proxy you may set `TRUST_PROXY_AUTH_HEADER=Remote-User` to skip the built-in
-password. It is honoured only from `TRUSTED_PROXIES` (control refuses to start without it); still keep port
-8080 unreachable except through the proxy.
+### Authenticating proxy
 
-If the Docker host has a public IP (VPS), add it to `hard_deny_floor` in `config/gateway.yaml` so the agent
-cannot reach host services through the egress path.
+With an authenticating proxy you may set `TRUST_PROXY_AUTH_HEADER=Remote-User` to skip the built-in
+password. It is honoured only from `TRUSTED_PROXIES` (control refuses to start without it). Anyone who can
+send requests from a trusted address can log in as anyone, so:
+
+1. Run the proxy as a container on the `mgmt` network with a **fixed address**.
+2. Publish **nothing** of control: only the proxy publishes a port.
+3. Trust only the proxy's address, and let the proxy send a shared secret.
+
+A `compose.override.yaml` next to `compose.yaml` (Compose ≥ 2.24 for `!reset`):
+
+```yaml
+services:
+  control:
+    ports: !reset []                # no published UI port: reachable only through the proxy
+  proxy:
+    image: caddy:2
+    ports: ["443:443"]
+    environment:
+      TRUST_PROXY_SECRET: ${TRUST_PROXY_SECRET}
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro"]
+    networks:
+      mgmt: {ipv4_address: 172.31.12.10}
+```
+
+`.env`:
+
+```sh
+PUBLIC_URL=https://tallygate.example.org
+TRUST_PROXY_AUTH_HEADER=Remote-User
+TRUSTED_PROXIES=172.31.12.10/32
+TRUST_PROXY_SECRET=<openssl rand -hex 24>
+TRUST_FORWARDED_FOR=1
+```
+
+The proxy forwards to `172.31.12.3:8080`, must never pass on a `Remote-User` sent by the client, and adds the
+secret:
+
+```caddy
+tallygate.example.org {
+    forward_auth authelia:9091 {
+        uri /api/authz/forward-auth
+        copy_headers Remote-User
+    }
+    reverse_proxy 172.31.12.3:8080 {
+        header_up X-Tallygate-Proxy-Secret {$TRUST_PROXY_SECRET}
+    }
+}
+```
+
+With `TRUST_PROXY_SECRET` set, control ignores the auth and forwarded headers of any request that lacks the
+secret, even from the trusted address; the secret is compared in constant time. Give the proxy container
+the same value (the override above does). Your authentication service (here `authelia`) must be reachable
+from the proxy, for example on a second network of the proxy.
+
 
 ## First-time setup
 

@@ -20,7 +20,8 @@ consoles into the agent, and run the setup wizard. Remote Control itself is used
 
 When the agent connects somewhere that no rule covers (and the default is `ask`), the connection is **held**
 and appears here, on Telegram/Matrix if configured, and as a desktop notification while the tab is in the
-background. The countdown shows when it will be denied automatically.
+background (turn these on once with **Enable browser notifications** in the Setup tab). The countdown shows
+when it will be denied automatically.
 
 | Button | Effect |
 |---|---|
