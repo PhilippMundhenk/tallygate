@@ -41,6 +41,8 @@ only then let through, turned back, or held for you to decide.
   read-only hosts (e.g. the npm registry) refuse uploads.
 - **Operator UI.** Approvals, live log, rules editor with dry-run test, presets, browser consoles (Remote
   Control, bash, claude), and a setup wizard for GitHub, Claude login, git and Remote Control.
+- **Learning mode.** Let a new task run for 30 minutes with public HTTPS allowed and recorded, then save the
+  destinations it used as rules in one go. The LAN stays blocked; it ends by itself.
 - **Rule usage.** Hit counters per rule, unused rules offered for removal, and a permanent rule suggested when
   you keep approving the same destination for an hour.
 - **Log search and audit export.** Search the whole log by host, kind, action and time range, see new

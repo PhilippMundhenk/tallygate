@@ -80,6 +80,10 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - **Log search:** server-side search of the event log by host (`*.domain` too), kind, action and time range,
   saved filters, a destinations view with new destinations, a page per destination with the rule that decides
   it, and CSV or JSON export (#80).
+- **Learning mode:** for a limited time, destinations no rule covers are allowed on the chosen ports and
+  recorded; afterwards they are proposed as rules, grouped by domain, to save in one go. The hard deny, deny
+  and ask rules, grants and name-first decisions stay in force; it is shown in the header and ends by itself,
+  on the emergency stop and on restart (#69).
 
 ### Changed
 - **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie

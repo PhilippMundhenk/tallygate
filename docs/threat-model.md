@@ -97,11 +97,13 @@ service, **E**levation of privilege.
 | T34 | A compromised UI session or API token defines a grant that injects a stored secret into requests to a host of its choosing | I | `inject` and `tls_verify: false` only in config-file grants; UI/API grants with them are rejected | unit + e2e (#12) |
 | T35 | Rule bypass through odd notation: IPv4-mapped IPv6 literals (`[::ffff:127.0.0.1]`) or a null/garbled port that matches every port | E | Mapped addresses normalised in hard deny, rules, approvals and grants; ports validated strictly in the API and the UI | unit + e2e (#13) |
 | T36 | A compromised UI session hides a policy change, or uses import or rollback to lower the protection | R, E | Every policy write is a version with its author (control sets it from the session); restore and import are validated like `PUT /policy` and cannot touch the hard-deny floor (static config); imported grants pass the same checks as the grant editor (no injection, LAN only inside `grants_lan_allow`); exports and versions contain no secrets | unit + e2e (#71) |
+| T37 | Learning mode is used to open broad access, or outlives the task | E, I | Only replaces the default decision for host names on `learning_ports` (static config); deny/ask rules, grants, the hard deny on resolved addresses and name-first decisions stay in force; IP literals not covered; at most `learning_max_minutes`, in memory only (ends on restart and on the emergency stop), checked per connection; shown in the header; started only through the management API; saved rules are exact hosts or `*.<registrable domain>`, added below existing rules | unit + e2e (#69) |
 
 ## Residual risks
 
 | Risk | Why it remains | Recommendation |
 |---|---|---|
+| **Learning mode** | While it runs, every public host name on its ports is reachable (like the `open` preset), so data can leave through any of them. | Use it for a short time on a task you watch; prefer 443 only; review the proposed rules. |
 | **Exfiltration via allowed destinations** | Any allowed host can carry data out — notably the Anthropic API with an API key of the attacker's choosing (the agent needs its own Claude credentials, so these cannot be stripped), GitHub within the injected token's permissions, and reads that encode data in URLs. | Keep allowlists tight; prefer `ask`; fine-grained PATs; review the log. |
 | **Grant semantics** | `read` trusts that the target does not change state on GET; `tcp` grants cannot see inside the stream, and established sessions survive expiry. | Narrow paths, short `max_ttl` for tcp, dedicated restricted accounts/keys on targets. |
 | **Agent-supplied terminal output** | xterm.js parses escape sequences from the agent. | Vendored, pinned xterm.js; no clipboard/link addons; CSP limits impact. |

@@ -32,6 +32,8 @@ from mitmproxy.proxy import server_hooks
 from egressgw import api
 from egressgw.grants import READ_METHODS, GrantDef, Grants, Target, path_ok
 from egressgw.history import PolicyHistory
+from egressgw.learning import REASON as LEARNING
+from egressgw.learning import Learning, parse_ports
 from egressgw.policy import (
     DEFAULT_HARD_DENY,
     Decision,
@@ -222,6 +224,11 @@ class Gateway:
             int(self.config.get("log_max_events", 500_000)),
         )
         self.secrets = Secrets(DATA_DIR / "secrets.json")
+        self.learning = Learning(
+            self.events.db,
+            parse_ports(self.config.get("learning_ports", [80, 443])),
+            int(self.config.get("learning_max_minutes", 120)),
+        )
         self.inject = [dict(i) for i in self.config.get("inject") or []]
         self.inject_hosts = {i["host"].lower().rstrip(".") for i in self.inject}
         self.readonly = parse_readonly(self.config.get("readonly") or [])
@@ -309,6 +316,8 @@ class Gateway:
         self.neg_cache = {k: v for k, v in self.neg_cache.items() if v > now}
         self._flush_dups(now)
         self.flush_hits()
+        if self.learning.expired():
+            self.end_learning("gateway", "time is up")
         self.events.enforce_cap()
         expired, timed_out = self.grants.prune()
         for a in expired:
@@ -376,6 +385,22 @@ class Gateway:
         hits, self.hits = self.hits, {}
         self.events.flush_hits(hits, [r.id for r in self.policy.rules])
 
+    def start_learning(self, minutes, ports, by: str) -> dict:
+        s = self.learning.start(minutes, ports, by)
+        until = time.strftime("%H:%M", time.localtime(s["until"]))
+        self.record(
+            kind="admin", action="learning", reason=f"learning mode on until {until}, ports {s['ports']}, by {by}"
+        )
+        self.publish({"type": "learning"})
+        return s
+
+    def end_learning(self, by: str, why: str) -> dict | None:
+        s = self.learning.end(by, why)
+        if s:
+            self.record(kind="admin", action="learning", reason=f"learning mode ended: {why} ({by})")
+            self.publish({"type": "learning"})
+        return s
+
     def save_policy(self, by: str = "api", what: str = "policy changed") -> None:
         self.policy.save(self.policy_path)
         self._history(by, what)
@@ -403,9 +428,14 @@ class Gateway:
                 ips.append(sockaddr[0])
         return ips
 
-    async def decide(self, host: str, port: int, ips: list[str], proto: str, client: str) -> Decision:
-        """Full decision with known IPs (hard deny, rules, default; asks if needed)."""
+    async def decide(
+        self, host: str, port: int, ips: list[str], proto: str, client: str, learning: bool = False
+    ) -> Decision:
+        """Full decision with known IPs (hard deny, rules, default; asks if needed). With `learning`, learning
+        mode replaces the default decision only: the hard deny and every rule still decide first."""
         dec = self.policy.evaluate(host, port, ips, proto)
+        if learning and dec.rule_id is None and self.learning.covers(port):
+            return Decision("allow", LEARNING)
         if dec.action != "ask":
             return dec
         return await self.ask(host, port, ips, proto, client)
@@ -627,6 +657,9 @@ class Gateway:
             # 1) decide on the name alone: denied / not-yet-approved names are never resolved
             pre = self.policy.evaluate_name(host, port)
             hint = self._grant_hint(host, port)
+            if pre.rule_id is None and not hint and self.learning.covers(port):
+                # no rule matched and no grant is defined for it: learning mode decides instead of the mode
+                pre = Decision("allow", LEARNING)
             if hint and pre.action != "allow":
                 self._hit(pre)
                 return block(f"{pre.reason}; {hint}")
@@ -642,7 +675,7 @@ class Gateway:
                 return block(f"dns failure: {e}")
             if not ips:
                 return block("no address")
-            dec = await self.decide(host, port, ips, proto, client)
+            dec = await self.decide(host, port, ips, proto, client, learning=pre.reason == LEARNING)
         reason = dec.reason
         self._hit(dec)
         if dec.action != "allow":

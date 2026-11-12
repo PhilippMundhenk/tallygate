@@ -218,6 +218,9 @@ Evaluation for a connection attempt to `host:port`:
 5. **Rules**, first match wins. Approvals and presets are inserted at the top. Expired rules are ignored and
    pruned every 15 s.
 6. **default** action: `allow` (blocklist mode), `deny` (allowlist mode) or `ask` (human in the loop).
+   While **learning mode** runs, a host name on one of its ports that no rule matched (and no grant is
+   defined for) is allowed instead, in step 2 and again in step 6; steps 3–5 still apply. It is time-limited,
+   held in memory only, and ends on the emergency stop and on restart (#69).
 
 At most `max_pending` approvals are open at once; identical log events are coalesced.
 
@@ -253,6 +256,7 @@ Concurrent connections to the same `host:port` share one pending request (one no
 | Secrets | `gateway-data`: `secrets.json` | egress-gw | Mode 0600, never returned by the API. |
 | Gateway CA | `gateway-data`: `mitmproxy/` | egress-gw | Public cert exported to the `ca` volume for the agent. |
 | Static gateway config | `/etc/egressgw/config.yaml` (default from `config/gateway.yaml` in the image) | operator | Read-only (override by mounting your own file): injection hosts, service ports, hard-deny floor, config grants. |
+| Learning mode | memory (`events.db`: session records) | egress-gw | The running session lives in memory only: a restart ends it. Sessions (start, end, ports, who) are kept for the summary. |
 | UI-defined grants | `gateway-data`: `grants.yaml` | egress-gw | Active grants and pending requests live in memory (a restart ends them: fail closed). |
 | Agent home | `agent-home` | agent (uid 1000) | Claude login, settings, skills, `.gitconfig`, tmux/shell history. |
 | Workspace | `workspace` | agent | Repositories. |

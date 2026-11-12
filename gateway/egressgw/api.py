@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from egressgw import history, usage
+from egressgw import history, learning, usage
 from egressgw.policy import ACTIONS, SCOPES, Decision, Policy, Rule, is_ip, load_preset, valid_hostname
 
 if TYPE_CHECKING:
@@ -268,6 +268,58 @@ def build_app(gw: Gateway) -> web.Application:
         gw.secrets.set(name, body.get("value") or None)
         gw.record(kind="admin", action="secret", reason=f"secret {name} {'set' if body.get('value') else 'removed'}")
         return _json({"names": gw.secrets.names()})
+
+    # ---------------------------------------------------------------- learning mode (#69)
+    def _learning_state() -> dict:
+        lm = gw.learning
+        return {
+            "active": lm.current(),
+            "ports_allowed": lm.ports,
+            "max_minutes": lm.max_minutes,
+            "sessions": lm.sessions(),
+        }
+
+    @routes.get("/learning")
+    async def learning_get(_):
+        return _json(_learning_state())
+
+    @routes.post("/learning")
+    async def learning_start(request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("expected {minutes, ports}")
+        gw.start_learning(body.get("minutes"), body.get("ports"), _by(request))
+        return _json(_learning_state(), 201)
+
+    @routes.delete("/learning")
+    async def learning_stop(request):
+        gw.end_learning(_by(request), "stopped")
+        return _json(_learning_state())
+
+    @routes.get("/learning/{sid:[a-f0-9]+}")
+    async def learning_summary(request):
+        s = gw.learning.session(request.match_info["sid"])
+        if s is None:
+            return _json({"error": "no such learning session"}, 404)
+        return _json({"session": s, "groups": learning.summary(gw.events.db, s, gw.policy)})
+
+    @routes.post("/learning/apply")
+    async def learning_apply(request):
+        """Save proposed rules from a learning session: exact hosts or *.<registrable domain> only."""
+        body = await request.json()
+        rules = body.get("rules") if isinstance(body, dict) else None
+        if not isinstance(rules, list) or not rules:
+            raise ValueError("expected {rules: [{host, port}]}")
+        checked = list(dict.fromkeys(learning.check_rule(r) for r in rules))
+        note = "learned " + time.strftime("%Y-%m-%d")
+        added = [Rule(action="allow", host=h, port=p, note=note, source="learning") for h, p in checked]
+        for r in added:  # at the bottom: an existing deny or ask rule keeps winning over a learned wildcard
+            gw.policy.add_rule(r, top=False)
+        gw.save_policy(_by(request), f"{len(added)} rules from learning mode")
+        gw.record(
+            kind="admin", action="rule+", reason=f"from learning mode: {', '.join(f'{h}:{p}' for h, p in checked)}"
+        )
+        return _json({"added": [r.to_dict() for r in added]}, 201)
 
     # ---------------------------------------------------------------- rule usage and suggestions (#70)
     @routes.get("/rules/stats")
@@ -608,6 +660,7 @@ def emergency_stop(gw: Gateway, by: str) -> dict:
     _step(steps, "deny_pending", deny_asks)
     _step(steps, "deny_grant_requests", deny_grant_requests)
     _step(steps, "remove_internet_presets", remove_internet)
+    _step(steps, "end_learning", lambda: {"ended": [s["id"]] if (s := gw.end_learning(by, "emergency stop")) else []})
     _step(steps, "mode_deny", mode_deny)
     ok = all(s["ok"] for s in steps)
     counts = ", ".join(

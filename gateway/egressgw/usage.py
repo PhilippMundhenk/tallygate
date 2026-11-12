@@ -24,7 +24,7 @@ def rule_usage(
     return out
 
 
-def _permanently_allowed(policy: Policy, host: str, port: int) -> bool:
+def permanently_allowed(policy: Policy, host: str, port: int) -> bool:
     d = policy.evaluate_name(host, port)
     rule = next((r for r in policy.rules if r.id == d.rule_id), None)
     return d.action == "allow" and rule is not None and rule.expires is None
@@ -44,7 +44,7 @@ def suggestions(
         e["last"] = max(e["last"], ts)
     groups: dict[tuple[str, int], list[str]] = {}
     for host, port in per_host:
-        if is_ip(host) or _permanently_allowed(policy, host, port):
+        if is_ip(host) or permanently_allowed(policy, host, port):
             continue
         groups.setdefault((registrable_domain(host) or host, port), []).append(host)
     out = []

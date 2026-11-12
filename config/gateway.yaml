@@ -5,6 +5,8 @@ log_keep_days: 30
 log_max_events: 500000     # hard cap on stored events (disk-fill protection)
 max_pending: 10            # at most this many approvals open at once; more are denied immediately
 # policy_history_keep: 500  # policy versions kept for diff and rollback in the UI (at least 10)
+# learning_ports: [80, 443]  # ports learning mode may open; only this file can change them
+# learning_max_minutes: 120  # longest learning-mode session
 # rule_stale_days: 30        # permanent rules that did not match for this long are offered for removal
 # suggest_min_approvals: 3   # temporary approvals of one destination before a permanent rule is suggested
 # suggest_window_days: 7     # ... within this many days

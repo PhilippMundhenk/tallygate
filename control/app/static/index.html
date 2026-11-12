@@ -12,6 +12,7 @@
     <button data-tab="console" id="tabbtn-console" role="tab" aria-selected="false" aria-controls="tab-console">Console</button>
     <button data-tab="setup" id="tabbtn-setup" role="tab" aria-selected="false" aria-controls="tab-setup">Setup</button>
   </nav>
+  <button id="learnBadge" type="button" class="learnbadge hidden" aria-live="polite"></button>
   <span class="conn" role="status"><span id="conn" class="dot" aria-hidden="true"></span><span id="connText">connecting</span></span>
   <form method="post" action="/logout" class="logout"><button>Log out</button></form>
 </header>
@@ -93,6 +94,7 @@
         template's rules.</p>
       <div id="qaTemplates" class="templates"></div>
     </div>
+    <div class="card" id="learnCard" tabindex="-1"><h3>Learning mode</h3><div id="learnBox"></div></div>
     <div class="grid2">
       <div class="card">
         <h3>Mode</h3>
@@ -259,4 +261,5 @@ git config --global user.email "id+user@users.noreply.github.com"</pre>
 <script src="/static/history.js"></script>
 <script src="/static/usage.js"></script>
 <script src="/static/logsearch.js"></script>
+<script src="/static/learning.js"></script>
 </body></html>

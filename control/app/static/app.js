@@ -386,7 +386,7 @@ $$("#quick [data-mode]").forEach((b) => {
 const STOP_STEPS = {
   suspend_auto_approval: "Automatic grant approval suspended", revoke_grants: "Active grants revoked",
   deny_pending: "Waiting connections denied", deny_grant_requests: "Grant requests denied",
-  remove_internet_presets: "Internet shortcuts removed", mode_deny: "Unknown destinations blocked",
+  remove_internet_presets: "Internet shortcuts removed", end_learning: "Learning mode ended", mode_deny: "Unknown destinations blocked",
 };
 function showStopResult(r) {
   const box = $("#qaStopResult"); box.classList.remove("hidden");

@@ -82,6 +82,8 @@ searches the whole event log on the gateway, which keeps `log_keep_days` (30) da
 - **Mode**: what happens to unmatched destinations: `ask` (human in the loop), `deny` (strict allowlist) or
   `allow` (blocklist).
 - **Quick actions** (top of the tab), see below.
+- **Learning mode**: record what a new task needs for a limited time, then save the rules in one go. See
+  [Learning mode](#learning-mode).
 - **Test a destination**: dry run against the current policy, including DNS resolution and hard deny.
 - **Add rule**: host glob or CIDR, ports, note and optional TTL. New rules go to the top (first match wins).
 - **Hard deny**: CIDRs that are never reachable. The built-in floor is read-only here (change it only in the
@@ -132,6 +134,35 @@ no rule or shortcut can open it. This is deliberate: an agent with broad access 
 risk tallygate exists for. To let the agent reach one device, define a [grant](grants.md): exact host and port,
 read or write, a time limit, and your approval each time. Grants created in the UI may only reach addresses
 inside `grants_lan_allow` in the gateway config; the button explains what to add when that list is empty.
+
+### Learning mode
+
+Building an allowlist one prompt at a time is slow when you start a new kind of task. *Rules → Learning mode*
+lets the task run for a while and shows afterwards what it used:
+
+1. Pick a duration (up to `learning_max_minutes`, 120) and the ports (`443`, or `80 and 443`; the choice comes
+   from `learning_ports` in the gateway config) and click *Start learning mode* twice (it asks for
+   confirmation). The header shows **Learning mode · N min left** on every tab while it runs; click it to come
+   back here.
+2. While it runs, a connection to a host name on those ports that **no rule matches** is allowed instead of
+   asked or denied, and logged with the reason `learning mode`.
+3. When the time is up (or you click *Stop learning mode*), the card lists every destination used during the
+   session, grouped by registrable domain, with the number of connections. Destinations only learning mode
+   allowed are ticked, with a proposed rule: the exact host, or `*.domain` when several hosts of one domain
+   were used. Untick what you do not want and click *Save selected as allow rules*.
+
+What stays in force while learning mode runs:
+
+- the **hard deny**, also on the resolved addresses: the local network, the Docker host and metadata stay
+  unreachable;
+- your **deny and ask rules** and **grants** (a name that a grant is defined for is not learned);
+- **name-first decisions**: a name is resolved only after it was allowed; IP literals are not covered at all;
+- the **SNI/Host binding** and the read-only and credential checks.
+
+Learning mode is never stored in the policy. It ends when its time is up, when you stop it, on the
+**emergency stop**, and when the gateway restarts. Saved rules are added at the **bottom** of the list, so a
+deny or ask rule you already have keeps winning over a learned `*.domain` rule. The rules you save are tagged
+`[learning]` and are permanent; check them in the table like any other rule.
 
 ### Rule usage
 

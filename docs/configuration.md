@@ -95,6 +95,8 @@ Every key with an example. The file in the repository lists them all, commented 
 | `log_keep_days` | `30` | `7` | Event log retention. |
 | `log_max_events` | `500000` | `100000` | Hard cap on stored events. |
 | `max_pending` | `10` | `5` | Open approvals at once; more unknown destinations are denied immediately. |
+| `learning_ports` | `[80, 443]` | `[443]` | Ports learning mode may open. Only this file can change the list; an invalid entry stops the gateway. |
+| `learning_max_minutes` | `120` | `30` | Longest learning-mode session. |
 | `rule_stale_days` | `30` | `90` | A permanent rule that did not match for this many days is offered for removal. |
 | `suggest_min_approvals` | `3` | `5` | Temporary approvals of one destination that lead to a "make it permanent?" suggestion. |
 | `suggest_window_days` | `7` | `14` | The time window for those approvals. |
@@ -140,6 +142,8 @@ log_max_events: 500000     # hard cap on stored events; identical events within 
 max_pending: 10            # open approvals at once; further unknown destinations are denied immediately
 policy_history_keep: 500   # policy versions kept for diff and rollback (at least 10)
 rule_stale_days: 30        # permanent rules unused this long are offered for removal
+learning_ports: [80, 443]  # ports learning mode may open (the UI offers 443, or 80 and 443)
+learning_max_minutes: 120  # longest learning-mode session
 suggest_min_approvals: 3   # temporary approvals of one destination before a permanent rule is suggested ...
 suggest_window_days: 7     # ... within this many days
 # hard_deny_floor: [...]   # ADDED to the built-in hard deny below (cannot remove from it). Only this file can change it.
