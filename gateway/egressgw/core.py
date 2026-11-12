@@ -31,6 +31,7 @@ from mitmproxy.proxy import server_hooks
 
 from egressgw import api
 from egressgw.grants import READ_METHODS, GrantDef, Grants, Target, path_ok
+from egressgw.history import PolicyHistory
 from egressgw.policy import (
     DEFAULT_HARD_DENY,
     Decision,
@@ -199,13 +200,22 @@ class Gateway:
         configured = parse_cidrs(self.config.get("hard_deny_floor") or [], "hard_deny_floor")
         builtin = [] if FLOOR_REPLACE and configured else DEFAULT_HARD_DENY
         self.hard_deny_floor = parse_cidrs([*builtin, *configured], "hard_deny_floor")
+        self.history = PolicyHistory(DATA_DIR / "policy-history.db", int(self.config.get("policy_history_keep", 500)))
         if not self.policy_path.exists():
-            preset = PRESET_DIR / f"{self.config.get('initial_preset', 'baseline')}.yaml"
+            initial = self.config.get("initial_preset", "baseline")
+            preset = PRESET_DIR / f"{initial}.yaml"
             self.policy = load_preset(preset)[1] if preset.exists() else Policy()
             self.policy.save(self.policy_path)
+            what = f"initial policy (preset {initial})"
         else:
             self.policy = Policy.load(self.policy_path)
+            what = (
+                "policy.yaml changed while the gateway was stopped"
+                if self.history.latest
+                else "policy at gateway start"
+            )
         self.adopt(self.policy)
+        self._history("gateway", what)  # nothing is stored when it equals the latest version
         self.events = EventLog(
             DATA_DIR / "events.db",
             int(self.config.get("log_keep_days", 30)),
@@ -289,7 +299,7 @@ class Gateway:
 
     def _housekeep(self) -> None:
         if self.policy.prune_expired():
-            self.save_policy()
+            self.save_policy("gateway", "expired rules removed")
         now = time.time()
         self.neg_cache = {k: v for k, v in self.neg_cache.items() if v > now}
         self._flush_dups(now)
@@ -346,9 +356,18 @@ class Gateway:
         rep["reason"] = f"{ev.get('reason')} (repeated {count}x)"
         self.publish({"type": "event", "event": self.events.add(rep)})
 
-    def save_policy(self) -> None:
+    def save_policy(self, by: str = "api", what: str = "policy changed") -> None:
         self.policy.save(self.policy_path)
+        self._history(by, what)
         self.publish({"type": "policy"})
+
+    def _history(self, by: str, what: str) -> None:
+        """Keep the saved policy as a version. Best effort: the policy itself is already saved, and a broken
+        history must not break approvals or the emergency stop."""
+        try:
+            self.history.record(self.policy.to_dict(), by, what)
+        except Exception:
+            log.exception("policy history: version not stored")
 
     # ------------------------------------------------------------------ decisions
     async def resolve(self, host: str, port: int) -> list[str]:
@@ -414,7 +433,7 @@ class Gateway:
             if p.id == pending_id:
                 rule = rule_for_approval(p.host, p.port, scope)
                 self.policy.add_rule(rule, top=True)
-                self.save_policy()
+                self.save_policy(by, f"approval {scope} for {p.host}:{p.port}")
                 dec = Decision(rule.action, f"{scope} by {by}", rule.id)
                 del self.pending[key]
                 if not p.future.done():

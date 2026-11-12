@@ -70,6 +70,7 @@ function showTab(name) {
   if (name === "grants") { guard(loadGrants)(); guard(loadSecrets)(); }
   if (name === "setup") guard(loadSetup)();
   if (name === "log" && !logLoaded) guard(loadLog)();
+  document.dispatchEvent(new CustomEvent("tg:tab", { detail: name }));  // hook for the feature scripts
 }
 $$("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 $("#tabs").addEventListener("keydown", (e) => {  // arrow keys move between tabs (WAI-ARIA tabs pattern)
@@ -641,6 +642,7 @@ function connectStream() {
   };
   es.onmessage = (m) => {
     const ev = JSON.parse(m.data);
+    document.dispatchEvent(new CustomEvent("tg:event", { detail: ev }));  // hook for the feature scripts
     if (ev.type === "event") addLogRow(ev.event);
     if (ev.type === "ask" || ev.type === "resolved") loadPending().catch(() => {});
     if (ev.type === "ask" && document.hidden && Notification?.permission === "granted") new Notification("tallygate: approval needed", { body: `${ev.pending.host}:${ev.pending.port}` });

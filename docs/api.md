@@ -4,7 +4,11 @@
 
 Base URL: `http://172.31.11.2:8081` (control-net only). All endpoints except `/health` require
 `Authorization: Bearer $GW_API_TOKEN`. Request and response bodies are JSON. Validation errors return
-`400 {"error": "..."}`.
+`400 {"error": "..."}`. An optional `X-Tallygate-By` header (at most 64 characters) names who made a change in
+the policy history; without it the change is attributed to `api`. The control plane sets it to `web:<user>`.
+
+Every write to the policy (`PUT`/`PATCH /policy`, rules, presets, approvals, the emergency stop, restores,
+imports, removal of expired rules) stores a version in the policy history, unless the policy did not change.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
@@ -12,6 +16,12 @@ Base URL: `http://172.31.11.2:8081` (control-net only). All endpoints except `/h
 | GET | `/policy` | – | Full policy (`default`, `ask_timeout`, `hard_deny` = extras, `rules`) plus read-only `hard_deny_floor` |
 | PUT | `/policy` | Full policy | Validated and replaced; returns the new policy. Replaces **every** rule: send only a policy you have just read |
 | PATCH | `/policy` | `{"default": "ask"\|"deny"\|"allow", "ask_timeout": 5..3600}` (either or both) | Changes only the mode and/or the approval timeout; the rules stay as they are. Any other key, a non-integer timeout or an empty body is a `400` |
+| GET | `/policy/history?limit=100&before=<id>` | – | `{"versions": [{id, ts, by, what, default, rules}], "keep"}`, newest first; `rules` is the number of rules |
+| GET | `/policy/history/{id}` | – | `{id, ts, by, what, policy}`: the policy as stored in `policy.yaml` (no floor); `404` if unknown or no longer kept |
+| GET | `/policy/diff?from=<id>&to=<id>\|current` | – | Changes from one version to another (default `to=current`): `default`/`ask_timeout` as `[old, new]`, `hard_deny` `{added, removed}`, `rules` `{added, removed, changed: [{id, before, after}]}`, `reordered`, `identical`. Only what changed is present |
+| POST | `/policy/history/{id}/restore` | – | Replaces the policy with that version (validated like `PUT /policy`; the floor stays as configured); returns the new policy |
+| GET | `/policy/export` | – | `{"filename", "yaml"}`: the policy and the UI grants as one YAML document (`tallygate_export: 1`). No secrets, no config-file grants, no floor |
+| POST | `/policy/import` | `{"yaml": "...", "apply": false}` | Validates the document (policy like `PUT /policy`, each grant like `PUT /grants/{name}`) and returns `{diff, grants: {added, changed}, warnings, applied}`. With `"apply": true` it replaces the policy and adds or replaces those UI grants, all or nothing. A `hard_deny_floor` in the file is ignored with a warning |
 | POST | `/emergency-stop` | optional `{"by": "who"}` | Best-effort stop, see below: `{"ok": bool, "steps": [{"step", "ok", "errors"?, ...}]}` |
 | POST | `/rules` | Rule (+ optional `"top": false` to append) | `201` created rule |
 | DELETE | `/rules/{id}` | – | `{"ok": true}` or `404` |
@@ -103,7 +113,7 @@ Used by the bundled web UI; documented for scripting and review.
 | GET | `/` | session | Single-page UI |
 | GET | `/api/meta` | session | Current user, terminal names, notification status |
 | GET | `/api/stream` | session | Relayed gateway SSE stream |
-| * | `/api/gw/{path}` | session + CSRF | Relay to an **allowlisted** subset of the gateway API: `GET`/`PUT`/`PATCH /policy`, `POST /emergency-stop`, `POST /rules`, `DELETE /rules/{id}`, `GET /pending`, `POST /pending/{id}/decide`, `GET /events`, `POST /test`, `GET`/`POST`/`DELETE /presets…`, `GET /secrets`, `PUT /secrets/{name}`, `GET`/`PUT`/`DELETE /grants/{name}`, `POST /grants/{name}/activate`, `DELETE /active-grants/{id}`, `POST /grant-requests/{id}/decide`, `GET /info`. Everything else is refused (404). For decisions and the emergency stop, `by` is set to `web:<user>`. |
+| * | `/api/gw/{path}` | session + CSRF | Relay to an **allowlisted** subset of the gateway API: `GET`/`PUT`/`PATCH /policy`, `GET /policy/history…`, `POST /policy/history/{id}/restore`, `GET /policy/diff`, `GET /policy/export`, `POST /policy/import`, `POST /emergency-stop`, `POST /rules`, `DELETE /rules/{id}`, `GET /pending`, `POST /pending/{id}/decide`, `GET /events`, `POST /test`, `GET`/`POST`/`DELETE /presets…`, `GET /secrets`, `PUT /secrets/{name}`, `GET`/`PUT`/`DELETE /grants/{name}`, `POST /grants/{name}/activate`, `DELETE /active-grants/{id}`, `POST /grant-requests/{id}/decide`, `GET /info`. Everything else is refused (404). For decisions and the emergency stop, `by` is set to `web:<user>`; every relayed call carries `X-Tallygate-By: web:<user>` for the policy history. |
 | POST | `/api/github/check` | session + CSRF | `{"token": "...", "store": true}` — validate a token against GitHub from the control plane and store it in the gateway |
 | GET | `/api/agent/status` | session | Agent status (Claude login, git identity, Remote Control running, versions) |
 | GET | `/api/agent/selftest` | session | Run the in-agent isolation self-test |

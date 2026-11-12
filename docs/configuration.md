@@ -95,6 +95,7 @@ Every key with an example. The file in the repository lists them all, commented 
 | `log_keep_days` | `30` | `7` | Event log retention. |
 | `log_max_events` | `500000` | `100000` | Hard cap on stored events. |
 | `max_pending` | `10` | `5` | Open approvals at once; more unknown destinations are denied immediately. |
+| `policy_history_keep` | `500` | `100` | Policy versions kept for diff and rollback (at least 10); older ones are removed. |
 | `hard_deny_floor` | built-in list | `[203.0.113.7/32]` | **Added** to the built-in hard deny (your VPS's public IP). |
 | `readonly` | npm, Yarn, crates.io, Docker Hub, GHCR, Quay, Hugging Face | `[registry.npmjs.org, {host: ghcr.io, post_is_write: true}]` | Hosts where writes are refused: PUT/PATCH/DELETE, and with `post_is_write` also POST (except `read_posts`). See [Read-only hosts](#read-only-hosts). |
 | `inject` | GitHub entries | see below | Credential injection per host. |
@@ -134,6 +135,7 @@ initial_preset: baseline   # preset used to create policy.yaml on first start
 log_keep_days: 30          # event log retention
 log_max_events: 500000     # hard cap on stored events; identical events within 2 s are counted, not stored
 max_pending: 10            # open approvals at once; further unknown destinations are denied immediately
+policy_history_keep: 500   # policy versions kept for diff and rollback (at least 10)
 # hard_deny_floor: [...]   # ADDED to the built-in hard deny below (cannot remove from it). Only this file can change it.
 readonly:                  # TLS intercepted, PUT/PATCH/DELETE refused (e.g. blocks `npm publish`)
   - registry.npmjs.org

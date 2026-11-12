@@ -4,6 +4,7 @@ initial_preset: baseline   # used only when /data/policy.yaml does not exist yet
 log_keep_days: 30
 log_max_events: 500000     # hard cap on stored events (disk-fill protection)
 max_pending: 10            # at most this many approvals open at once; more are denied immediately
+# policy_history_keep: 500  # policy versions kept for diff and rollback in the UI (at least 10)
 
 # Hard-deny floor: CIDRs that are NEVER reachable (except service-port targets with allow_private).
 # The built-in list (RFC 1918, loopback, link-local, CGNAT, multicast, ULA, NAT64/6to4/Teredo, docs

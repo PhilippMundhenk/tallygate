@@ -71,6 +71,9 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - A weekly workflow that proposes new Claude Code versions (#17).
 - `make coverage`: a gate of 95 % line coverage per module, including the gateway and control processes; every
   module is at 98–100 % (#27).
+- **Policy history:** every change to the policy is a version with time, author and what changed. The Rules
+  tab shows a diff between any two versions and restores one; the policy and the UI grants can be exported
+  as one YAML file and imported again, validated like any policy change (#71).
 
 ### Changed
 - **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie

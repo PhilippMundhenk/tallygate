@@ -357,7 +357,8 @@ class Grants:
         }
         atomic_write(self.ui_path, yaml.safe_dump(data, sort_keys=False))
 
-    def upsert_ui(self, name: str, d: dict) -> GrantDef:
+    def check_ui(self, name: str, d: dict) -> GrantDef:
+        """Validate a UI grant definition without storing it."""
         if name in self.defs and self.defs[name].source == "config":
             raise ValueError(f"grant {name} is defined in the config file and cannot be changed in the UI")
         g = GrantDef.from_dict(name, d, "ui")
@@ -366,9 +367,16 @@ class Grants:
                 raise ValueError("LAN targets in UI grants need grants_lan_allow in the gateway config file")
             if t.lan and t.address and not self._in(t.address, self.ui_lan_allow):
                 raise ValueError(f"{t.address} is outside grants_lan_allow")
+        return g
+
+    def upsert_ui(self, name: str, d: dict) -> GrantDef:
+        g = self.check_ui(name, d)
         self.defs[name] = g
         self.save_ui()
         return g
+
+    def ui_defs(self) -> dict[str, dict]:
+        return {n: g.to_dict() for n, g in self.defs.items() if g.source == "ui"}
 
     def delete_ui(self, name: str) -> None:
         g = self.defs.get(name)

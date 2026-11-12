@@ -68,6 +68,8 @@ create a rule for exactly that host:port.
 - **Hard deny**: CIDRs that are never reachable. The built-in floor is read-only here (change it only in the
   gateway config file); you can add more, e.g. your Docker host's public IP.
 - **Raw policy JSON**: edit everything at once (validated server-side).
+- **History, export and import**: every version of the policy, a diff between any two, *Restore*, and the
+  policy with your UI grants as one YAML file. See [History and rollback](#history-and-rollback).
 
 ### Quick actions and templates
 
@@ -108,6 +110,29 @@ no rule or shortcut can open it. This is deliberate: an agent with broad access 
 risk tallygate exists for. To let the agent reach one device, define a [grant](grants.md): exact host and port,
 read or write, a time limit, and your approval each time. Grants created in the UI may only reach addresses
 inside `grants_lan_allow` in the gateway config; the button explains what to add when that list is empty.
+
+### History and rollback
+
+Every change to the policy is kept as a version, whoever made it: the UI (`web:<user>`), the API (`api`),
+an approval on Telegram or Matrix (`telegram:<user>`), a template, the emergency stop, or the gateway itself
+when temporary rules expire (`gateway`). *Rules → History, export and import* lists the versions with time,
+author and what changed.
+
+- **Changes** shows what changed from that version to the current policy: mode and timeout, additional
+  hard-deny ranges, and rules added, removed or changed (compared by rule id). Pick any two versions with
+  *From* and *To* to compare them.
+- **Restore** replaces the current policy with that version (it asks for confirmation). The restore is a new
+  version itself, so it can be undone the same way. Rules of an old version whose time limit has passed are
+  ignored and removed, as always.
+- **Export (YAML)** downloads the policy and the grants defined in the UI as one file, for a new host or as a
+  template to share. Secrets are not in it (they cannot be read back at all), and neither are grants from the
+  gateway config file.
+- **Import from file** checks the file like a normal policy change and every grant like the grant editor,
+  then shows what would change. *Import* replaces the policy and adds or replaces the UI grants in the file;
+  grants that are not in the file stay. A `hard_deny_floor` in the file is ignored: the floor comes only from
+  the gateway config file.
+
+The gateway keeps the last `policy_history_keep` (500) versions in `policy-history.db` in its data volume.
 
 ## Console
 

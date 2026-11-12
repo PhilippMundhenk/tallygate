@@ -71,6 +71,7 @@ def load(monkeypatch, tmp_path):
 class World:
     def __init__(self) -> None:
         self.seen: list[tuple[str, str, dict, object]] = []
+        self.by: list[str | None] = []  # X-Tallygate-By of every relayed gateway call
         self.agent: dict[str, tuple[int, bytes]] = {"status": (200, b'{"claude_version": "2.0.0"}')}
         self.stream: tuple[int, bytes] = (200, b"")
         self.ttyd_frames: list = []  # sent to the browser (via control) right after the handshake
@@ -89,6 +90,7 @@ class World:
     async def gw(self, request):
         body = await request.json() if request.can_read_body else None
         self.seen.append((request.method, request.path, dict(request.query), body))
+        self.by.append(request.headers.get("X-Tallygate-By"))
         return web.json_response({"ok": True})
 
     async def gw_stream(self, _request):
@@ -336,6 +338,48 @@ def test_mode_patch_and_emergency_stop_are_relayed_and_attributed(load):
         ("POST", "/gw/emergency-stop", {}, {"by": "web:admin"}),
         ("POST", "/gw/emergency-stop", {}, {"by": "web:admin"}),
     ]
+
+
+def test_policy_history_routes_are_relayed_with_the_session_user(load):
+    main = load()
+    world = World()
+
+    async def body():
+        async with started(main, world) as c:
+            for method, path in [
+                ("GET", "/api/gw/policy/history?limit=5"),
+                ("GET", "/api/gw/policy/history/3"),
+                ("GET", "/api/gw/policy/diff?from=1&to=current"),
+                ("POST", "/api/gw/policy/history/3/restore"),
+                ("GET", "/api/gw/policy/export"),
+                ("POST", "/api/gw/policy/import"),
+            ]:
+                assert (await c.request(method, path, headers=CSRF)).status == 200, path
+            assert (await c.post("/api/gw/policy/history/x/restore", headers=CSRF)).status == 404
+
+    run(body())
+    assert [s[1] for s in world.seen] == [
+        "/gw/policy/history",
+        "/gw/policy/history/3",
+        "/gw/policy/diff",
+        "/gw/policy/history/3/restore",
+        "/gw/policy/export",
+        "/gw/policy/import",
+    ]
+    assert world.seen[2][2] == {"from": "1", "to": "current"} and set(world.by) == {"web:admin"}
+
+
+def test_attribution_header_is_printable_ascii(load):
+    main = load()
+    world = World()
+
+    async def body():
+        async with started(main, world) as c:
+            assert (await c.get("/api/gw/policy")).status == 200
+            await main.gw(c.server.app, "GET", "/policy", by="web:josé\nx")
+
+    run(body())
+    assert world.by == ["web:admin", "web:jos??x"]
 
 
 def test_gateway_down(load):

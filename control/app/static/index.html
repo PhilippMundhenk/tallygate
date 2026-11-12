@@ -145,6 +145,7 @@
     <details class="card"><summary>Advanced: raw policy JSON</summary>
       <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><div class="row"><button id="saveRaw">Replace policy</button>
         <button id="reloadRaw" class="secondary">Reload from the gateway</button></div></details>
+    <details class="card" id="historyCard"><summary>History, export and import</summary><div id="historyBox"></div></details>
   </section>
 
   <!-- GRANTS -->
@@ -253,4 +254,5 @@ git config --global user.email "id+user@users.noreply.github.com"</pre>
 </main>
 <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <script src="/static/app.js"></script>
+<script src="/static/history.js"></script>
 </body></html>

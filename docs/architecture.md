@@ -249,6 +249,7 @@ Concurrent connections to the same `host:port` share one pending request (one no
 |---|---|---|---|
 | Policy | `gateway-data`: `policy.yaml` | egress-gw (uid 10001) | Written atomically; seeded from the `baseline` preset on first start. |
 | Event log | `gateway-data`: `events.db` | egress-gw | SQLite/WAL, pruned after `log_keep_days`. |
+| Policy history | `gateway-data`: `policy-history.db` | egress-gw | Every saved policy as a version (time, author, what), the last `policy_history_keep`. Same content as `policy.yaml`: no floor, no secrets. |
 | Secrets | `gateway-data`: `secrets.json` | egress-gw | Mode 0600, never returned by the API. |
 | Gateway CA | `gateway-data`: `mitmproxy/` | egress-gw | Public cert exported to the `ca` volume for the agent. |
 | Static gateway config | `/etc/egressgw/config.yaml` (default from `config/gateway.yaml` in the image) | operator | Read-only (override by mounting your own file): injection hosts, service ports, hard-deny floor, config grants. |
