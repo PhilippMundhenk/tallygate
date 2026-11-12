@@ -21,6 +21,7 @@ All variables are optional. Secrets are created on first start when they are not
 | `CONTROL_DATA` | volume `control-data` | UI password hash and session secret. A host path makes it a bind mount (owner uid 10002, mode 700). See [host directories](operations.md#host-directories). |
 | `CONTROL_PUBLISH` | `0.0.0.0:8080` | Host address:port the UI is published on. `127.0.0.1:8080` with a reverse proxy on the same host; see [reaching the UI](operations.md#reaching-the-ui). |
 | `PUBLIC_URL` | – | External UI URL, included in notifications. |
+| `TZ` | UTC | Time zone of the gateway and control, e.g. `Europe/Berlin`: quiet hours and times in notifications use it. |
 | `COOKIE_SECURE` | `auto` | `auto`: the session cookie is `Secure` exactly when the browser uses HTTPS (directly, or `X-Forwarded-Proto` from a trusted proxy). `1` / `0` force it on or off. |
 | `TRUST_FORWARDED_FOR` | `0` | `1` when the UI sits behind your reverse proxy: trust `X-Forwarded-For`/`-Host`/`-Proto` for rate limiting and origin checks — **only** from peers in `TRUSTED_PROXIES`. |
 | `TRUSTED_PROXIES` | – | Comma-separated CIDRs of your reverse/auth proxy as seen by control. Forwarded and auth headers from any other peer are ignored. With a published port this is the `mgmt` bridge gateway `172.31.12.1/32`, which every local process shares: see [reverse proxy](operations.md#reverse-proxy). |
@@ -100,6 +101,8 @@ Every key with an example. The file in the repository lists them all, commented 
 | `inject` | GitHub entries | see below | Credential injection per host. |
 | `inject_strip_headers` | `[Authorization, Cookie]` | `[Authorization, Cookie, X-Api-Key]` | Agent headers always removed on inject hosts. |
 | `services` | `[]` | `[{name: pg, listen: 15432, target: db.example.org:5432}]` | TCP service ports. |
+| `quiet_hours` | – | `{start: "22:00", end: "07:00", days: [mon, tue, wed, thu, fri], tz: Europe/Berlin}` | Daily period in which requests that need you are refused at once. See [Availability](#availability). |
+| `digest_minutes` | `30` | `0` | While away: a digest of what was refused every N minutes; `0` = only when you are back. |
 | `grants`, `grants_*`, `grant_*` | – | see [Grants](#grants) and [grants.md](grants.md) | Grants. |
 
 ### Read-only hosts
@@ -164,6 +167,25 @@ the rendered inner text. The agent's own `Authorization`/`Cookie` headers are **
 hosts; if a referenced secret is missing the request goes out without credentials (fail closed).
 
 Every `inject` host must also be **allowed** by the policy (the baseline preset allows GitHub).
+
+### Availability
+
+Away mode is switched in the UI (**Approvals → Availability**) or with `PATCH /availability`. Quiet hours
+can be preset here:
+
+```yaml
+quiet_hours:
+  start: "22:00"           # HH:MM
+  end: "07:00"             # before start = over midnight
+  days: [mon, tue, wed, thu, fri, sat, sun]   # the days a period STARTS on (default: every day)
+  tz: Europe/Berlin        # default: the gateway's TZ (UTC unless set)
+digest_minutes: 30         # while away: a digest every N minutes; 0 = only when you are back
+```
+
+While away or in quiet hours, connection asks and grant requests that need approval are **denied at once**
+with a message to the agent; nothing is allowed automatically. A change in the UI is stored in
+`availability.yaml` in the `gateway-data` volume and wins over this file from then on. An invalid entry here
+stops the gateway; an unreadable `availability.yaml` turns away mode on until you change it (fail closed).
 
 ### Grants
 

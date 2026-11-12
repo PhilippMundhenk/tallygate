@@ -471,3 +471,26 @@ def test_matrix_revoke_ends_the_grant_and_frees_the_number(make):
     assert n.chat.notices() == ["Grant revoked by @me:hs"]
     run(n._mx_event(text("revoke 4")))  # number is free now: nothing happens
     assert len(n.rg.calls) == 1
+
+
+# ---------------------------------------------------------------- digest (#73)
+def test_digest_text_counts_and_truncates():
+    items = [{"kind": "conn", "host": f"h{i}.example", "port": 443, "count": 1} for i in range(3)]
+    items[0]["count"] = 4
+    items.append({"kind": "grant", "host": "nas", "port": 0, "count": 1})
+    text = notify.digest_text({"why": "quiet hours ended", "items": items, "more": 2}, "https://t.example", limit=3)
+    assert text.startswith("📋 tallygate digest (quiet hours ended): 6 request(s) refused without asking")
+    assert "  h0.example:443 ×4" in text and "grant nas" not in text and "… and 3 more" in text
+    assert text.endswith(": https://t.example")
+    assert notify.digest_text({"items": [items[3]]}).endswith("(Approvals → Availability).")
+
+
+def test_digest_goes_to_every_channel(make):
+    n = make({**TG, **MX})
+    run(n.handle({"type": "digest", "why": "away ended", "items": [{"kind": "grant", "host": "nas", "port": 0}]}))
+    ((_, _, params),) = n.chat.sent("tg", "sendMessage")
+    assert "grant nas" in params["text"] and "reply_markup" not in params
+    assert any("grant nas" in body for body in n.chat.notices())
+    quiet = make()
+    run(quiet.handle({"type": "digest", "items": []}))  # no channel configured: nothing to send
+    assert quiet.chat.calls == []

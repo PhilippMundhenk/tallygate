@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
+from egressgw.availability import Unavailable
+
 if TYPE_CHECKING:
     from egressgw.core import Gateway
 
@@ -32,6 +34,8 @@ def build_app(gw: Gateway) -> web.Application:
             return web.json_response({"error": f"unknown: {e}"}, status=404)
         except OverflowError as e:
             return web.json_response({"error": str(e)}, status=429)
+        except Unavailable as e:  # away / quiet hours: refused at once, never approved automatically
+            return web.json_response({"error": str(e), "status": "denied"}, status=503)
         except (ValueError, TypeError) as e:
             return web.json_response({"error": str(e)}, status=400)
 
@@ -46,7 +50,9 @@ def build_app(gw: Gateway) -> web.Application:
             if g.name in active:
                 d["active"] = {"level": active[g.name].level, "expires": int(active[g.name].expires)}
             out.append(d)
-        return web.json_response({"grants": out})
+        mode, until = gw.availability.mode()
+        operator = {"state": mode, "until": until, "message": gw.availability.blocking()}
+        return web.json_response({"grants": out, "operator": operator})
 
     @routes.post("/v1/grants/{name}/request")
     async def request_grant(request: web.Request):

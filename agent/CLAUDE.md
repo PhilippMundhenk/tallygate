@@ -8,6 +8,9 @@ You run in a container whose only network path is an egress gateway with a polic
   is only possible through **grants**: predefined, time-limited bundles of access.
 - A refused connection whose message says `available via grant <name>` can be unlocked by requesting
   that grant.
+- When the operator is away or in quiet hours, new destinations and grant requests are refused at once
+  (`operator away …` / `quiet hours until …`). Do not retry in a loop: continue with what works, and
+  note what you could not reach so the human can allow it later. `tallygate grants` shows the state.
 
 ## Grants
 

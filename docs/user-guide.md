@@ -5,6 +5,7 @@ consoles into the agent, and run the setup wizard. Remote Control itself is used
 [Claude app](https://claude.ai/download) or [claude.ai/code](https://claude.ai/code) as usual.
 
 - [Approvals](#approvals)
+- [Away mode and quiet hours](#away-mode-and-quiet-hours)
 - [Log](#log)
 - [Rules](#rules)
 - [Console](#console)
@@ -38,6 +39,28 @@ has the domain `evil.example`. Punycode names (`xn--…`) are flagged. Names are
 approval, so IPs show as "not resolved yet". A destination you approve can still be refused by the hard
 deny (LAN, host, metadata…). At most `max_pending` (10) requests wait at once; further unknown destinations
 are denied immediately until you have answered.
+
+## Away mode and quiet hours
+
+When you cannot answer, the agent should not wait 60 seconds for every new destination, and your phone
+should not buzz at night. The **Availability** card at the top of **Approvals** has two switches:
+
+- **I'm away** (until you are back, for 1 h, 4 h or until 08:00): new destinations and grant requests that
+  need your approval are refused at once. The agent gets a clear message (`operator away until 14:00:
+  unknown destinations are refused without asking …`) instead of a held connection. Whatever was waiting
+  for you when you switch it on is denied too.
+- **Quiet hours** (e.g. 22:00–07:00, on the days you pick): the same, every day, without notifications.
+
+Nothing is ever allowed automatically because you are away: away mode only turns *ask* into *deny*. Rules
+that allow a destination keep working, and grants with `approval: auto` are still granted (and logged).
+What was refused is listed under **Refused while you were away**, with *Allow 1 h* per destination, and sent
+as one **digest** to Telegram/Matrix: when quiet hours end, when you are back, and while away every
+`digest_minutes` (30). The header shows *away* or *quiet hours* on every tab. The agent sees the state in
+`tallygate grants`.
+
+Quiet hours use the gateway's time zone: set `TZ` (e.g. `TZ=Europe/Berlin` in `.env`) or `tz` in
+`quiet_hours`. They can be preset in the gateway config (`quiet_hours`, see
+[configuration](configuration.md#availability)); a change in the UI is stored and wins over the file.
 
 ## Grants
 

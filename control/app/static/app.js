@@ -630,6 +630,7 @@ function connectStream() {
       loadPending().catch(() => {}); loadGrants().catch(() => {});
       if (policy) loadPolicy(true).catch(() => {});  // rule changes during the gap
       if (logLoaded) loadLog().catch(() => {});
+      document.dispatchEvent(new CustomEvent("tg:reconnected"));
     }
     streamOpened = true;
   };
@@ -641,6 +642,7 @@ function connectStream() {
   };
   es.onmessage = (m) => {
     const ev = JSON.parse(m.data);
+    document.dispatchEvent(new CustomEvent("tg:event", { detail: ev }));  // for the feature scripts
     if (ev.type === "event") addLogRow(ev.event);
     if (ev.type === "ask" || ev.type === "resolved") loadPending().catch(() => {});
     if (ev.type === "ask" && document.hidden && Notification?.permission === "granted") new Notification("tallygate: approval needed", { body: `${ev.pending.host}:${ev.pending.port}` });

@@ -48,6 +48,7 @@ services:
       GW_API_PORT: "8081"
       GW_GRANTS_PORT: "8079"             # grant request API for the agent (agent network)
       GW_API_TOKEN: ${GW_API_TOKEN:-}    # empty: created on first start in the gw-token volume
+      TZ: ${TZ:-}                        # time zone for quiet hours, e.g. Europe/Berlin (empty: UTC)
     volumes:
       - ${GATEWAY_DATA:-gateway-data}:/data        # policy, log, secrets (GitHub token), CA key
       - gw-token:/run/tallygate/gw                 # API token, shared read-only with control
@@ -69,6 +70,7 @@ services:
     environment:
       CONTROL_BIND_HOST: 172.31.12.3     # UI only on the mgmt network, NOT reachable from agent-net
       CONTROL_PORT: "8080"
+      TZ: ${TZ:-}                        # times in notifications (empty: UTC)
       # Empty: a password is generated on first start and printed to the log (shown once).
       CONTROL_PASSWORD_HASH: ${CONTROL_PASSWORD_HASH:-}
       CONTROL_PASSWORD: ${CONTROL_PASSWORD:-}          # plain text, discouraged: prefer the hash

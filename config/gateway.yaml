@@ -5,6 +5,13 @@ log_keep_days: 30
 log_max_events: 500000     # hard cap on stored events (disk-fill protection)
 max_pending: 10            # at most this many approvals open at once; more are denied immediately
 
+# Availability (docs/user-guide.md#away-mode-and-quiet-hours): while you are away (switch in the UI) or in
+# quiet hours, requests that need your approval are refused at once with a message to the agent - never
+# allowed automatically. What was refused is sent as one digest when you are back.
+# quiet_hours: {start: "22:00", end: "07:00", days: [mon, tue, wed, thu, fri, sat, sun], tz: Europe/Berlin}
+#                            # days = when a period starts; tz defaults to the gateway's TZ. The UI can change it.
+# digest_minutes: 30         # while away: a digest every N minutes (0 = only when you are back)
+
 # Hard-deny floor: CIDRs that are NEVER reachable (except service-port targets with allow_private).
 # The built-in list (RFC 1918, loopback, link-local, CGNAT, multicast, ULA, NAT64/6to4/Teredo, docs
 # ranges ...) always applies; entries here are ADDED to it, they cannot remove built-in ones. Only

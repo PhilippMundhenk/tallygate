@@ -96,6 +96,7 @@ service, **E**levation of privilege.
 | T33 | An internal error (broken config entry, full disk, locked event log) lets a connection through unchecked | E, I | Every mitmproxy hook fails closed: an exception refuses the connection/flow; the error is set before the event is recorded; CIDRs are validated at startup (the gateway does not start otherwise) | e2e (`test_fail_closed.py`) |
 | T34 | A compromised UI session or API token defines a grant that injects a stored secret into requests to a host of its choosing | I | `inject` and `tls_verify: false` only in config-file grants; UI/API grants with them are rejected | unit + e2e (#12) |
 | T35 | Rule bypass through odd notation: IPv4-mapped IPv6 literals (`[::ffff:127.0.0.1]`) or a null/garbled port that matches every port | E | Mapped addresses normalised in hard deny, rules, approvals and grants; ports validated strictly in the API and the UI | unit + e2e (#13) |
+| T36 | Approval fatigue at night or while busy: the operator taps *Allow* on a prompt without reading it, or the agent waits on prompts nobody answers | S, D | Away mode and quiet hours turn *ask* into an immediate *deny* with a message to the agent, never into *allow*; what was refused is reviewed later (digest, *Allow 1 h*); an unreadable state file means away (#73) | unit + e2e (`test_availability.py`) |
 
 ## Residual risks
 

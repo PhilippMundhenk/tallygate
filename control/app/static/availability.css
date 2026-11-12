@@ -1,0 +1,14 @@
+/* availability (#73) */
+#availability .inline-h{display:inline;margin:0}
+#availability .btns{margin-top:0}
+#availability details{margin:6px 0}
+#availability summary{cursor:pointer;color:var(--muted)}
+#availability input[type=time]{display:inline-block;margin:0}
+#availability .inline-check{margin:0}
+#availability fieldset.days{border:0;padding:0;margin:8px 0;display:flex;gap:10px;flex-wrap:wrap}
+#availability fieldset.days legend{color:var(--muted);padding:0;margin-bottom:4px}
+#availability fieldset.days label{display:flex;gap:4px;align-items:center;margin:0}
+#availability .missed-row{padding:4px 0;border-bottom:1px solid var(--line)}
+#avMarker{margin-left:-6px}
+#availability .row input{flex:none;min-width:0;width:auto}
+#avMissedClear{margin-top:8px}

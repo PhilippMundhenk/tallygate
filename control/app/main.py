@@ -84,6 +84,9 @@ GW_ALLOW = [
     ("DELETE", r"/active-grants/[a-f0-9]+"),
     ("POST", r"/grant-requests/[a-f0-9]+/decide"),
     ("GET", r"/info"),
+    ("GET", r"/availability"),
+    ("PATCH", r"/availability"),
+    ("DELETE", r"/availability/missed"),
 ]
 
 
@@ -408,7 +411,8 @@ async def api_gw(request: web.Request):
     by = f"web:{request['user']}"
     if sub == "/emergency-stop":
         body = {}  # nothing to choose: the whole stop always runs
-    if (sub.endswith("/decide") or sub.endswith("/activate") or sub == "/emergency-stop") and isinstance(body, dict):
+    attributed = sub.endswith("/decide") or sub.endswith("/activate") or sub in ("/emergency-stop", "/availability")
+    if attributed and isinstance(body, dict):
         body["by"] = by  # attribution is set here, never taken from the browser
     qs = ("?" + request.query_string) if request.query_string else ""
     if sub.startswith("/active-grants/"):
@@ -620,7 +624,7 @@ async def watch_gateway(app: web.Application):
                     line = line.decode().strip()
                     if line.startswith("data: "):
                         ev = json.loads(line[6:])
-                        if ev.get("type") in ("ask", "resolved", "grant_request", "grant_resolved"):
+                        if ev.get("type") in ("ask", "resolved", "grant_request", "grant_resolved", "digest"):
                             app["notifier"].enqueue(ev)
         except asyncio.CancelledError:
             raise

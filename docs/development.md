@@ -16,6 +16,7 @@
 │       ├── core.py           #   hooks: server_connect, tls_clienthello, request, dns_request; approvals
 │       ├── policy.py         #   pure policy engine (rules, hard deny, approvals → rules)
 │       ├── grants.py         #   grant definitions, requests, active grants
+│       ├── availability.py   #   away mode, quiet hours, digest of refused requests
 │       ├── store.py          #   SQLite event log, secrets store, header templating
 │       ├── api.py            #   management API (aiohttp, bearer token)
 │       └── agentapi.py       #   grant request API for the agent (agent network)

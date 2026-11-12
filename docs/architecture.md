@@ -243,6 +243,10 @@ Approval scopes map to rules:
 
 Concurrent connections to the same `host:port` share one pending request (one notification).
 
+While the operator is **away** or in **quiet hours**, step 6 never waits: an `ask` becomes an immediate
+`deny` with a message for the agent, and grant requests that need approval are refused the same way (#73).
+It never becomes an `allow`. Refused destinations are collected and sent as one digest later.
+
 ## State and persistence
 
 | Data | Location | Owner | Notes |

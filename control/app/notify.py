@@ -60,6 +60,22 @@ def _describe(p: dict) -> str:
     return text
 
 
+def digest_text(ev: dict, public_url: str = "", limit: int = 20) -> str:
+    """The digest: what was refused without asking while the operator was away or in quiet hours."""
+    items = ev.get("items") or []
+    total = len(items) + int(ev.get("more") or 0)
+    lines = [f"📋 tallygate digest ({ev.get('why', 'while away')}): {total} request(s) refused without asking"]
+    for i in items[:limit]:
+        what = f"grant {i['host']}" if i.get("kind") == "grant" else f"{i['host']}:{i['port']}"
+        lines.append(f"  {what}" + (f" ×{i['count']}" if i.get("count", 1) > 1 else ""))
+    if total > min(len(items), limit):
+        lines.append(f"  … and {total - min(len(items), limit)} more")
+    lines.append(
+        "Allow what you need in the UI (Approvals → Availability)" + (f": {public_url}" if public_url else ".")
+    )
+    return "\n".join(lines)
+
+
 def _scope_label(scope: str, label: str, p: dict) -> str:
     if scope == "domain":
         return f"Always (*.{p['domain']})" if p.get("domain") else ""
@@ -175,6 +191,8 @@ class Notifier:
                 await self._on_grant_request(ev["request"], ev.get("grant") or {})
             elif ev["type"] == "grant_resolved":
                 await self._on_grant_resolved(ev["request"])
+            elif ev["type"] == "digest":
+                await self._on_digest(ev)
         except Exception as e:  # noqa: BLE001
             log.warning("notification failed: %s", e)
 
@@ -225,6 +243,22 @@ class Notifier:
                 },
             )
         await self._channels("outcome", tg=tg, mx=mx)
+
+    async def _on_digest(self, ev: dict) -> None:
+        """One message for everything that was refused while nobody could answer (away / quiet hours, #73)."""
+        text = digest_text(ev, self.public_url)
+        on = self.describe()
+        await self._channels(
+            "digest",
+            tg=self._tg("sendMessage", chat_id=self.tg_chat, text=text, disable_web_page_preview=True)
+            if on["telegram"]
+            else None,
+            mx=self._mx_put(
+                f"/rooms/{self._room()}/send/m.room.message/{uuid.uuid4().hex}", {"msgtype": "m.notice", "body": text}
+            )
+            if on["matrix"]
+            else None,
+        )
 
     # ---------------------------------------------------------------- grants
     def _next_short(self, key: str) -> int:

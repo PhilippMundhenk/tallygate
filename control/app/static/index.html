@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>tallygate</title><link rel="stylesheet" href="/static/style.css"></head>
+<title>tallygate</title><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/availability.css"></head>
 <body>
 <header>
   <span class="brand">🔐 tallygate</span>
@@ -22,6 +22,7 @@
 <main>
   <!-- APPROVALS -->
   <section id="tab-approvals" role="tabpanel" aria-labelledby="tabbtn-approvals">
+    <div id="availability" class="card"></div>
     <div id="grantReqBox" class="hidden">
       <h2>Grant requests</h2>
       <p class="hint">The agent asks for a predefined bundle of access. The reason is written by the agent – treat it as a claim, not a fact.</p>
@@ -253,4 +254,5 @@ git config --global user.email "id+user@users.noreply.github.com"</pre>
 </main>
 <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <script src="/static/app.js"></script>
+<script src="/static/availability.js"></script>
 </body></html>

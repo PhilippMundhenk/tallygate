@@ -71,6 +71,9 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - A weekly workflow that proposes new Claude Code versions (#17).
 - `make coverage`: a gate of 95 % line coverage per module, including the gateway and control processes; every
   module is at 98–100 % (#27).
+- **Away mode, quiet hours and a digest:** while you are away or in quiet hours, new destinations and grant
+  requests that need you are refused at once with a clear message to the agent (never allowed
+  automatically). What was refused is listed in the UI and sent as one digest when you are back (#73).
 
 ### Changed
 - **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie

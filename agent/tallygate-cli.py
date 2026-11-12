@@ -46,6 +46,9 @@ def cmd_grants(_args) -> int:
     status, data = call("GET", "/v1/grants")
     if status != 200:
         sys.exit(f"tallygate: {data.get('error', status)}")
+    operator = data.get("operator") or {}
+    if operator.get("message"):  # away or quiet hours: requests that need a human are refused at once
+        print(f"note: {operator['message']}")
     if not data["grants"]:
         print("No grants are defined. Ask the operator to define one.")
     for g in data["grants"]:
@@ -80,6 +83,9 @@ def cmd_request(args) -> int:
     if args.ttl:
         body["ttl"] = args.ttl
     status, r = call("POST", f"/v1/grants/{args.name}/request", body)
+    if status == 503:  # the operator is away or in quiet hours: refused, not an error
+        print(f"denied: {r.get('error', 'operator unavailable')}")
+        return 1
     if status not in (200, 202):
         print(f"tallygate: {r.get('error', status)}", file=sys.stderr)
         return 2

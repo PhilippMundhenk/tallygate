@@ -30,6 +30,7 @@ from mitmproxy.net.dns import response_codes
 from mitmproxy.proxy import server_hooks
 
 from egressgw import api
+from egressgw.availability import Availability, Unavailable
 from egressgw.grants import READ_METHODS, GrantDef, Grants, Target, path_ok
 from egressgw.policy import (
     DEFAULT_HARD_DENY,
@@ -219,6 +220,8 @@ class Gateway:
         self.max_pending = int(self.config.get("max_pending", 10))
         self._dups: dict[tuple, list] = {}
         self.grants = Grants(self.config, DATA_DIR)
+        self.availability = Availability(self.config, DATA_DIR)
+        self._unavailable = self.availability.mode()[0]  # last state seen by availability_tick
         # server connection id -> (active grant id, host the agent asked for, target)
         self.conn_grant: dict[str, tuple[str, str, Target]] = {}
         self._grant_events: dict[str, asyncio.Event] = {}
@@ -302,6 +305,47 @@ class Gateway:
             self._grant_resolved(r)
         if expired:
             self.publish({"type": "grants"})
+        self.availability_tick(now)
+
+    # ------------------------------------------------------------------ availability (#73)
+    def availability_tick(self, now: float | None = None) -> None:
+        """Called by housekeeping and after every change: when nobody can answer any more, what is waiting
+        is denied; when the operator is back (or periodically while away), the digest goes out."""
+        now = time.time() if now is None else now
+        if self.availability.expire_away(now):
+            self.record(kind="admin", action="availability", reason="away period ended")
+        mode = self.availability.mode(now)[0]
+        was, self._unavailable = self._unavailable, mode
+        if mode != "available" and was == "available":
+            self._deny_waiting(self.availability.blocking(now) or mode)
+            self.publish({"type": "availability"})
+        elif mode == "available" and was != "available":
+            self._digest("away ended" if was == "away" else "quiet hours ended")
+            self.publish({"type": "availability"})
+        elif mode != was:  # quiet hours <-> away
+            self.publish({"type": "availability"})
+        elif self.availability.digest_due(now):
+            self._digest("while away")
+
+    def _deny_waiting(self, why: str) -> None:
+        """Deny held connections and grant requests that wait for a human: nobody will answer them."""
+        for key, p in list(self.pending.items()):
+            if self.pending.pop(key, None) is not p:
+                continue
+            self.availability.note("conn", p.host, p.port, why)
+            if p.future is not None and not p.future.done():
+                p.future.set_result(Decision("deny", why))
+            self.publish({"type": "resolved", "id": p.id, "action": "deny", "reason": why.split(":", 1)[0]})
+        for r in self.grants.pending():
+            self.availability.note("grant", r.name, 0, why)
+            r.status, r.decided_by = "denied", "availability"
+            self.record(kind="grant", host=r.name, action="deny", reason=f"grant request for {r.name}: {why}")
+            self._grant_resolved(r)
+
+    def _digest(self, why: str) -> None:
+        items, dropped = self.availability.take()
+        if items or dropped:
+            self.publish({"type": "digest", "why": why, "items": items, "more": dropped})
 
     # ------------------------------------------------------------------ events
     def publish(self, ev: dict) -> None:
@@ -373,6 +417,11 @@ class Gateway:
 
     async def ask(self, host: str, port: int, ips: list[str], proto: str, client: str) -> Decision:
         key = (host.lower(), port)
+        if why := self.availability.blocking():
+            # Nobody can answer (away / quiet hours): refuse at once instead of holding the connection, and
+            # remember it for the digest. Never allowed automatically (fail closed).
+            self.availability.note("conn", host.lower(), port, why)
+            return Decision("deny", why)
         if self.neg_cache.get(key, 0) > time.time():
             return Decision("deny", "approval timed out recently")
         p = self.pending.get(key)
@@ -441,6 +490,10 @@ class Gateway:
             r = self.grants.new_request(name, level, ttl, reason, client)
             self._approve(r, level, "auto")
             return r
+        if why := self.availability.blocking():
+            self.availability.note("grant", name, 0, why)
+            self.record(kind="grant", client=client, host=name, action="deny", reason=f"grant {name} ({level}): {why}")
+            raise Unavailable(why)
         r = self.grants.new_request(name, level, ttl, reason, client)
         if r.id not in self._grant_events:
             self._grant_events[r.id] = asyncio.Event()
