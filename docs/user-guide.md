@@ -80,6 +80,11 @@ create a rule for exactly that host:port.
 | Allow a device on the local network | Opens the grant editor with a LAN target (see below) | delete the grant |
 | Templates | Allow what a tool ecosystem needs: Python, Node.js, Go, Rust, Debian/Ubuntu apt, container registries, Hugging Face. Until undone, for 1 h or for 1 day | *Undo* on the template |
 
+Actions that are hard to take back (*allow (log only)*, *Emergency stop*, deleting a grant or a secret) ask
+for confirmation in the page: the first click arms the button (*Confirm: …*) and says what will happen, a
+second click within 8 seconds runs it. Escape or moving the focus elsewhere cancels. The panel updates in
+place when the policy changes elsewhere, so a duration you picked and the keyboard focus stay where they were.
+
 The **emergency stop** runs on the gateway, most important step first, and carries on when a step fails.
 The panel lists every step with a ✔ or ✖, so you can see what did not work. Until you change the mode again,
 grants with automatic approval need your approval like any other: the agent cannot switch its access back on

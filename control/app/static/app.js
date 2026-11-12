@@ -23,6 +23,33 @@ function toast(msg, bad = false) {
   clearTimeout(toast._t); toast._t = setTimeout(() => (t.style.display = "none"), 4000);
 }
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
+// In-page confirmation instead of confirm(), which returns false at once when the browser suppresses
+// dialogs. The first click arms the button and says what will happen; a second click within 8 s runs fn.
+// Escape, the timeout or leaving the button with the keyboard disarms it.
+const ARM_MS = 8000;
+function confirmClick(btn, question, fn) {
+  const disarm = () => {
+    clearTimeout(btn._armT); if (btn.dataset.armed !== "1") return;
+    delete btn.dataset.armed; btn.textContent = btn._label; btn.classList.remove("armed");
+    if (btn._q) { btn._q.remove(); btn._q = null; }
+    btn.removeAttribute("aria-describedby");
+  };
+  btn.addEventListener("keydown", (e) => { if (e.key === "Escape") disarm(); });
+  btn.addEventListener("blur", (e) => { if (e.relatedTarget) disarm(); });
+  return guard(async (...a) => {
+    if (btn.dataset.armed !== "1") {
+      btn._label = btn.textContent; btn.dataset.armed = "1"; btn.classList.add("armed");
+      btn.textContent = "Confirm: " + btn._label;
+      const q = document.createElement("span"); q.className = "confirm-q"; q.setAttribute("role", "status");
+      q.id = "cq-" + Math.random().toString(36).slice(2); q.textContent = `${question} Click again to confirm.`;
+      btn.after(q); btn._q = q; btn.setAttribute("aria-describedby", q.id);
+      btn._armT = setTimeout(disarm, ARM_MS);
+      return;
+    }
+    disarm();
+    await fn(...a);
+  });
+}
 
 /* ---------------- tabs ---------------- */
 function showTab(name) {
@@ -283,43 +310,71 @@ async function applyPreset(name, ttl) {
   toast(`${p ? p.title : name} allowed ${r && r.expires ? `for ${fmtLeft(r.expires)}` : "until undone"}`); await loadPolicy();
 }
 async function undoPreset(name) { await gw("DELETE", `/presets/${name}`); toast("Undone"); await loadPolicy(); }
+// The panel is updated in place on every policy event: cards and buttons are built once per preset, so a
+// chosen duration, the keyboard focus and an armed button survive changes made elsewhere.
+function hideKeepingFocus(el, fallback) {
+  if (el.classList.contains("hidden")) return;
+  const had = el.contains(document.activeElement);
+  el.classList.add("hidden");
+  if (had && fallback) fallback.focus();
+}
 async function renderQuick() {
   if (!presetInfo) presetInfo = await gw("GET", "/presets?details=1");
   $$("#quick [data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === policy.default)));
   // active shortcuts (internet) with their remaining time
-  const active = presetInfo.filter((p) => p.category === "internet" && presetRules(p.name).length);
-  $("#qaActive").innerHTML = active.length ? "<h4>Active</h4>" : "";
-  for (const p of active) {
-    const exp = presetExpiry(presetRules(p.name));
-    const row = document.createElement("div"); row.className = "row";
-    row.innerHTML = `<span class="tag warn">${esc(p.title)}</span><span class="muted">${exp ? `ends in ${esc(fmtLeft(exp))}` : "until undone"}</span>`;
-    const b = document.createElement("button"); b.className = "small secondary"; b.textContent = "Undo";
-    b.onclick = guard(() => undoPreset(p.name)); row.appendChild(b); $("#qaActive").appendChild(row);
-  }
-  // templates
-  const box = $("#qaTemplates"); box.innerHTML = "";
-  for (const p of presetInfo.filter((x) => x.category === "template")) {
-    const on = presetRules(p.name), exp = presetExpiry(on);
-    const el = document.createElement("div"); el.className = "tpl";
-    el.innerHTML = `<div class="row-between"><b>${esc(p.title)}</b>${on.length ? `<span class="tag">active${exp ? `, ends in ${esc(fmtLeft(exp))}` : ""}</span>` : ""}</div>
-      <p class="meta">${esc(p.description)}</p>
-      <p class="meta"><code>${p.rules.map((r) => esc(r.host || r.cidr) + (r.port && r.port !== "*" ? ":" + esc(portText(r.port)) : "")).join("</code> <code>")}</code></p>
-      <div class="btns"><select aria-label="Duration for ${esc(p.title)}">${TTL_CHOICES.map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}</select></div>`;
-    const apply = document.createElement("button"); apply.className = "small"; apply.textContent = on.length ? "Apply again" : "Apply";
-    apply.onclick = guard(() => applyPreset(p.name, $("select", el).value));
-    $(".btns", el).appendChild(apply);
-    if (on.length) {
-      const undo = document.createElement("button"); undo.className = "small secondary"; undo.textContent = "Undo";
-      undo.onclick = guard(() => undoPreset(p.name)); $(".btns", el).appendChild(undo);
+  const box = $("#qaActive");
+  if (!box.firstElementChild) box.innerHTML = '<h4 class="hidden">Active</h4>';
+  let anyActive = false;
+  for (const p of presetInfo.filter((x) => x.category === "internet")) {
+    let row = $(`:scope > .row[data-preset="${CSS.escape(p.name)}"]`, box);
+    if (!row) {
+      row = document.createElement("div"); row.className = "row hidden"; row.dataset.preset = p.name;
+      row.innerHTML = `<span class="tag warn">${esc(p.title)}</span><span class="muted left-text"></span>`;
+      const b = document.createElement("button"); b.className = "small secondary"; b.textContent = "Undo";
+      b.setAttribute("aria-label", `Undo ${p.title}`);
+      b.onclick = guard(() => undoPreset(p.name)); row.appendChild(b); box.appendChild(row);
     }
-    box.appendChild(el);
+    const on = presetRules(p.name), exp = presetExpiry(on);
+    if (on.length) {
+      anyActive = true; row.classList.remove("hidden");
+      $(".left-text", row).textContent = exp ? `ends in ${fmtLeft(exp)}` : "until undone";
+    } else hideKeepingFocus(row, $(`#quick [data-preset="${CSS.escape(p.name)}"]`) || $("#qaStop"));
+  }
+  $(":scope > h4", box).classList.toggle("hidden", !anyActive);
+  // templates
+  const tpls = $("#qaTemplates");
+  for (const p of presetInfo.filter((x) => x.category === "template")) {
+    let el = $(`:scope > .tpl[data-preset="${CSS.escape(p.name)}"]`, tpls);
+    if (!el) {
+      el = document.createElement("div"); el.className = "tpl"; el.dataset.preset = p.name;
+      el.innerHTML = `<div class="row-between"><b>${esc(p.title)}</b><span class="tag state hidden"></span></div>
+        <p class="meta">${esc(p.description)}</p>
+        <p class="meta"><code>${p.rules.map((r) => esc(r.host || r.cidr) + (r.port && r.port !== "*" ? ":" + esc(portText(r.port)) : "")).join("</code> <code>")}</code></p>
+        <div class="btns"><select aria-label="Duration for ${esc(p.title)}">${TTL_CHOICES.map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}</select></div>`;
+      const apply = document.createElement("button"); apply.className = "small apply";
+      apply.onclick = guard(() => applyPreset(p.name, $("select", el).value));
+      const undo = document.createElement("button"); undo.className = "small secondary undo hidden"; undo.textContent = "Undo";
+      undo.setAttribute("aria-label", `Undo ${p.title}`);
+      undo.onclick = guard(() => undoPreset(p.name));
+      $(".btns", el).append(apply, undo); tpls.appendChild(el);
+    }
+    const on = presetRules(p.name), exp = presetExpiry(on);
+    const apply = $(".apply", el), state = $(".state", el);
+    apply.textContent = on.length ? "Apply again" : "Apply";
+    apply.setAttribute("aria-label", on.length ? `Apply ${p.title} again` : `Apply ${p.title}`);
+    state.textContent = on.length ? `active${exp ? `, ends in ${fmtLeft(exp)}` : ""}` : "";
+    state.classList.toggle("hidden", !on.length);
+    if (on.length) $(".undo", el).classList.remove("hidden");
+    else hideKeepingFocus($(".undo", el), apply);  // Undo done: focus goes to Apply on the same card
   }
 }
 $$("#quick [data-preset]").forEach((b) => (b.onclick = guard(() => applyPreset(b.dataset.preset, b.dataset.ttl))));
-$$("#quick [data-mode]").forEach((b) => (b.onclick = guard(async () => {
-  if (b.dataset.mode === "allow" && !confirm("Allow every unknown public destination (the local network stays blocked)? Everything is still logged.")) return;
-  await patchPolicy({ default: b.dataset.mode });
-})));
+$$("#quick [data-mode]").forEach((b) => {
+  const set = () => patchPolicy({ default: b.dataset.mode });
+  b.onclick = b.dataset.mode === "allow"
+    ? confirmClick(b, "Allow every unknown public destination? The local network stays blocked; everything is still logged.", set)
+    : guard(set);
+});
 const STOP_STEPS = {
   suspend_auto_approval: "Automatic grant approval suspended", revoke_grants: "Active grants revoked",
   deny_pending: "Waiting connections denied", deny_grant_requests: "Grant requests denied",
@@ -333,8 +388,7 @@ function showStopResult(r) {
       `${(s.errors || []).length ? `: ${esc(s.errors.join("; "))}` : ""}</li>`;
   }).join("")}</ul>`;
 }
-$("#qaStop").onclick = guard(async () => {
-  if (!confirm("Emergency stop: revoke all grants, deny everything pending, undo the internet shortcuts and block everything unknown?")) return;
+$("#qaStop").onclick = confirmClick($("#qaStop"), "Revoke all grants, deny everything pending, undo the internet shortcuts and block everything unknown?", async () => {
   const r = await gw("POST", "/emergency-stop", {});
   showStopResult(r); toast(r.ok ? "Emergency stop: unknown destinations are blocked" : "Emergency stop incomplete", !r.ok);
   await Promise.allSettled([loadPolicy(true), loadGrants(), loadPending()]);
@@ -423,7 +477,8 @@ function renderGrants() {
     if (d.source === "ui") {
       const e = document.createElement("button"); e.className = "small secondary"; e.textContent = "Edit"; e.onclick = () => openGrantEditor(d); btns.appendChild(e);
       const x = document.createElement("button"); x.className = "small danger"; x.textContent = "Delete";
-      x.onclick = guard(async () => { if (!confirm(`Delete grant ${d.name}?`)) return; await gw("DELETE", `/grants/${d.name}`); await loadGrants(); });
+      x.setAttribute("aria-label", `Delete grant ${d.name}`);
+      x.onclick = confirmClick(x, `Delete grant ${d.name}?`, async () => { await gw("DELETE", `/grants/${d.name}`); await loadGrants(); });
       btns.appendChild(x);
     }
     defs.appendChild(el);
@@ -489,7 +544,8 @@ async function loadSecrets() {
     const row = document.createElement("div"); row.className = "row-between";
     row.innerHTML = `<code>${esc(n)}</code>`;
     const b = document.createElement("button"); b.className = "small danger"; b.textContent = "Remove";
-    b.onclick = guard(async () => { if (!confirm(`Remove secret ${n}?`)) return; await gw("PUT", `/secrets/${n}`, { value: "" }); await loadSecrets(); });
+    b.setAttribute("aria-label", `Remove secret ${n}`);
+    b.onclick = confirmClick(b, `Remove secret ${n}?`, async () => { await gw("PUT", `/secrets/${n}`, { value: "" }); await loadSecrets(); });
     row.appendChild(b); list.appendChild(row);
   }
   if (!sec.names.length) list.innerHTML = '<p class="muted">No secrets stored.</p>';
