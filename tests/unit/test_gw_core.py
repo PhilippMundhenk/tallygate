@@ -72,11 +72,14 @@ def test_error_in_server_connect_refuses_the_connection(make, monkeypatch):
     assert data.server.error == "egress policy: internal error (fail closed)"
 
 
-def test_error_in_tls_clienthello_falls_back_to_interception(make):
+def test_error_in_tls_clienthello_refuses_the_tls(make):
     gw = make()
     data = tls.ClientHelloData(context=SimpleNamespace(), client_hello=None, ignore_connection=True)  # no .server
     gw.tls_clienthello(data)
-    assert data.ignore_connection is False  # intercepted, so the per-request checks still run
+    assert data.ignore_connection is False  # never passed through
+    data = tls.ClientHelloData(context=SimpleNamespace(server=SimpleNamespace(id="s1")), client_hello=None)
+    gw.tls_clienthello(data)  # client_hello None: fails after the server id is known
+    assert data.ignore_connection is False and "s1" in gw.tls_refused
 
 
 def test_error_in_request_kills_the_flow(make, monkeypatch):
@@ -376,6 +379,70 @@ def test_tls_verify_false_disables_verification_only_for_that_target(make):
         assert not hasattr(data.ssl_conn, "mode")  # default verification untouched
 
 
+# ------------------------------------------------------------------ SNI binding (#57)
+def hello(gw, orig, sni, sid="srv-9", port=443):
+    if orig is not None:
+        gw.orig_host[sid] = orig
+    ctx = SimpleNamespace(
+        server=SimpleNamespace(id=sid, address=("192.0.2.1", port)), client=SimpleNamespace(peername=("10.0.0.5", 1))
+    )
+    data = tls.ClientHelloData(context=ctx, client_hello=SimpleNamespace(sni=sni))
+    gw.tls_clienthello(data)
+    return data
+
+
+def test_tls_passes_through_only_with_the_checked_sni(make):
+    gw = make(policy={"default": "deny", "rules": [{"id": "a", "action": "allow", "host": "ok.example", "port": 443}]})
+    cases = [
+        ("ok.example", "OK.example.", True),
+        ("ok.example", "front.example", False),
+        ("ok.example", None, False),
+        (None, "ok.example", False),  # no checked destination
+        ("192.0.2.1", None, True),  # IP literal without SNI: normal
+        ("192.0.2.1", "192.0.2.1", True),
+        ("192.0.2.1", "ok.example", True),  # the rules allow this name by itself
+        ("192.0.2.1", "front.example", False),
+        ("192.0.2.1", "bad_name", False),
+    ]
+    for i, (orig, sni, passed) in enumerate(cases):
+        data = hello(gw, orig, sni, sid=f"s{i}")
+        assert data.ignore_connection is passed, (orig, sni)
+        assert (f"s{i}" in gw.tls_refused) is not passed
+    assert last_event(gw)["reason"] == "TLS SNI bad_name on IP 192.0.2.1 is not allowed by the rules"
+
+
+def test_refused_tls_fails_both_handshakes_and_is_forgotten_on_disconnect(make):
+    gw = make()
+    hello(gw, "ok.example", "front.example", sid="s1")
+    for hook in (gw.tls_start_client, gw.tls_start_server):
+        data = SimpleNamespace(context=SimpleNamespace(server=SimpleNamespace(id="s1")), ssl_conn=None)
+        hook(data)
+        assert data.ssl_conn is not None  # a connection that cannot complete a handshake
+    data = SimpleNamespace(context=SimpleNamespace(server=SimpleNamespace(id="other")), ssl_conn=None)
+    gw.tls_start_client(data)
+    assert data.ssl_conn is None  # untouched: mitmproxy's TlsConfig builds it
+    gw.server_disconnected(SimpleNamespace(server=SimpleNamespace(id="s1")))
+    assert "s1" not in gw.tls_refused
+
+
+def test_host_binding(make):
+    gw = make()
+    for host, target, refused in (
+        ("a.example", "a.example", False),
+        ("A.EXAMPLE.", "a.example", False),
+        ("b.example", "a.example", True),
+        ("[::1]:80", "::1", False),
+        ("[0:0::1]", "::1", False),
+        ("192.0.2.1", "a.example", True),
+    ):
+        req = tutils.treq(host=target)
+        req.headers["Host"] = host
+        assert (gw._host_binding(req, target) is not None) is refused, host
+    req = tutils.treq()
+    req.headers.pop("Host", None)
+    assert gw._host_binding(req, "a.example") is None  # no Host: the upstream's default site
+
+
 # ------------------------------------------------------------------ websocket / http
 def test_websocket_refused_on_read_grants_only(make):
     gw = make({"grants": GRANTS})
@@ -439,11 +506,13 @@ def test_injection_only_over_tls_and_only_for_the_checked_host(make):
     flow = agent_flow("https", "api.example")
     gw.request(flow)
     assert flow.request.headers["Authorization"] == "Bearer s3cret" and "Cookie" not in flow.request.headers
-    for scheme, host in (("http", "api.example"), ("https", "evil.example")):
-        flow = agent_flow(scheme, host)
-        gw.request(flow)
-        # the agent's own credentials are stripped, and the secret never goes out in clear text or elsewhere
-        assert "Authorization" not in flow.request.headers and "Cookie" not in flow.request.headers
+    flow = agent_flow("http", "api.example")
+    gw.request(flow)
+    # the agent's own credentials are stripped, and the secret never goes out in clear text
+    assert "Authorization" not in flow.request.headers and "Cookie" not in flow.request.headers
+    flow = agent_flow("https", "evil.example")
+    gw.request(flow)
+    assert flow.response.status_code == 403  # another Host is refused outright (#57)
 
 
 def test_injection_without_a_configured_secret_sends_no_credentials(make):

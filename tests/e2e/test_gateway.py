@@ -121,17 +121,20 @@ def test_injection_only_with_secret_and_matching_connect_and_sni(gateway, upstre
 
 
 def test_sni_spoofing_does_not_get_the_token(gateway, upstream):
-    """CONNECT to another (allowed) host but claim SNI gh.test: must be passed through, never injected."""
+    """CONNECT to another (allowed) host but claim SNI gh.test: never injected, and since #57 not passed
+    through either (the SNI must match the checked name)."""
+    import ssl
+
     gateway["api"].call("PUT", "/secrets/github_token", {"value": "ghp_E2E"})
-    status, body = https_via_proxy(
-        gateway["ports"]["http"],
-        f"other.test:{upstream['https']}",
-        "gh.test",
-        "/spoof",
-        str(upstream["cert"]),
-        {"Authorization": "token placeholder"},
-    )
-    assert status == 200 and json.loads(body)["auth"] == "token placeholder"
+    with pytest.raises((OSError, ssl.SSLError)):
+        https_via_proxy(
+            gateway["ports"]["http"],
+            f"other.test:{upstream['https']}",
+            "gh.test",
+            "/spoof",
+            str(upstream["cert"]),
+            {"Authorization": "token placeholder"},
+        )
 
 
 def test_intercepted_upstream_certificate_is_still_verified(gateway, upstream):

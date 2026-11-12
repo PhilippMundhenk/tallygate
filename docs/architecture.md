@@ -119,9 +119,20 @@ sequenceDiagram
     G->>S: TCP connect (pinned IP)
     G-->>A: 200 Connection established
     A->>S: TLS ClientHello (SNI api.anthropic.com)
-    G->>G: tls_clienthello: not an injection host → pass through
+    G->>G: tls_clienthello: not an injection host · SNI == checked name → pass through
     A-->>S: end-to-end TLS (gateway sees only bytes)
 ```
+
+The SNI and the HTTP `Host` pick the site on a shared CDN or virtual-host server. So they are bound to the
+name that was checked ([ADR-0013](adr/0013-sni-and-host-bound-to-the-checked-name.md), #57):
+
+- TLS is passed through only if the SNI (lower case, without a trailing dot) equals the CONNECT name. A
+  missing SNI, another name or an ECH outer name is refused: both TLS handshakes are failed on purpose.
+- For a CONNECT to an IP literal, no SNI is normal and passes. An SNI name passes only if the rules allow
+  that name by itself on that port, so it reaches nothing the rules do not allow anyway.
+- Every HTTP request the gateway sees (plain-HTTP proxy requests, plain HTTP in a CONNECT tunnel or over
+  SOCKS5, intercepted TLS) is refused with `403` if its `Host` (or `:authority`) is not the checked target.
+  A request without `Host` goes to the upstream's default site and passes. Raw TCP grants are not checked.
 
 ### Unknown destination with human in the loop
 
