@@ -74,6 +74,10 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - **Away mode, quiet hours and a digest:** while you are away or in quiet hours, new destinations and grant
   requests that need you are refused at once with a clear message to the agent (never allowed
   automatically). What was refused is listed in the UI and sent as one digest when you are back (#73).
+- **Phone approvals without a chat bot:** the UI is an installable app with Web Push (VAPID key created on
+  first start). Notifications have *Allow 2 min* / *Deny* buttons that work through single-use, signed
+  action tokens, never an approve URL; plain HTTP degrades to a hint. ntfy, Gotify and Pushover can notify
+  as well (#72).
 
 ### Changed
 - **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie

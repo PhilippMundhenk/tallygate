@@ -1,0 +1,9 @@
+/* phone approvals (#72) */
+#pushSetup{margin-top:12px;border-top:1px solid var(--line);padding-top:4px}
+#pushSetup .push-device{padding:4px 0;border-bottom:1px solid var(--line)}
+#pushSetup label.inline{max-width:320px}
+/* Installed app (standalone): a compact approval view without the explanations */
+@media (display-mode: standalone){
+  #tab-approvals > .hint,#tab-approvals > details.help,#availability > .hint{display:none}
+  main{padding:10px}
+}

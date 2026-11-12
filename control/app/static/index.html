@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>tallygate</title><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/availability.css"></head>
+<title>tallygate</title><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/availability.css"><link rel="stylesheet" href="/static/push.css">
+<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/static/icon.svg" type="image/svg+xml"><meta name="theme-color" content="#181b22"></head>
 <body>
 <header>
   <span class="brand">🔐 tallygate</span>
@@ -249,10 +250,12 @@ git config --global user.email "id+user@users.noreply.github.com"</pre>
     </ol>
     <div class="card"><h3>Notifications</h3><div id="notifyStatus" class="muted"></div>
       <p class="hint">Browser notifications appear for new requests while this tab is in the background.</p>
-      <button id="notifyBtn" class="secondary">Enable browser notifications</button> <span id="notifyPerm" class="muted"></span></div>
+      <button id="notifyBtn" class="secondary">Enable browser notifications</button> <span id="notifyPerm" class="muted"></span>
+      <div id="pushSetup"></div></div>
   </section>
 </main>
 <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <script src="/static/app.js"></script>
 <script src="/static/availability.js"></script>
+<script src="/static/push.js"></script>
 </body></html>

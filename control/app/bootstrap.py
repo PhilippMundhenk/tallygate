@@ -5,6 +5,8 @@ Every value can still be given as an environment variable, which always wins. Ot
 - GW_API_TOKEN       read from the gateway's volume (the gateway creates it; mounted read-only here)
 - SESSION_SECRET     created in /data/session-secret
 - TTYD_CREDENTIAL    created in the console volume, shared read-only with the agent
+- VAPID key          EC P-256 key for Web Push in /data/vapid-private.pem (VAPID_PRIVATE_KEY: PEM). If /data
+                     is not writable, Web Push stays off and everything else works.
 - UI password        scrypt hash in /data/password-hash; on first start a random password is
                      generated and printed to the log, where it stays readable until the log is
                      rotated. Change it with `python -m app.passwd` (this ends all open sessions).
@@ -134,3 +136,26 @@ def ensure_password() -> None:
         pw,
         bar,
     )
+
+
+def vapid_private_pem() -> bytes | None:
+    """The Web Push (VAPID) signing key: VAPID_PRIVATE_KEY, else created once in the control volume.
+    None if it can be neither read nor created: Web Push is then off, nothing else depends on it."""
+    if os.environ.get("VAPID_PRIVATE_KEY"):
+        return os.environ["VAPID_PRIVATE_KEY"].replace("\\n", "\n").encode()  # one-line .env value
+    path = DATA / "vapid-private.pem"
+    try:
+        if not path.exists():
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric import ec
+
+            key = ec.generate_private_key(ec.SECP256R1())
+            pem = key.private_bytes(
+                serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+            )
+            _write(path, pem.decode())
+            log.info("created %s (Web Push)", path)
+        return path.read_bytes()
+    except OSError as e:
+        log.warning("Web Push disabled: cannot create or read %s (%s)", path, e)
+        return None

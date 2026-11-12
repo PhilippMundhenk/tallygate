@@ -93,6 +93,14 @@ services:
       MATRIX_ACCESS_TOKEN: ${MATRIX_ACCESS_TOKEN:-}
       MATRIX_ROOM_ID: ${MATRIX_ROOM_ID:-}
       MATRIX_ALLOWED_USERS: ${MATRIX_ALLOWED_USERS:-}
+      NTFY_URL: ${NTFY_URL:-}                         # e.g. https://ntfy.example.org/tallygate (notify only)
+      NTFY_TOKEN: ${NTFY_TOKEN:-}
+      GOTIFY_URL: ${GOTIFY_URL:-}                     # e.g. https://gotify.example.org (notify only)
+      GOTIFY_TOKEN: ${GOTIFY_TOKEN:-}
+      PUSHOVER_TOKEN: ${PUSHOVER_TOKEN:-}             # notify only
+      PUSHOVER_USER: ${PUSHOVER_USER:-}
+      PUSH_ALLOWED_HOSTS: ${PUSH_ALLOWED_HOSTS:-}     # Web Push: extra push services (self-hosted)
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}               # Web Push contact (mailto: or https:), default PUBLIC_URL
     volumes:
       - ${CONTROL_DATA:-control-data}:/data                         # session secret, UI password hash
       - gw-token:/run/tallygate/gw:ro

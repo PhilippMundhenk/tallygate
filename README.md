@@ -41,7 +41,9 @@ only then let through, turned back, or held for you to decide.
   read-only hosts (e.g. the npm registry) refuse uploads.
 - **Operator UI.** Approvals, live log, rules editor with dry-run test, presets, browser consoles (Remote
   Control, bash, claude), and a setup wizard for GitHub, Claude login, git and Remote Control.
-- **Phone approvals** via Telegram buttons or Matrix reactions (outbound polling only, no webhooks).
+- **Phone approvals** via Telegram buttons or Matrix reactions (outbound polling only, no webhooks), or
+  without any bot: install the UI as an app and tap *Allow 2 min* / *Deny* right in the push notification.
+  ntfy, Gotify and Pushover can notify too.
 - **Away mode and quiet hours.** When you can't answer, new destinations are refused at once with a clear
   message to the agent instead of waiting for you, and you get one digest of what was refused afterwards.
 - **Hardened by default.** Non-root everywhere, `cap_drop: ALL`, `no-new-privileges`, read-only root

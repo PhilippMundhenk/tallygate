@@ -26,7 +26,8 @@
 │       ├── main.py           #   auth, CSRF, gateway relay, terminal proxy, agent status
 │       ├── bootstrap.py      #   secrets and UI password on first start
 │       ├── passwd.py         #   `python -m app.passwd`: change the stored UI password
-│       ├── notify.py         #   Telegram + Matrix approval bots
+│       ├── notify.py         #   Telegram + Matrix bots, Web Push, ntfy, Gotify, Pushover
+│       ├── webpush.py        #   Web Push: VAPID, RFC 8291 encryption, subscriptions, action tokens
 │       └── static/           #   single-page UI (vanilla JS, no build step)
 ├── agent/                    # agent container
 │   ├── Dockerfile            #   Debian + Claude Code + gh (signed repo) + ttyd (checksummed)
@@ -57,7 +58,8 @@ The e2e suite (`tests/e2e`) needs no Docker and no root:
   `/etc/hosts`. `GW_TEST_FLOOR_REPLACE=1` lets the test config's `hard_deny_floor` replace the built-in
   list, because the upstreams run on loopback.
 - Upstreams are local HTTP/HTTPS echo servers with a throwaway certificate.
-- The control plane runs as a real process; Telegram and Matrix are mocked (`tests/e2e/mockbots.py`).
+- The control plane runs as a real process; Telegram, Matrix, a Web Push service, ntfy, Gotify and Pushover are
+  mocked (`tests/e2e/mockbots.py`).
 - The web-console test runs if `ttyd` is installed (CI installs the checksum-verified binary).
 
 Run a subset: `pytest tests/e2e -k injection -x -vv`. Process logs end up in pytest's tmp directories

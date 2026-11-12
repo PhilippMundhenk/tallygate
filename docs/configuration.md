@@ -48,6 +48,13 @@ All variables are optional. Secrets are created on first start when they are not
 | `MATRIX_ACCESS_TOKEN` | – | Access token of a dedicated bot user. |
 | `MATRIX_ROOM_ID` | – | `!id:server` of an **unencrypted** room the bot has joined. |
 | `MATRIX_ALLOWED_USERS` | – | **Required** for Matrix: comma-separated MXIDs allowed to decide (must not include the bot). |
+| `NTFY_URL` | – | ntfy topic URL, e.g. `https://ntfy.example.org/tallygate`. Notifications only (link to the UI, no buttons). |
+| `NTFY_TOKEN` | – | ntfy access token, sent as `Authorization: Bearer`. Recommended: on a public server anyone who guesses the topic reads it. |
+| `GOTIFY_URL` / `GOTIFY_TOKEN` | – | Gotify server and application token. Notifications only. |
+| `PUSHOVER_TOKEN` / `PUSHOVER_USER` | – | Pushover application token and user (or group) key. Notifications only. |
+| `VAPID_SUBJECT` | `PUBLIC_URL` if it is `https://`, else the project URL | Contact for Web Push services (`mailto:` or `https:`). |
+| `VAPID_PRIVATE_KEY` | *(created in `control-data`)* | EC P-256 private key (PEM; `\n` for line breaks) that signs Web Push messages. Changing it ends every subscription. |
+| `PUSH_ALLOWED_HOSTS` | – | Comma-separated extra push service hosts (`*.example.org` allowed). Built in: Google (`fcm.googleapis.com`), Mozilla, Apple, Microsoft. Control only ever sends Web Push to these hosts. |
 
 ### Examples
 
@@ -74,6 +81,15 @@ WORKSPACE=/srv/tallygate/workspace
 AGENT_MEM_LIMIT=4g
 AGENT_CPUS=2
 RC_NAME=homelab-agent
+```
+
+A self-hosted ntfy server for notifications, Web Push for deciding on the phone:
+
+```sh
+# .env
+PUBLIC_URL=https://tallygate.example.org     # Web Push needs HTTPS
+NTFY_URL=https://ntfy.example.org/tallygate
+NTFY_TOKEN=tk_…
 ```
 
 Matrix instead of Telegram:
@@ -289,6 +305,9 @@ These are wired by the compose file and normally need no change.
 | control | `GW_URL` | Gateway API base URL. |
 | control | `AGENT_HOST`, `AGENT_STATUS_PORT`, `TERMINALS` | Agent address, status port, `name:port` list of ttyd consoles. |
 | control | `SESSION_TTL`, `LOG_LEVEL` | Session lifetime (s, default 12 h), log level. |
+| control | `CONTROL_DATA` | Control state directory (`/data`): session secret, password hash, VAPID key, push subscriptions. |
+| control | `TELEGRAM_API_BASE`, `PUSHOVER_API_BASE` | API base URLs (the test suite points them at mock servers). |
+| control | `PUSH_TEST_ALLOW_HTTP` | **Test suite only.** `1` = Web Push endpoints over plain HTTP are accepted (logged as a warning). |
 | agent | `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` (+ lowercase) | Route all tools through the gateway. |
 | agent | `SELFTEST_BLOCKED_PROBES` | Management endpoints the self-test expects to be unreachable. |
 | agent | `TALLYGATE_URL` | Grant API for the `tallygate` CLI (`http://172.31.10.2:8079`). |

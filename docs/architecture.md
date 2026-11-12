@@ -24,7 +24,7 @@ control plane provides the UI, notifications and web consoles.
 2. Enforce isolation through **topology** (Docker networks), not through firewall rules the agent's
    container could influence.
 3. Keep **secrets out of the agent**: credentials are added in flight by the gateway.
-4. Provide a complete **operator experience**: web UI, phone approvals (Telegram/Matrix), web consoles,
+4. Provide a complete **operator experience**: web UI, phone approvals (Telegram/Matrix/Web Push), web consoles,
    guided setup, an audit log.
 5. Stay **small and auditable**: three containers, ~2k lines of application code, pinned dependencies.
 
@@ -259,7 +259,7 @@ It never becomes an `allow`. Refused destinations are collected and sent as one 
 | UI-defined grants | `gateway-data`: `grants.yaml` | egress-gw | Active grants and pending requests live in memory (a restart ends them: fail closed). |
 | Agent home | `agent-home` | agent (uid 1000) | Claude login, settings, skills, `.gitconfig`, tmux/shell history. |
 | Workspace | `workspace` | agent | Repositories. |
-| Control | `control-data`: `session-secret`, `password-hash` | control (uid 10002) | Created on first start unless set by environment. Sessions in memory (a restart logs everyone out). |
+| Control | `control-data`: `session-secret`, `password-hash`, `vapid-private.pem`, `push-subscriptions.json` | control (uid 10002) | Created on first start unless set by environment. Sessions in memory (a restart logs everyone out). Without a writable volume, Web Push is off. |
 | Shared secrets | `gw-token` (gateway rw, control ro), `ttyd` (control rw, agent ro) | – | API token and console credential, created on first start. The agent never mounts `gw-token`. |
 
 ## Process model
@@ -267,7 +267,7 @@ It never becomes an `allow`. Refused destinations are collected and sent as one 
 | Container | PID 1 | Processes |
 |---|---|---|
 | egress-gw | `python run.py` → `exec mitmdump` | mitmproxy event loop with the tallygate addon and the aiohttp API server on the same loop |
-| control | `python -m app.main` | aiohttp server, gateway SSE subscriber, Telegram long-poll, Matrix `/sync` loop |
+| control | `python -m app.main` | aiohttp server, gateway SSE subscriber, Telegram long-poll, Matrix `/sync` loop; outbound Web Push, ntfy, Gotify and Pushover requests |
 | agent | `tini` → `entrypoint.sh` | supervisor loop (5 s) restarting: tmux session `rc` (`claude remote-control` in a restart loop), ttyd × 3, `status.py` |
 
 ## Grants

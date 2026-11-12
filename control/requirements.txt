@@ -1,1 +1,3 @@
 aiohttp==3.14.5
+# Web Push (#72): P-256 ECDH/ECDSA, HKDF inputs and AES-GCM for RFC 8291/8292 (same version mitmproxy uses)
+cryptography==50.0.2

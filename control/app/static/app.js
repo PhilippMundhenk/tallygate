@@ -587,7 +587,9 @@ async function loadSetup() {
     setStatus("st-rc", st.remote_control_running ? `✔ running (${esc(st.claude_version || "")})` : "✖ not running", st.remote_control_running ? "ok" : "warn");
   } catch (e) { ["st-claude", "st-git", "st-rc"].forEach((id) => setStatus(id, esc(e.message), "bad")); }
   const meta = await api("GET", "/api/meta");
-  $("#notifyStatus").textContent = `Telegram: ${meta.notify.telegram ? "configured" : "off"} · Matrix: ${meta.notify.matrix ? "configured" : "off"} (configure via environment)`;
+  const CHANNELS = { telegram: "Telegram", matrix: "Matrix", webpush: "Web Push", ntfy: "ntfy", gotify: "Gotify", pushover: "Pushover" };
+  $("#notifyStatus").textContent = Object.entries(CHANNELS).filter(([k]) => k in meta.notify)
+    .map(([k, n]) => `${n}: ${meta.notify[k] ? "on" : "off"}`).join(" · ") + " (chat and push services: configured via environment)";
 }
 $("#ghSave").onclick = guard(async () => {
   const token = $("#ghToken").value.trim(); if (!token) return;

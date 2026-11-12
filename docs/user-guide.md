@@ -12,6 +12,7 @@ consoles into the agent, and run the setup wizard. Remote Control itself is used
 - [Setup wizard](#setup-wizard)
 - [Telegram approvals](#telegram-approvals)
 - [Matrix approvals](#matrix-approvals)
+- [Phone approvals without a chat bot](#phone-approvals-without-a-chat-bot)
 - [Rule cookbook](#rule-cookbook)
 - [Working with the agent](#working-with-the-agent)
 
@@ -21,7 +22,8 @@ consoles into the agent, and run the setup wizard. Remote Control itself is used
 
 When the agent connects somewhere that no rule covers (and the default is `ask`), the connection is **held**
 and appears here, on Telegram/Matrix if configured, and as a desktop notification while the tab is in the
-background (turn these on once with **Enable browser notifications** in the Setup tab). The countdown shows
+background (turn these on once with **Enable browser notifications** in the Setup tab), and as a push
+notification on your phone ([without a chat bot](#phone-approvals-without-a-chat-bot)). The countdown shows
 when it will be denied automatically.
 
 | Button | Effect |
@@ -174,6 +176,35 @@ decided. Taps from users not in the allowlist are answered with "Not authorised"
 Each request is posted as `🔐 #3 Agent wants to connect: host:port …` with pre-seeded reactions. Tap a
 reaction (👍 2 min · ⏰ 1 h · ✅ always · 🌐 domain · 👎 deny · ⛔ block) or reply `allow 3`, `hour 3`,
 `always 3`, `domain 3`, `deny 3` or `block 3`. The bot confirms the outcome in a reply.
+
+## Phone approvals without a chat bot
+
+**Web Push (installable app).** Open the UI on your phone over HTTPS, install it (*Add to Home screen* /
+*Install app*; on iPhone this is required, iOS 16.4 or later), then **Setup → Notifications → Turn on
+notifications on this device**. Each request arrives as a notification:
+
+| Request | Buttons in the notification |
+|---|---|
+| Connection | **Allow 2 min**, **Deny** |
+| Grant, read level | **Approve read**, **Deny** |
+| Grant, write level | **Approve read-only** (if the grant offers read), **Deny**. Write access needs the UI or a chat bot. |
+
+Tapping the notification itself opens the approvals. After a decision (from anywhere) the notification is
+replaced by the outcome. The buttons work for at most 10 minutes and once, only on the device they were sent
+to; they need no login, but they cannot do anything except that one decision (see the
+[threat model](threat-model.md), T37). *Send a test* checks the path; *Remove* stops a device. A device
+whose subscription expired is removed automatically.
+
+Web Push needs a secure context: HTTPS (your reverse proxy) or `localhost`. On plain HTTP the Setup tab says
+so, and everything else keeps working. Control sends the messages to the browser's push service (Google,
+Mozilla, Apple or Microsoft); the content is end-to-end encrypted to your device, only the timing and size
+are visible to the push service.
+
+**ntfy, Gotify, Pushover.** For a notification on the phone with apps you may already use, set `NTFY_URL`
+(+ `NTFY_TOKEN`), `GOTIFY_URL` + `GOTIFY_TOKEN` or `PUSHOVER_TOKEN` + `PUSHOVER_USER` (see
+[configuration](configuration.md)). They get the same text as Telegram and a link to the UI (`PUBLIC_URL`),
+but no decision buttons: an approve link would work for anyone who sees it. These services see the
+destinations in plain text, like Telegram does.
 
 ## Rule cookbook
 

@@ -38,7 +38,7 @@ flowchart LR
     end
     subgraph O["Operator"]
         B[Browser / Claude app]
-        P[Phone: Telegram / Matrix]
+        P[Phone: Telegram / Matrix / Web Push]
         L[LAN]
     end
     TP -->|content| A
@@ -97,6 +97,7 @@ service, **E**levation of privilege.
 | T34 | A compromised UI session or API token defines a grant that injects a stored secret into requests to a host of its choosing | I | `inject` and `tls_verify: false` only in config-file grants; UI/API grants with them are rejected | unit + e2e (#12) |
 | T35 | Rule bypass through odd notation: IPv4-mapped IPv6 literals (`[::ffff:127.0.0.1]`) or a null/garbled port that matches every port | E | Mapped addresses normalised in hard deny, rules, approvals and grants; ports validated strictly in the API and the UI | unit + e2e (#13) |
 | T36 | Approval fatigue at night or while busy: the operator taps *Allow* on a prompt without reading it, or the agent waits on prompts nobody answers | S, D | Away mode and quiet hours turn *ask* into an immediate *deny* with a message to the agent, never into *allow*; what was refused is reviewed later (digest, *Allow 1 h*); an unreadable state file means away (#73) | unit + e2e (`test_availability.py`) |
+| T37 | Someone approves through a push notification: a forged, replayed or leaked notification button, a cross-site request to the action endpoint, or a subscription that points control at the LAN | S, E | Buttons carry action tokens (HMAC with a key derived from the session secret) bound to one request, one decision and one device, single use, ≤ 10 min; sent end-to-end encrypted (RFC 8291) to the subscribed browser only; `/api/push/act` requires `POST`, `X-Tallygate` and a same-origin `Origin`; write grants cannot be approved from a notification; subscriptions only to known push service hosts (`PUSH_ALLOWED_HOSTS`), https only; ntfy/Gotify/Pushover get no buttons | unit (RFC 8291 vector, tokens) + e2e (`test_push.py`) |
 
 ## Residual risks
 
@@ -111,6 +112,8 @@ service, **E**levation of privilege.
 | **Compromised control plane** | Holds the gateway API token; can change policy. | Strong auth in front (OIDC), not internet-exposed, keep updated. |
 | **Matrix room not end-to-end encrypted** | Bot does not implement E2EE. | Use your own homeserver; consider Telegram or web-only approvals. |
 | **Telegram metadata** | Destinations in approval prompts pass through Telegram. | Use Matrix on your homeserver or web-only if that matters. |
+| **ntfy / Gotify / Pushover** | The same text in plain form on those services; an ntfy topic on a public server is readable by anyone who knows its name. | Self-host ntfy/Gotify, set `NTFY_TOKEN`, or use Web Push (end-to-end encrypted). |
+| **Web Push metadata** | The browser's push service (Google, Mozilla, Apple, Microsoft) sees when and how much is sent, not the content. A stolen unlocked phone can press the buttons of current notifications. | Lock the phone; remove lost devices under *Setup → Notifications*. |
 
 ## Out of scope
 

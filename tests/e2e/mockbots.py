@@ -1,4 +1,4 @@
-"""Mock Telegram Bot API + Matrix client-server API.
+"""Mock Telegram Bot API + Matrix client-server API, plus a Web Push service, ntfy, Gotify and Pushover.
 
 When the control plane posts an approval message, the mock "user" answers after a short delay
 according to `plan` (set by the test): a Telegram button press or Matrix reactions/replies.
@@ -32,6 +32,9 @@ class MockBots:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._runner: web.AppRunner | None = None
         self._tasks: set[asyncio.Task] = set()
+        # Web Push / ntfy / Gotify / Pushover: every request as (kind, headers, body); push status per id
+        self.received: list[tuple[str, dict, bytes]] = []
+        self.push_status: dict[str, int] = {}
 
     def _keep(self, task: asyncio.Task) -> None:
         self._tasks.add(task)
@@ -61,6 +64,10 @@ class MockBots:
         app.router.add_get("/_matrix/client/v3/account/whoami", self._mx_whoami)
         app.router.add_put("/_matrix/client/v3/rooms/{room}/send/{type}/{txn}", self._mx_send)
         app.router.add_get("/_matrix/client/v3/sync", self._mx_sync)
+        app.router.add_post("/push/{sid}", self._plain_post)
+        app.router.add_post("/ntfy/{topic}", self._plain_post)
+        app.router.add_post("/gotify/message", self._plain_post)
+        app.router.add_post("/1/messages.json", self._plain_post)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         await web.TCPSite(self._runner, "127.0.0.1", self.port).start()
@@ -198,3 +205,43 @@ class MockBots:
         return web.json_response(
             {"next_batch": f"s{next(self._ids)}", "rooms": {"join": {"!room:hs": {"timeline": {"events": events}}}}}
         )
+
+    # ---------------------------------------------------------------- push services
+    async def _plain_post(self, request: web.Request) -> web.Response:
+        kind = request.path.split("/")[1]
+        self.received.append((kind if kind != "1" else "pushover", dict(request.headers), await request.read()))
+        if kind == "push":
+            return web.Response(status=self.push_status.get(request.match_info["sid"], 201))
+        if self.fail.get(kind) == "error":
+            return web.json_response({"error": "down"}, status=500)
+        return web.json_response({"ok": True})
+
+    def got(self, kind: str) -> list[tuple[dict, bytes]]:
+        return [(h, b) for k, h, b in self.received if k == kind]
+
+
+def decrypt(body: bytes, ua_private, auth: bytes) -> bytes:
+    """RFC 8291 decryption, as a browser does it (independent of control/app/webpush.py)."""
+    import hashlib
+    import hmac
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    def hkdf(salt, ikm, info, n):
+        prk = hmac.new(salt, ikm, hashlib.sha256).digest()
+        return hmac.new(prk, info + b"\x01", hashlib.sha256).digest()[:n]
+
+    salt, idlen = body[:16], body[20]
+    as_public, ct = body[21 : 21 + idlen], body[21 + idlen :]
+    ua_public = ua_private.public_key().public_bytes(
+        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
+    )
+    shared = ua_private.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), as_public))
+    ikm = hkdf(auth, shared, b"WebPush: info\x00" + ua_public + as_public, 32)
+    plain = AESGCM(hkdf(salt, ikm, b"Content-Encoding: aes128gcm\x00", 16)).decrypt(
+        hkdf(salt, ikm, b"Content-Encoding: nonce\x00", 12), ct, None
+    )
+    assert plain.endswith(b"\x02")
+    return plain[:-1]

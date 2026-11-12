@@ -106,12 +106,18 @@ Used by the bundled web UI; documented for scripting and review.
 | GET/POST | `/login` | – | Login form / submit (`password`); 10 failures per 15 min per client lock out (429); bodies over 4 KiB get 413; 429 while 5 checks are already queued |
 | POST | `/logout` | session | Clears the session |
 | GET | `/` | session | Single-page UI |
-| GET | `/api/meta` | session | Current user, terminal names, notification status |
+| GET | `/api/meta` | session | Current user, terminal names, notification status (`telegram`, `matrix`, `webpush`, `ntfy`, `gotify`, `pushover`) |
 | GET | `/api/stream` | session | Relayed gateway SSE stream |
 | * | `/api/gw/{path}` | session + CSRF | Relay to an **allowlisted** subset of the gateway API: `GET`/`PUT`/`PATCH /policy`, `POST /emergency-stop`, `POST /rules`, `DELETE /rules/{id}`, `GET /pending`, `POST /pending/{id}/decide`, `GET /events`, `POST /test`, `GET`/`POST`/`DELETE /presets…`, `GET /secrets`, `PUT /secrets/{name}`, `GET`/`PUT`/`DELETE /grants/{name}`, `POST /grants/{name}/activate`, `DELETE /active-grants/{id}`, `POST /grant-requests/{id}/decide`, `GET /info`, `GET`/`PATCH /availability`, `DELETE /availability/missed`. Everything else is refused (404). For decisions, the emergency stop and availability changes, `by` is set to `web:<user>`. |
 | POST | `/api/github/check` | session + CSRF | `{"token": "...", "store": true}` — validate a token against GitHub from the control plane and store it in the gateway |
 | GET | `/api/agent/status` | session | Agent status (Claude login, git identity, Remote Control running, versions) |
 | GET | `/api/agent/selftest` | session | Run the in-agent isolation self-test |
+| GET | `/api/push` | session | Web Push: `{"enabled", "public_key" (VAPID, for `applicationServerKey`), "subscriptions": [{id, label, created, service}]}` |
+| POST | `/api/push/subscribe` | session + CSRF | `{"subscription": <PushSubscription JSON>, "label": "phone"}` → `201`; `400` for an unknown push service or invalid keys; `503` when Web Push is off |
+| DELETE | `/api/push/{id}` | session + CSRF | Stop notifications to that device |
+| POST | `/api/push/test` | session + CSRF | Send a test notification: `{"delivered": n}`; `502` if no device could be reached |
+| POST | `/api/push/act` | action token + CSRF | `{"token": ...}` from a notification button. No session needed: the token is signed, bound to one request, one decision and one device, single use, valid ≤ 10 min. `403` invalid/used/expired, `409` already decided, `200 {"ok", "decision"}` |
+| GET | `/sw.js`, `/manifest.webmanifest`, `/static/icon*` | – | Service worker, PWA manifest and icons (static, no session: browsers fetch them without cookies) |
 | GET | `/term/{name}/` | session | Console page (served by control: vendored xterm.js, no agent content) |
 | GET (WS) | `/term/{name}/ws` | session + Origin | Filtered relay to the agent's ttyd `name`: browser → `0` input / `1` resize, agent → `0` output only; control adds the ttyd credential |
 
