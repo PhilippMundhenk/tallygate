@@ -37,7 +37,7 @@ only then let through, turned back, or held for you to decide.
 - **No DNS exfiltration.** The agent's DNS always answers NXDOMAIN, and every attempt is logged. The gateway
   only resolves a name after the policy or a human allowed it.
 - **Secrets stay out of the agent.** The GitHub token lives in the gateway and is injected in flight, only when
-  the CONNECT target, SNI and Host all match. The agent's own credentials for those hosts are stripped, and
+  the CONNECT target and Host match. The agent's own credentials for those hosts are stripped, and
   read-only hosts (e.g. the npm registry) refuse uploads.
 - **Operator UI.** Approvals, live log, rules editor with dry-run test, presets, browser consoles (Remote
   Control, bash, claude), and a setup wizard for GitHub, Claude login, git and Remote Control.

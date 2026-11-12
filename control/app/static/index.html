@@ -75,7 +75,7 @@
     </div>
     <table class="rules"><thead><tr><th>#</th><th>Action</th><th>Match</th><th>Port</th><th>Note</th><th>Expires</th><th></th></tr></thead><tbody id="rulesBody"></tbody></table>
     <details class="card"><summary>Hard deny (never reachable, never asked)</summary>
-      <p class="hint">Built-in floor (read-only; change only via <code>hard_deny_floor</code> in the gateway config file):</p>
+      <p class="hint">Floor (read-only): the built-in list plus <code>hard_deny_floor</code> from the gateway config file:</p>
       <p><code id="hardDenyFloor" class="muted"></code></p>
       <p class="hint">Additional CIDRs (one per line), e.g. your Docker host's public IP:</p>
       <textarea id="hardDeny" rows="5"></textarea><button id="saveHard">Save additional hard deny</button></details>
@@ -116,9 +116,8 @@
         Self-signed certificate? Pin its SHA-256 fingerprint instead of disabling verification.</p>
       <div id="geTargets"></div>
       <button id="geAddTarget" class="small secondary">+ target</button>
-      <h4>Credential injection <span class="muted">(https targets; the agent never sees the value)</span></h4>
-      <div id="geInject"></div>
-      <button id="geAddInject" class="small secondary">+ header</button>
+      <p class="hint">Credential injection and disabling TLS verification are only available for grants in the
+        gateway config file: a UI session must not be able to send stored secrets to a host of its choosing.</p>
       <div class="btns">
         <button id="geSave">Save grant</button><button id="geCancel" class="secondary">Cancel</button>
       </div>

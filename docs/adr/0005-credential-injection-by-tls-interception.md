@@ -13,9 +13,9 @@ can exfiltrate it. Docker Sandboxes and similar products inject credentials in a
 - The real token lives only in the gateway (`secrets.json`, set via the UI, never returned by the API).
 - For configured hosts (`github.com`, `api.github.com`, `uploads.github.com`) the gateway intercepts TLS with
   its own CA (trusted by the agent) and **replaces** the configured header.
-- Interception and injection happen only if **all** match the configured host: the CONNECT target
-  (`orig_host`, recorded at decision time), the TLS SNI, and the HTTP `Host`. Plain-HTTP requests are never
-  injected.
+- TLS is intercepted whenever the CONNECT target (`orig_host`, recorded at decision time) is a configured
+  host, whatever the client's SNI says, so the agent's own credentials are always stripped. Injection happens
+  only if the HTTP `Host` matches that target too. Plain-HTTP requests are never injected.
 - The agent holds placeholders (`GH_TOKEN`, a git credential helper) so tools behave as "logged in".
 - Upstream TLS is verified normally (system trust store) against the configured hostname.
 
