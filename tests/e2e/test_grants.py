@@ -178,6 +178,18 @@ def test_ui_defined_grants_are_validated(gateway):
     assert api.call("DELETE", "/grants/cam")[0] == 200
 
 
+def test_ui_grants_cannot_inject_secrets_or_disable_tls(gateway, upstream):
+    """#12: a UI grant to another host used to receive the stored GitHub token."""
+    api = gateway["api"]
+    target = {"host": "other.test", "port": upstream["https"], "scheme": "https"}
+    inject = [{"host": "other.test", "header": "Authorization", "value": "Bearer ${github_token}"}]
+    status, body, _ = api.call("PUT", "/grants/exfil", {"targets": [target], "inject": inject, "approval": "auto"})
+    assert status == 400 and "config file" in body["error"]
+    assert api.call("PUT", "/grants/noverify", {"targets": [{**target, "tls_verify": False}]})[0] == 400
+    _, g, _ = api.call("GET", "/grants")
+    assert not {"exfil", "noverify"} & {d["name"] for d in g["defs"]}
+
+
 def test_cli_lists_requests_and_waits(gateway):
     import subprocess
     import sys

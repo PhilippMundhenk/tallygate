@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
+import inspect
 import logging
 import os
 import socket
@@ -35,6 +37,7 @@ from egressgw.policy import (
     Exception_,
     Policy,
     is_ip,
+    parse_cidrs,
     registrable_domain,
     rule_for_approval,
     valid_hostname,
@@ -53,6 +56,42 @@ WRITE_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
 # TEST ONLY: "name=ip,name=ip" static resolution used by the e2e test-suite instead of /etc/hosts.
 # Never set this in production; the gateway logs a loud warning when it is active.
 STATIC_HOSTS = dict(kv.split("=", 1) for kv in os.environ.get("GW_TEST_STATIC_HOSTS", "").split(",") if "=" in kv)
+# TEST ONLY: the configured hard_deny_floor replaces the built-in list (the e2e upstreams live on 127.0.0.1).
+FLOOR_REPLACE = os.environ.get("GW_TEST_FLOOR_REPLACE") == "1"
+
+
+def fail_closed(hook):
+    """mitmproxy only logs an exception raised in an addon hook and then carries on, i.e. the connection
+    would go out unchecked. Every hook is therefore wrapped: any error refuses the connection or flow."""
+
+    def refuse(data) -> None:
+        log.exception("%s failed - refusing the connection (fail closed)", hook.__name__)
+        if isinstance(data, server_hooks.ServerConnectionHookData):
+            data.server.error = "egress policy: internal error (fail closed)"
+        elif isinstance(data, tls.ClientHelloData):
+            data.ignore_connection = False  # intercept: the per-request checks still apply
+        elif getattr(data, "killable", False):
+            data.kill()  # http/tcp/websocket/dns flows
+
+    if inspect.iscoroutinefunction(hook):
+
+        @functools.wraps(hook)
+        async def wrapper(self, data):
+            try:
+                return await hook(self, data)
+            except Exception:  # noqa: BLE001 - any error must refuse, never pass traffic through
+                refuse(data)
+
+    else:
+
+        @functools.wraps(hook)
+        def wrapper(self, data):
+            try:
+                return hook(self, data)
+            except Exception:  # noqa: BLE001 - any error must refuse, never pass traffic through
+                refuse(data)
+
+    return wrapper
 
 
 @dataclass
@@ -90,8 +129,11 @@ class Gateway:
         self.config = yaml.safe_load(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
         self.config = self.config or {}
         self.policy_path = DATA_DIR / "policy.yaml"
-        # The hard-deny floor comes only from the (read-only mounted) static config, never from the API.
-        self.hard_deny_floor = [str(c) for c in self.config.get("hard_deny_floor") or DEFAULT_HARD_DENY]
+        # The hard-deny floor comes only from the (read-only mounted) static config, never from the API:
+        # the built-in list plus `hard_deny_floor`. Validated here: a broken entry must stop the gateway.
+        configured = parse_cidrs(self.config.get("hard_deny_floor") or [], "hard_deny_floor")
+        builtin = [] if FLOOR_REPLACE and configured else DEFAULT_HARD_DENY
+        self.hard_deny_floor = parse_cidrs([*builtin, *configured], "hard_deny_floor")
         if not self.policy_path.exists():
             preset = PRESET_DIR / f"{self.config.get('initial_preset', 'baseline')}.yaml"
             self.policy = Policy.load(preset) if preset.exists() else Policy()
@@ -106,8 +148,8 @@ class Gateway:
         )
         self.secrets = Secrets(DATA_DIR / "secrets.json")
         self.inject = [dict(i) for i in self.config.get("inject") or []]
-        self.inject_hosts = {i["host"].lower() for i in self.inject}
-        self.readonly_hosts = {str(h).lower() for h in self.config.get("readonly") or []}
+        self.inject_hosts = {i["host"].lower().rstrip(".") for i in self.inject}
+        self.readonly_hosts = {str(h).lower().rstrip(".") for h in self.config.get("readonly") or []}
         self.intercept_hosts = self.inject_hosts | self.readonly_hosts
         self.strip_headers = [str(h) for h in self.config.get("inject_strip_headers") or ["Authorization", "Cookie"]]
         self.max_pending = int(self.config.get("max_pending", 10))
@@ -125,7 +167,7 @@ class Gateway:
 
     def adopt(self, policy: Policy) -> Policy:
         """Attach the static parts (floor, service exceptions) to a policy loaded from file/API."""
-        policy.hard_deny_floor = self.hard_deny_floor
+        policy.use_floor(self.hard_deny_floor)
         self.policy = policy
         self._apply_service_exceptions()
         return policy
@@ -141,6 +183,8 @@ class Gateway:
     async def running(self) -> None:
         if STATIC_HOSTS:
             log.warning("GW_TEST_STATIC_HOSTS is set - test-only name resolution is ACTIVE: %s", STATIC_HOSTS)
+        if FLOOR_REPLACE:
+            log.warning("GW_TEST_FLOOR_REPLACE is set - the built-in hard-deny floor is NOT active (test only)")
         if len(self.api_token) < 24:
             log.warning("GW_API_TOKEN missing or shorter than 24 chars - API disabled")
         else:
@@ -172,20 +216,26 @@ class Gateway:
     async def _housekeeping(self) -> None:
         while True:
             await asyncio.sleep(15)
-            if self.policy.prune_expired():
-                self.save_policy()
-            now = time.time()
-            self.neg_cache = {k: v for k, v in self.neg_cache.items() if v > now}
-            self._flush_dups(now)
-            self.events.enforce_cap()
-            expired, timed_out = self.grants.prune()
-            for a in expired:
-                self.record(kind="grant", host=a.name, action="expired", reason=f"grant {a.name} ({a.level}) expired")
-            for r in timed_out:
-                self.record(kind="grant", host=r.name, action="deny", reason=f"grant request {r.id} timed out")
-                self._grant_resolved(r)
-            if expired:
-                self.publish({"type": "grants"})
+            try:
+                self._housekeep()
+            except Exception:  # keep the loop alive; the error is logged
+                log.exception("housekeeping failed")
+
+    def _housekeep(self) -> None:
+        if self.policy.prune_expired():
+            self.save_policy()
+        now = time.time()
+        self.neg_cache = {k: v for k, v in self.neg_cache.items() if v > now}
+        self._flush_dups(now)
+        self.events.enforce_cap()
+        expired, timed_out = self.grants.prune()
+        for a in expired:
+            self.record(kind="grant", host=a.name, action="expired", reason=f"grant {a.name} ({a.level}) expired")
+        for r in timed_out:
+            self.record(kind="grant", host=r.name, action="deny", reason=f"grant request {r.id} timed out")
+            self._grant_resolved(r)
+        if expired:
+            self.publish({"type": "grants"})
 
     # ------------------------------------------------------------------ events
     def publish(self, ev: dict) -> None:
@@ -211,6 +261,8 @@ class Gateway:
             if seen and now - seen[0] < DUP_WINDOW:
                 seen[1] += 1
                 return None
+            if seen and seen[1]:
+                self._emit_repeats(seen[2], seen[1])  # not flushed by housekeeping yet: don't lose the count
             self._dups[key] = [now, 0, ev]
         ev = self.events.add(ev)
         self.publish({"type": "event", "event": ev})
@@ -221,9 +273,12 @@ class Gateway:
             if now - ts >= DUP_WINDOW:
                 del self._dups[key]
                 if count:
-                    rep = {k: v for k, v in ev.items() if k not in ("id", "ts")}
-                    rep["reason"] = f"{ev.get('reason')} (repeated {count}x)"
-                    self.publish({"type": "event", "event": self.events.add(rep)})
+                    self._emit_repeats(ev, count)
+
+    def _emit_repeats(self, ev: dict, count: int) -> None:
+        rep = {k: v for k, v in ev.items() if k not in ("id", "ts")}
+        rep["reason"] = f"{ev.get('reason')} (repeated {count}x)"
+        self.publish({"type": "event", "event": self.events.add(rep)})
 
     def save_policy(self) -> None:
         self.policy.save(self.policy_path)
@@ -262,9 +317,7 @@ class Gateway:
             p = Pending(
                 host=host.lower(), port=port, ips=ips, proto=proto, client=client, timeout=self.policy.ask_timeout
             )
-            p.future = asyncio.get_running_loop().create_future()
-            self.pending[key] = p
-            self.record(
+            self.record(  # first: if the log cannot be written, nothing is left pending
                 kind="ask",
                 proto=proto,
                 client=client,
@@ -275,6 +328,8 @@ class Gateway:
                 reason="awaiting approval",
                 extra={"pending_id": p.id},
             )
+            p.future = asyncio.get_running_loop().create_future()
+            self.pending[key] = p
             self.publish({"type": "ask", "pending": p.to_dict()})
         else:
             p.attempts += 1
@@ -423,6 +478,7 @@ class Gateway:
             data.server.sni = host
         return True
 
+    @fail_closed
     async def server_connect(self, data: server_hooks.ServerConnectionHookData) -> None:
         if data.server.address is None:
             data.server.error = "egress policy: no destination"
@@ -433,10 +489,10 @@ class Gateway:
         client = data.client.peername[0] if data.client.peername else "?"
 
         def block(reason: str, ips: list[str] | None = None) -> None:
+            data.server.error = f"egress policy: blocked ({reason})"  # first: recording may fail
             self.record(
                 kind="conn", proto=proto, client=client, host=host, port=port, ips=ips, action="deny", reason=reason
             )
-            data.server.error = f"egress policy: blocked ({reason})"
 
         if is_ip(host):
             if await self._grant_connect(data, host, port, proto, client, block):
@@ -461,11 +517,11 @@ class Gateway:
             # 1) decide on the name alone: denied / not-yet-approved names are never resolved
             pre = self.policy.evaluate_name(host, port)
             hint = self._grant_hint(host, port)
-            if hint and (pre is None or pre.action != "allow"):
-                return block(f"{pre.reason if pre else 'not allowed'}; {hint}")
-            if pre is not None and pre.action == "ask":
+            if hint and pre.action != "allow":
+                return block(f"{pre.reason}; {hint}")
+            if pre.action == "ask":
                 pre = await self.ask(host, port, [], proto, client)
-            if pre is not None and pre.action == "deny":
+            if pre.action != "allow":
                 return block(f"{pre.reason} (not resolved)")
             # 2) resolve and re-check with IPs (hard deny, CIDR rules); pin to the checked IP
             try:
@@ -476,13 +532,14 @@ class Gateway:
                 return block("no address")
             dec = await self.decide(host, port, ips, proto, client)
         reason = dec.reason
-        if dec.action != "allow" and (hint := self._grant_hint(host, port)):
-            reason = f"{reason}; {hint}"
+        if dec.action != "allow":
+            data.server.error = f"egress policy: blocked ({dec.reason})"
+            if hint := self._grant_hint(host, port):
+                reason = f"{reason}; {hint}"
         self.record(
             kind="conn", proto=proto, client=client, host=host, port=port, ips=ips, action=dec.action, reason=reason
         )
         if dec.action != "allow":
-            data.server.error = f"egress policy: blocked ({dec.reason})"
             return
         self.orig_host[data.server.id] = host
         # Pin to the checked address (anti DNS-rebinding: no second resolution after the decision).
@@ -495,22 +552,28 @@ class Gateway:
 
     def _grant_match(self, host: str, port: int):
         """Active grant for host:port - unless the policy already allows the name: grants only ADD
-        access, they never narrow what the rules allow."""
+        access, they never narrow what the rules allow. A LAN target is always used: the rules alone
+        can never reach it (hard deny), e.g. with the `open` preset active."""
         m = self.grants.match(host, port)
-        if m and not is_ip(host):
-            pre = self.policy.evaluate_name(host, port)
-            if pre is not None and pre.action == "allow":
-                return None
+        if m and not m[2].lan and not is_ip(host) and self.policy.evaluate_name(host, port).action == "allow":
+            return None
         return m
 
     def _grant_hint(self, host: str, port: int) -> str | None:
         names = self.grants.defined_for(host, port)
         return f"available via grant {', '.join(names)} (agent: tallygate request {names[0]})" if names else None
 
+    @fail_closed
     def server_disconnected(self, data: server_hooks.ServerConnectionHookData) -> None:
         self.orig_host.pop(data.server.id, None)
         self.conn_grant.pop(data.server.id, None)
 
+    @fail_closed
+    def server_connect_error(self, data: server_hooks.ServerConnectionHookData) -> None:
+        # an allowed connection whose upstream connect fails never gets server_disconnected
+        self.server_disconnected(data)
+
+    @fail_closed
     def tls_clienthello(self, data: tls.ClientHelloData) -> None:
         b = self.conn_grant.get(data.context.server.id)
         if b:
@@ -520,11 +583,13 @@ class Gateway:
                 data.ignore_connection = True
             return
         orig = self.orig_host.get(data.context.server.id)
-        sni = (data.client_hello.sni or "").lower()
-        if orig and orig in self.intercept_hosts and sni == orig:
-            return  # intercept: credential injection and/or read-only enforcement
+        if orig in self.intercept_hosts:
+            # Always intercept, whatever the SNI says (none, trailing dot, another name): a passthrough would
+            # skip credential stripping and the read-only check. Injection stays gated by the Host header.
+            return
         data.ignore_connection = True  # end-to-end TLS, untouched
 
+    @fail_closed
     def tls_start_server(self, data: tls.TlsData) -> None:
         """Per-target upstream TLS for grant targets: pinned leaf fingerprint (self-signed LAN services)
         or, if explicitly configured, no verification."""
@@ -552,17 +617,20 @@ class Gateway:
 
             data.ssl_conn.set_verify(SSL.VERIFY_NONE, None)
 
+    @fail_closed
     def tcp_start(self, flow) -> None:
         b = self.conn_grant.get(flow.server_conn.id)
         if b and b[2].scheme != "tcp":
             self._grant_refuse_raw(flow, b, "non-HTTP traffic to an HTTP grant target")
 
+    @fail_closed
     def websocket_start(self, flow: http.HTTPFlow) -> None:
         b = self.conn_grant.get(flow.server_conn.id)
         if b and (a := self.grants.active.get(b[0])) is not None and a.level == "read":
             self._grant_refuse_raw(flow, b, "websocket on a read-only grant")
 
     def _grant_refuse_raw(self, flow, b, reason: str) -> None:
+        flow.kill()
         self.record(
             kind="conn",
             proto="grant",
@@ -572,15 +640,15 @@ class Gateway:
             action="deny",
             reason=reason,
         )
-        flow.kill()
 
     def _grant_request(self, flow: http.HTTPFlow) -> bool:
         """Enforce an active grant on an HTTP request. Returns True if the request was handled."""
         b = self.conn_grant.get(flow.server_conn.id)
         if b is None and flow.request.scheme == "http" and not self.orig_host.get(flow.server_conn.id):
-            # plain-HTTP proxy request: this hook runs before the server connection exists
+            # plain-HTTP proxy request: this hook runs before the server connection exists. Any scheme:
+            # plain HTTP to an https target must be refused here, not slip through to the normal path.
             m = self._grant_match(flow.request.host.lower().rstrip("."), flow.request.port)
-            if m and m[2].scheme == "http":
+            if m:
                 b = (m[0].id, flow.request.host.lower().rstrip("."), m[2])
         if b is None:
             return False
@@ -593,6 +661,7 @@ class Gateway:
         client = flow.client_conn.peername[0] if flow.client_conn.peername else "?"
 
         def refuse(why: str) -> bool:
+            flow.response = http.Response.make(403, f"egress policy: {why}\n".encode(), {"Content-Type": "text/plain"})
             self.record(
                 kind="conn",
                 proto="http",
@@ -602,7 +671,6 @@ class Gateway:
                 action="deny",
                 reason=f"{why}: {req.method} {req.path[:120]}",
             )
-            flow.response = http.Response.make(403, f"egress policy: {why}\n".encode(), {"Content-Type": "text/plain"})
             return True
 
         if a is None or g is None or a.expires <= time.time():
@@ -618,8 +686,9 @@ class Gateway:
         ):
             return refuse(f"grant {g.name} is read-only")
         rules = [i for i in g.inject if i["host"] == host and t.scheme == "https"]
-        if rules:
-            for name in {*self.strip_headers, *(i["header"] for i in rules)}:
+        if rules or host in self.inject_hosts:  # never forward the agent's own credentials to these hosts
+            own = [i.get("header", "Authorization") for i in self.inject if i["host"].lower().rstrip(".") == host]
+            for name in {*self.strip_headers, *own, *(i["header"] for i in rules)}:
                 req.headers.pop(name, None)
             for i in rules:
                 value = render(i["value"], self.secrets)
@@ -627,6 +696,7 @@ class Gateway:
                     req.headers[i["header"]] = value
         return True
 
+    @fail_closed
     def request(self, flow: http.HTTPFlow) -> None:
         if self._grant_request(flow):
             return
@@ -634,6 +704,7 @@ class Gateway:
         # (plain HTTP proxy requests, whose server connection is opened after this hook).
         target = (self.orig_host.get(flow.server_conn.id) or flow.request.host or "").lower().rstrip(".")
         if target in self.readonly_hosts and flow.request.method.upper() in WRITE_METHODS:
+            flow.response = http.Response.make(403, b"egress policy: read-only host\n", {"Content-Type": "text/plain"})
             self.record(
                 kind="conn",
                 proto="http",
@@ -643,14 +714,13 @@ class Gateway:
                 action="deny",
                 reason=f"read-only host: {flow.request.method} refused",
             )
-            flow.response = http.Response.make(403, b"egress policy: read-only host\n", {"Content-Type": "text/plain"})
             return
         if target not in self.inject_hosts:
             return
         # Never forward the agent's own credentials to an injection host: otherwise it could act as
         # (and exfiltrate to) an account of its choosing, e.g. when no secret is configured yet.
         for rule in self.inject:
-            if rule["host"].lower() == target:
+            if rule["host"].lower().rstrip(".") == target:
                 flow.request.headers.pop(rule.get("header", "Authorization"), None)
         for name in self.strip_headers:
             flow.request.headers.pop(name, None)
@@ -658,13 +728,15 @@ class Gateway:
         if flow.request.scheme != "https" or host != target:
             return  # inject only over TLS and only if Host/:authority matches the checked target
         for rule in self.inject:
-            if rule["host"].lower() != target:
+            if rule["host"].lower().rstrip(".") != target:
                 continue
             value = render(rule["value"], self.secrets)
             if value is not None:  # secret not configured: request goes out without credentials
                 flow.request.headers[rule.get("header", "Authorization")] = value
 
+    @fail_closed
     def dns_request(self, flow: dns.DNSFlow) -> None:
+        flow.response = flow.request.fail(response_codes.NXDOMAIN)
         q = flow.request.question
         name = q.name if q else "?"
         client = flow.client_conn.peername[0] if flow.client_conn.peername else "?"
@@ -677,4 +749,3 @@ class Gateway:
             action="deny",
             reason="agent DNS is disabled (NXDOMAIN); use the proxy",
         )
-        flow.response = flow.request.fail(response_codes.NXDOMAIN)

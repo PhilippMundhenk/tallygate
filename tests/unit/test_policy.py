@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gateway"))
 
-from egressgw.policy import Policy, Rule, host_matches, registrable_domain, rule_for_approval
+from egressgw.policy import DEFAULT_HARD_DENY, Policy, Rule, host_matches, registrable_domain, rule_for_approval
 from egressgw.store import Secrets, render
 
 PRESETS = Path(__file__).resolve().parents[2] / "gateway" / "presets"
@@ -54,10 +54,14 @@ def test_first_match_and_default():
     assert p.evaluate("example.org", 443, ["1.2.3.4"]).reason == "default"
 
 
-def test_cidr_allow_requires_all_ips():
+def test_cidr_allow_applies_to_ip_literals_only():
+    # #10: a name is never allowed (or asked about) because of the addresses it resolves to
     p = Policy.from_dict({"default": "deny", "rules": [{"id": "c", "action": "allow", "cidr": "140.82.112.0/20"}]})
-    assert p.evaluate("github.com", 443, ["140.82.112.3"]).action == "allow"
-    assert p.evaluate("github.com", 443, ["140.82.112.3", "8.8.8.8"]).action == "deny"
+    assert p.evaluate("140.82.112.3", 443, ["140.82.112.3"]).action == "allow"
+    assert p.evaluate("8.8.8.8", 443, ["8.8.8.8"]).action == "deny"
+    assert p.evaluate("github.com", 443, ["140.82.112.3"]).action == "deny"
+    p = Policy.from_dict({"default": "allow", "rules": [{"id": "d", "action": "deny", "cidr": "140.82.112.0/20"}]})
+    assert p.evaluate("github.com", 443, ["8.8.8.8", "140.82.112.3"]).action == "deny"  # CIDR deny: any IP
 
 
 def test_expiry_and_prune():
@@ -88,6 +92,29 @@ def test_validation_rejects_garbage():
     ):
         with pytest.raises((ValueError, TypeError)):
             Policy.from_dict(bad)
+
+
+@pytest.mark.parametrize("port", [None, [443, None], [], "https", "443;8443", "44 3", "9-1", 0, 65536, 44.3, True])
+def test_rule_ports_are_validated_strictly(port):
+    # #13: null used to mean "all ports" - and the UI sent null for typos
+    with pytest.raises(ValueError, match="invalid port"):
+        Rule.from_dict({"action": "allow", "host": "x.example", "port": port})
+
+
+def test_rule_ports_accepted_forms():
+    for port in (443, "443", [80, 443], "8000-8100", [80, "8000-8100"], "*", "any"):
+        Rule.from_dict({"action": "allow", "host": "x.example", "port": port})
+    assert Rule.from_dict({"action": "allow", "host": "x.example"}).port == "*"  # omitted = all ports
+
+
+def test_ipv4_mapped_ipv6_is_matched_like_ipv4():
+    # #13: a CIDR deny on 127.0.0.1/32 did not match [::ffff:127.0.0.1]
+    p = Policy.from_dict({"default": "allow", "rules": [{"id": "d", "action": "deny", "cidr": "8.8.8.8/32"}]})
+    assert p.evaluate("::ffff:8.8.8.8", 443, ["::ffff:8.8.8.8"]).action == "deny"
+    assert p.evaluate("x.example", 443, ["::ffff:8.8.8.8"]).action == "deny"
+    r = rule_for_approval("[::ffff:8.8.4.4]", 443, "always")
+    assert r.cidr == "8.8.4.4"
+    assert r.matches("8.8.4.4", 443, ["8.8.4.4"]) and r.matches("::ffff:8.8.4.4", 443, ["::ffff:8.8.4.4"])
 
 
 def test_presets_load():
@@ -155,7 +182,13 @@ def test_hard_deny_floor_cannot_be_removed_via_policy():
     p = Policy.from_dict({"default": "allow", "hard_deny": [], "rules": [{"id": "a", "action": "allow", "host": "*"}]})
     assert p.evaluate("nas.example.org", 443, ["192.168.1.10"]).action == "deny"
     p = Policy.from_dict({"hard_deny": ["203.0.113.7/32", "10.0.0.0/8"], "hard_deny_floor": ["junk"]})
+    p.use_floor(DEFAULT_HARD_DENY)
     assert p.hard_deny == ["203.0.113.7/32"]  # 10/8 is already in the floor (deduped); floor key ignored
+    # #11: compared with the floor in force - a range missing from it is kept as an extra
+    p = Policy.from_dict({"hard_deny": ["203.0.113.7/32", "10.0.0.0/8"]})
+    p.use_floor(["192.168.0.0/16"])
+    assert p.hard_deny == ["203.0.113.7/32", "10.0.0.0/8"]
+    assert p.evaluate("10.1.2.3", 22, []).action == "deny"
     p = Policy.from_dict({"hard_deny": ["8.8.8.8/32"]})
     assert p.evaluate("dns.google", 443, ["8.8.8.8"]).action == "deny"
 
@@ -180,8 +213,11 @@ def test_name_first_evaluation():
     assert p.evaluate_name("x.evil.example", 443).action == "deny"
     assert p.evaluate_name("ok.example", 443).action == "allow"
     assert p.evaluate_name("new.example", 443).action == "ask"
-    p.add_rule(Rule(action="allow", cidr="140.82.112.0/20"), top=False)
-    assert p.evaluate_name("new.example", 443) is None
+    # #10: CIDR rules (e.g. an approved IP literal) never make the name phase inconclusive
+    p.add_rule(rule_for_approval("140.82.112.3", 443, "always"), top=True)
+    assert p.evaluate_name("new.example", 443).action == "ask"
+    assert p.evaluate("new.example", 443, ["140.82.112.3"]).action == "ask"
+    assert p.evaluate("140.82.112.3", 443, ["140.82.112.3"]).action == "allow"
     p.add_rule(Rule(action="deny", cidr="1.2.3.0/24"), top=True)
     assert p.evaluate_name("x.evil.example", 443).action == "deny"  # CIDR deny doesn't force a lookup
 
