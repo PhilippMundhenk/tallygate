@@ -51,8 +51,8 @@ def test_flood_is_answered_with_429_instead_of_queueing(control_with):
 
 
 def test_concurrent_failures_cannot_exceed_the_limit(control_with):
-    """Requests that pass the first check together are re-checked inside the lock."""
-    base = control_with()
+    """Requests that pass the first check together are re-checked inside the lock (per-IP lockout on)."""
+    base = control_with(TRUST_FORWARDED_FOR="1", TRUSTED_PROXIES="127.0.0.1/32")
     statuses = []
     for _ in range(3):  # waves small enough to all wait for the lock: 4 + 4 + 4 attempts
         statuses += [s for s, _ in parallel(base, 4)]

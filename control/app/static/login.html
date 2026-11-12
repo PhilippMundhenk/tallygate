@@ -1,16 +1,17 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>tallygate · login</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <style>
   body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1115;color:#e6e6e6;font:15px/1.4 system-ui,sans-serif}
   form{background:#181b22;padding:28px;border-radius:12px;width:min(320px,90vw);box-shadow:0 8px 30px #0006}
-  h1{font-size:18px;margin:0 0 18px} input,button{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;font:inherit}
+  h1{margin:0 0 18px;text-align:center} h1 img{height:30px;vertical-align:middle} input,button{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;font:inherit}
   input{background:#0f1115;border:1px solid #2c313c;color:inherit;margin-bottom:12px} button{background:#3b82f6;border:0;color:#fff;cursor:pointer}
   .err{color:#f87171;font-size:13px;margin-bottom:10px;display:none} label{display:block;margin-bottom:6px;color:#9aa3b2}
   input:focus-visible,button:focus-visible{outline:2px solid #93c5fd;outline-offset:2px}
 </style></head>
 <body><form method="post" action="/login">
-  <h1>🔐 tallygate</h1>
+  <h1><img src="/static/logo.svg" alt="tallygate"></h1>
   <div class="err" id="err" role="alert">Wrong password.</div>
   <label for="password">Password</label>
   <input type="password" id="password" name="password" autofocus autocomplete="current-password" required>

@@ -230,7 +230,8 @@ def test_login_page_and_expired_sessions_are_pruned(load):
 
 
 def test_failure_tracking_stays_bounded_under_address_spraying(load):
-    main = load()
+    # the per-IP lockout (and thus its memory) only applies with trusted per-client addresses (#101)
+    main = load(TRUST_FORWARDED_FOR="1", TRUSTED_PROXIES="127.0.0.1/32")
 
     async def body():
         async with started(main, login=False) as c:
