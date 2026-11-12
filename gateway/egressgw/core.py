@@ -30,6 +30,7 @@ from mitmproxy.net.dns import response_codes
 from mitmproxy.proxy import server_hooks
 
 from egressgw import api
+from egressgw.activity import Activity
 from egressgw.availability import Availability, Unavailable
 from egressgw.grants import READ_METHODS, GrantDef, Grants, Target, path_ok
 from egressgw.policy import (
@@ -172,6 +173,7 @@ class Pending:
     created: float = field(default_factory=time.time)
     attempts: int = 1
     future: asyncio.Future | None = None
+    context: list = field(default_factory=list)  # what the agent said it was doing (#74): a claim, untrusted
 
     def to_dict(self) -> dict:
         return {
@@ -186,6 +188,7 @@ class Pending:
             "created": self.created,
             "expires": self.created + self.timeout,
             "attempts": self.attempts,
+            "context": self.context,
         }
 
 
@@ -221,6 +224,7 @@ class Gateway:
         self._dups: dict[tuple, list] = {}
         self.grants = Grants(self.config, DATA_DIR)
         self.availability = Availability(self.config, DATA_DIR)
+        self.activity = Activity()
         self._unavailable = self.availability.mode()[0]  # last state seen by availability_tick
         # server connection id -> (active grant id, host the agent asked for, target)
         self.conn_grant: dict[str, tuple[str, str, Target]] = {}
@@ -430,7 +434,13 @@ class Gateway:
             return Decision("deny", f"too many pending approvals (max_pending={self.max_pending})")
         if p is None:
             p = Pending(
-                host=host.lower(), port=port, ips=ips, proto=proto, client=client, timeout=self.policy.ask_timeout
+                host=host.lower(),
+                port=port,
+                ips=ips,
+                proto=proto,
+                client=client,
+                timeout=self.policy.ask_timeout,
+                context=self.activity.recent(client),
             )
             self.record(  # first: if the log cannot be written, nothing is left pending
                 kind="ask",
@@ -441,7 +451,7 @@ class Gateway:
                 ips=ips,
                 action="ask",
                 reason="awaiting approval",
-                extra={"pending_id": p.id},
+                extra={"pending_id": p.id, "context": p.context} if p.context else {"pending_id": p.id},
             )
             p.future = asyncio.get_running_loop().create_future()
             self.pending[key] = p

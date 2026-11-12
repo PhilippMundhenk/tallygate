@@ -215,6 +215,7 @@ See [grants.md](grants.md) for the concept and examples. Keys in `config/gateway
 | `grant_request_timeout` | `300` | Seconds a request waits for a decision. |
 | `grant_max_pending` | `3` | Open grant requests at once. |
 | `grant_api_rate` | `30` | Requests/minute on the agent grant API. |
+| `activity_rate` | `60` | Activity reports/minute (the agent's PreToolUse hook and `tallygate note`), counted separately from grant requests. Excess reports are dropped. |
 
 Target fields: `host` (name, `*.domain` or IP), `port`, `scheme` (`https` default, `http`, `tcp`), `paths`
 (globs, default `/*`), `lan`, `address` (fixed IP), `tls_fingerprint` (SHA-256), `tls_verify`

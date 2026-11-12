@@ -80,6 +80,15 @@ def digest_text(ev: dict, public_url: str = "", limit: int = 20) -> str:
     return "\n".join(lines)
 
 
+def context_line(p: dict) -> str:
+    """The agent's most recent claim about what it is doing (#74), for the end-to-end encrypted Web Push
+    message only: third-party chat services do not get agent-written text from the workspace."""
+    ctx = (p.get("context") or [{}])[0]
+    what = f"{ctx['tool']}: {ctx['text']}" if ctx.get("tool") and ctx.get("text") else ctx.get("text", "")
+    text = " – ".join(x for x in (what, ctx.get("note", "")) if x)
+    return f"\nAgent says (unverified): {text[:160]}" if text else ""
+
+
 def _scope_label(scope: str, label: str, p: dict) -> str:
     if scope == "domain":
         return f"Always (*.{p['domain']})" if p.get("domain") else ""
@@ -458,7 +467,7 @@ class Notifier:
 
             return {
                 "title": "🔐 tallygate: approval needed",
-                "body": f"{_describe(p)}\nAuto-deny in {timeout}s.",
+                "body": f"{_describe(p)}{context_line(p)}\nAuto-deny in {timeout}s.",
                 "tag": f"a{p['id']}",
                 "url": "/#approvals",
                 "actions": [{"action": "once", "title": "Allow 2 min"}, {"action": "deny", "title": "Deny"}],

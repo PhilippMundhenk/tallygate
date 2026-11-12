@@ -494,3 +494,12 @@ def test_digest_goes_to_every_channel(make):
     quiet = make()
     run(quiet.handle({"type": "digest", "items": []}))  # no channel configured: nothing to send
     assert quiet.chat.calls == []
+
+
+# ---------------------------------------------------------------- context (#74)
+def test_context_line_only_for_push_and_bounded():
+    assert notify.context_line({}) == "" and notify.context_line({"context": []}) == ""
+    p = {"context": [{"tool": "Bash", "text": "npm install", "note": "Install deps"}, {"text": "older"}]}
+    assert notify.context_line(p) == "\nAgent says (unverified): Bash: npm install – Install deps"
+    assert notify.context_line({"context": [{"kind": "note", "note": "n" * 300}]}).endswith(": " + "n" * 160)
+    assert "npm" not in notify._describe({**pending(), **p})  # chat services never get it

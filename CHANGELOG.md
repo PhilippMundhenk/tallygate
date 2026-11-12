@@ -78,6 +78,9 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   first start). Notifications have *Allow 2 min* / *Deny* buttons that work through single-use, signed
   action tokens, never an approve URL; plain HTTP degrades to a hint. ntfy, Gotify and Pushover can notify
   as well (#72).
+- **Context for decisions:** an approval shows the agent's recent activity: the command or URL Claude Code was
+  about to run (PreToolUse hook, secrets redacted, never blocks the agent) or a `tallygate note`. It is
+  labelled as the agent's unverified claim and has its own rate limit (#74).
 
 ### Changed
 - **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie

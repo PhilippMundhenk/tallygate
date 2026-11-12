@@ -34,6 +34,8 @@ only then let through, turned back, or held for you to decide.
   with a reason, and you approve, downgrade to read-only, or deny with one tap. The gateway enforces Host,
   paths and methods on every request, injects the service's credentials, and pins self-signed certificates.
   [More](docs/grants.md)
+- **Context for decisions.** A prompt shows what Claude Code was running when it asked (reported by a hook,
+  secrets redacted, clearly labelled as the agent's claim).
 - **No DNS exfiltration.** The agent's DNS always answers NXDOMAIN, and every attempt is logged. The gateway
   only resolves a name after the policy or a human allowed it.
 - **Secrets stay out of the agent.** The GitHub token lives in the gateway and is injected in flight, only when

@@ -138,6 +138,7 @@ function pendingCard(p) {
     b.onclick = decide(el, async () => { await gw("POST", `/pending/${p.id}/decide`, { scope }); await loadPending(); });
     $(".btns", el).appendChild(b);
   }
+  document.dispatchEvent(new CustomEvent("tg:card", { detail: { el, item: p, kind: "ask" } }));  // feature scripts
   return el;
 }
 function tickCountdowns() {

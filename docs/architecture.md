@@ -243,6 +243,9 @@ Approval scopes map to rules:
 
 Concurrent connections to the same `host:port` share one pending request (one notification).
 
+An `ask` carries the agent's recent activity (the tool call a Claude Code hook reported, or a
+`tallygate note`) as untrusted context for the human. It never influences the decision itself (#74).
+
 While the operator is **away** or in **quiet hours**, step 6 never waits: an `ask` becomes an immediate
 `deny` with a message for the agent, and grant requests that need approval are refused the same way (#73).
 It never becomes an `allow`. Refused destinations are collected and sent as one digest later.
@@ -308,7 +311,7 @@ targets are passed through.
 | DNS (NXDOMAIN) | 172.31.10.2 | 53/udp | agent-net |
 | Service ports | 172.31.10.2 | per config | agent-net |
 | Gateway API | 172.31.11.2 | 8081 | control-net (control only) |
-| Grant request API | 172.31.10.2 | 8079 | agent-net (list / request / poll only) |
+| Grant request API | 172.31.10.2 | 8079 | agent-net (list / request / poll grants, report activity) |
 | Control UI | 172.31.12.3 | 8080 | mgmt / published to `CONTROL_PUBLISH` |
 | Agent status | 172.31.10.10 | 7680 | agent-net (control) |
 | ttyd rc/bash/claude | 172.31.10.10 | 7681–7683 | agent-net (control) |

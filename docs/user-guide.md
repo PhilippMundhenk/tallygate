@@ -35,6 +35,14 @@ when it will be denied automatically.
 | Deny | Deny for 2 minutes (the tool gets an error now; asking again later is possible) |
 | Block forever | Permanent deny rule |
 
+**Why does the agent want this?** A card can show the agent's recent activity: the command or URL Claude
+Code was about to run when the connection started (`Bash curl … – Fetch the data`), or a note the agent
+wrote with `tallygate note "…"`. A hook in the agent image reports it, with obvious secrets (tokens,
+passwords, credentials in URLs) redacted. It is written by the agent, so it is labelled *claimed by the
+agent, unverified*: a prompt injection can lie here like anywhere else. Judge the destination, not the story.
+The activity appears in the UI, in Web Push notifications (end-to-end encrypted) and in the log, never in
+Telegram, Matrix, ntfy, Gotify or Pushover.
+
 Every decision becomes a normal rule (tagged `[approval]`) that you can review or delete under **Rules**.
 Before you click, check the **domain** line: the host is chosen by the agent, so `github.com.evil.example`
 has the domain `evil.example`. Punycode names (`xn--…`) are flagged. Names are not resolved before your

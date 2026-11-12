@@ -17,6 +17,7 @@
 │       ├── policy.py         #   pure policy engine (rules, hard deny, approvals → rules)
 │       ├── grants.py         #   grant definitions, requests, active grants
 │       ├── availability.py   #   away mode, quiet hours, digest of refused requests
+│       ├── activity.py       #   what the agent says it is doing (context for approvals)
 │       ├── store.py          #   SQLite event log, secrets store, header templating
 │       ├── api.py            #   management API (aiohttp, bearer token)
 │       └── agentapi.py       #   grant request API for the agent (agent network)
@@ -33,9 +34,10 @@
 │   ├── Dockerfile            #   Debian + Claude Code + gh (signed repo) + ttyd (checksummed)
 │   ├── entrypoint.sh         #   CA trust, placeholders, tmux/ttyd/Remote Control supervisor
 │   ├── status.py             #   status + isolation self-test endpoint
-│   ├── tallygate-cli.py      #   `tallygate` CLI: list and request grants
+│   ├── tallygate-cli.py      #   `tallygate` CLI: list and request grants, notes
+│   ├── tallygate-hook.py     #   PreToolUse hook: reports the running command to the gateway
 │   ├── CLAUDE.md             #   managed memory: explains the gateway and grants to Claude
-│   └── managed-settings.json #   managed Claude Code settings
+│   └── managed-settings.json #   managed Claude Code settings (incl. the PreToolUse hook)
 ├── tests/
 │   ├── unit/                 # policy engine
 │   ├── e2e/                  # real gateway + control on localhost, mock upstreams and bot APIs
