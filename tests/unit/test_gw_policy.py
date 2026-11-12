@@ -145,7 +145,7 @@ def test_preset_metadata_defaults_and_category_check(tmp_path):
 
 
 def test_template_host_lists():
-    """#59: hosts the tools really use, Debian on HTTPS only, ids that namespace cleanly as <preset>:<id>."""
+    """#59: hosts the tools really use, ids that namespace cleanly as <preset>:<id>."""
     presets = Path(__file__).resolve().parents[2] / "gateway" / "presets"
     hosts = {}
     for p in presets.glob("*.yaml"):
@@ -157,4 +157,5 @@ def test_template_host_lists():
         h.endswith(".r2.cloudflarestorage.com") and h.startswith("docker-images-prod.") for h in hosts["containers"]
     )
     assert "repo.yarnpkg.com" in hosts["node"]
-    assert hosts["debian"]["deb.debian.org"] == 443 and hosts["debian"]["security.debian.org"] == 443
+    # port 80 stays: Debian images use http:// sources, and #57 ties the Host to the checked name
+    assert hosts["debian"]["deb.debian.org"] == [80, 443] and hosts["debian"]["security.debian.org"] == [80, 443]
