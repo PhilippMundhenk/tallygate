@@ -13,6 +13,7 @@ import struct
 import subprocess
 import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -107,23 +108,112 @@ def https_via_proxy(host: str) -> str:
         return f"{line} / TLS ok, {t.recv(64).split(b'\r\n')[0].decode(errors='replace')}"
 
 
-def selftest() -> list[dict]:
-    probes = [p for p in os.environ.get("SELFTEST_BLOCKED_PROBES", "").split(",") if p]
-    results = [
-        expect_fail("Direct TCP to the internet (1.1.1.1:443)", lambda: tcp("1.1.1.1", 443)),
-        expect_fail(
-            "Direct IPv6 (2606:4700:4700::1111:443)", lambda: tcp("2606:4700:4700::1111", 443, socket.AF_INET6)
+def _socks() -> tuple[str, int]:
+    u = urllib.parse.urlparse(os.environ.get("ALL_PROXY") or os.environ.get("all_proxy") or "")  # noqa: SIM112
+    if u.hostname:
+        return u.hostname, u.port or 1080
+    return _proxy()[0], 1080
+
+
+def raw_socket() -> str:
+    """Opening a raw socket needs CAP_NET_RAW, which the agent container drops; this should fail."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+    s.close()
+    return "raw ICMP socket opened (CAP_NET_RAW present)"
+
+
+def socks5_connect(host: str, port: int) -> str:
+    """CONNECT through the gateway's SOCKS5 listener. Raises unless the tunnel is actually granted."""
+    sh, sp = _socks()
+    with socket.create_connection((sh, sp), timeout=TIMEOUT) as s:
+        s.settimeout(TIMEOUT)
+        s.sendall(b"\x05\x01\x00")  # version 5, one method: no auth
+        if s.recv(2) != b"\x05\x00":
+            raise ConnectionRefusedError("SOCKS5 no-auth refused")
+        h = host.strip("[]")
+        try:
+            packed, atyp = socket.inet_pton(socket.AF_INET, h), b"\x01"
+        except OSError:
+            try:
+                packed, atyp = socket.inet_pton(socket.AF_INET6, h), b"\x04"
+            except OSError:
+                packed, atyp = bytes([len(h)]) + h.encode(), b"\x03"
+        s.sendall(b"\x05\x01\x00" + atyp + packed + port.to_bytes(2, "big"))
+        rep = s.recv(4)
+        if len(rep) < 2 or rep[1] != 0x00:  # 0x00 = succeeded; anything else is a refusal
+            raise ConnectionRefusedError(f"SOCKS5 reply code {rep[1] if len(rep) > 1 else '?'}")
+        return f"SOCKS5 connected to {host}:{port}"
+
+
+def http_get_via_proxy(host: str, port: int = 80, path: str = "/") -> str:
+    """Plain-HTTP absolute-URI request through the proxy. Raises when the gateway refuses it (5xx /
+    'egress policy'); returns only if the forbidden origin actually answered."""
+    ph, pp = _proxy()
+    with socket.create_connection((ph, pp), timeout=TIMEOUT) as s:
+        s.settimeout(TIMEOUT)
+        s.sendall(f"GET http://{host}:{port}{path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
+        line = s.recv(256).split(b"\r\n", 1)[0].decode(errors="replace")
+    parts = line.split(" ")
+    code = parts[1] if len(parts) > 2 else ""
+    if not line or "egress policy" in line or code in ("", "400", "403", "407", "500", "502", "503"):
+        raise ConnectionRefusedError(line or "no response")
+    return f"reached {host}: {line}"
+
+
+def _probe_specs() -> list[tuple[str, object]]:
+    """(name, fn) for every probe that must be BLOCKED. Only targets the gateway refuses
+    *unconditionally* are used -- hard-deny IP ranges (directly, as IPv4-mapped/NAT64/6to4/Teredo IPv6,
+    over the HTTP proxy, as plain-HTTP, and over SOCKS), destinations with no route, and a raw socket --
+    so the test never reaches the policy's `ask` path and never holds a connection for approval."""
+    specs: list[tuple[str, object]] = [
+        # No route out of the agent network at all (the proxy is the only path).
+        ("Direct TCP to the internet (1.1.1.1:443)", lambda: tcp("1.1.1.1", 443)),
+        (
+            "Direct IPv6 to the internet (2606:4700:4700::1111:443)",
+            lambda: tcp("2606:4700:4700::1111", 443, socket.AF_INET6),
         ),
-        expect_fail("Agent DNS resolution of public names", lambda: socket.getaddrinfo("api.anthropic.com", 443)),
-        expect_fail("UDP DNS to 1.1.1.1", lambda: udp_dns("1.1.1.1")),
-        expect_fail("LAN via proxy (192.168.1.1:80, hard-deny)", lambda: connect_via_proxy("192.168.1.1", 80)),
-        expect_fail(
-            "Loopback/metadata via proxy (169.254.169.254:80)", lambda: connect_via_proxy("169.254.169.254", 80)
+        ("Direct TCP to cloud metadata (169.254.169.254:80)", lambda: tcp("169.254.169.254", 80)),
+        ("Direct TCP to a private host (10.0.0.1:80)", lambda: tcp("10.0.0.1", 80)),
+        ("Raw ICMP socket (needs CAP_NET_RAW)", raw_socket),
+        # DNS is disabled in the container; the proxy resolves on the agent's behalf.
+        ("Agent DNS resolution of public names", lambda: socket.getaddrinfo("api.anthropic.com", 443)),
+        ("UDP DNS to a public resolver (1.1.1.1:53)", lambda: udp_dns("1.1.1.1")),
+        # Hard-denied IP ranges over the HTTP proxy (CONNECT).
+        ("Metadata via proxy (CONNECT 169.254.169.254:80)", lambda: connect_via_proxy("169.254.169.254", 80)),
+        ("LAN via proxy (CONNECT 192.168.1.1:80)", lambda: connect_via_proxy("192.168.1.1", 80)),
+        ("Loopback via proxy (CONNECT 127.0.0.1:80)", lambda: connect_via_proxy("127.0.0.1", 80)),
+        ("IPv6 loopback via proxy (CONNECT [::1]:80)", lambda: connect_via_proxy("[::1]", 80)),
+        ("CGNAT via proxy (CONNECT 100.64.0.1:80)", lambda: connect_via_proxy("100.64.0.1", 80)),
+        ("Link-local via proxy (CONNECT 169.254.1.1:80)", lambda: connect_via_proxy("169.254.1.1", 80)),
+        # Same ranges hidden inside IPv6 encodings (must be normalised, then hard-denied).
+        (
+            "Metadata as IPv4-mapped IPv6 via proxy ([::ffff:169.254.169.254]:80)",
+            lambda: connect_via_proxy("[::ffff:169.254.169.254]", 80),
         ),
+        ("LAN via NAT64 via proxy ([64:ff9b::192.168.1.1]:80)", lambda: connect_via_proxy("[64:ff9b::c0a8:101]", 80)),
+        ("LAN via 6to4 via proxy ([2002:c0a8:101::]:80)", lambda: connect_via_proxy("[2002:c0a8:101::]", 80)),
+        ("Teredo via proxy (CONNECT [2001::1]:80)", lambda: connect_via_proxy("[2001::1]", 80)),
+        # Hard-denied ranges over other request shapes the proxy understands.
+        (
+            "Plain-HTTP to metadata via proxy (GET http://169.254.169.254/)",
+            lambda: http_get_via_proxy("169.254.169.254", 80, "/latest/meta-data/"),
+        ),
+        ("Plain-HTTP to LAN via proxy (GET http://192.168.1.1/)", lambda: http_get_via_proxy("192.168.1.1", 80, "/")),
+        ("SOCKS5 to cloud metadata (169.254.169.254:80)", lambda: socks5_connect("169.254.169.254", 80)),
+        ("SOCKS5 to LAN (192.168.1.1:80)", lambda: socks5_connect("192.168.1.1", 80)),
     ]
-    for p in probes:
+    for p in [x for x in os.environ.get("SELFTEST_BLOCKED_PROBES", "").split(",") if x]:
         h, port = p.rsplit(":", 1)
-        results.append(expect_fail(f"Management endpoint {p}", lambda h=h, port=int(port): tcp(h, port)))
+        specs.append((f"Management endpoint {p}", lambda h=h, port=int(port): tcp(h, port)))
+    return specs
+
+
+def selftest() -> list[dict]:
+    specs = _probe_specs()
+    # Run the blocked-probe battery concurrently so a slow (timing-out) probe does not stall the UI.
+    with ThreadPoolExecutor(max_workers=min(12, len(specs))) as ex:
+        results = list(ex.map(lambda s: expect_fail(s[0], s[1]), specs))
+    # One positive control last: the sanctioned path must still work.
     try:
         results.append(
             {
