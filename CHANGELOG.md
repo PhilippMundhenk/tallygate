@@ -83,6 +83,7 @@ All notable changes to this project are documented here. The format follows
   template's own earlier rules, and the UI shows the expiry the gateway set. Templates: GHCR and Docker Hub
   blob hosts, `repo.yarnpkg.com` for corepack, a correct Go note; the docs say that
   template rules win over your own rules while active (#59).
+- Quick actions: policy events no longer rebuild the template cards, so a chosen duration and the focus survive; focus moves to *Apply* after *Undo*; buttons are named after their template; `confirm()` dialogs (silently skipped when the browser suppresses them) are replaced by an in-page two-step confirmation (#61).
 - Mode buttons, the mode *Save* and the emergency stop no longer send the browser's (possibly stale) policy back: `PATCH /policy` changes only the mode and timeout, `POST /emergency-stop` runs on the gateway (revoke grants, deny pending asks and grant requests, remove internet presets, mode deny; best effort, result per step) and suspends grant auto-approval until the mode changes; full replaces start from a fresh copy (#60).
 - The gateway's warnings never reached its log: mitmdump ran with `-q`, which overrides the log level (#27).
 - Agent status responses larger than one network read were cut off and reported as an error (#27).
