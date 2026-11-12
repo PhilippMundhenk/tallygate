@@ -83,6 +83,10 @@ All notable changes to this project are documented here. The format follows
     disabled while a decision is sent.
   - The session cookie is `SameSite=Lax`, so links in Telegram/Matrix messages arrive logged in.
   - Invalid JSON, non-JSON gateway replies and an unreachable GitHub return `{"error": …}` with 400/502.
+- Accessibility and mobile layout (#24): tables scroll inside their own container, rows wrap on phones, tabs
+  are ARIA tabs (arrow keys work), the toast is a live region, the connection state is shown in words, and
+  every input has a label. Browser notifications are enabled with a button in Setup (browsers ignore a
+  permission request without a user gesture).
 - Notifications: Telegram and Matrix are sent concurrently and fail independently, so an outage of one no
   longer hides prompts on the other. A queue decouples delivery from the gateway event stream, and chat API
   calls time out after 15 s (#22).
