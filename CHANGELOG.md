@@ -72,6 +72,9 @@ All notable changes to this project are documented here. The format follows
 - `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
 
 ### Security
+- `TRUST_PROXY_SECRET`: forwarded and auth headers are believed only when the proxy also sends the
+  shared secret in `X-Tallygate-Proxy-Secret`. The docs describe the safe proxy-auth setup (proxy container
+  on `mgmt` with a fixed address, nothing else published) (#19).
 - The agent could reach services on the Docker host that listen on all interfaces through the host's
   address on `agent-net` (`172.31.10.1`), bypassing the gateway. `agent-net` and `control-net` no longer
   give the host an address (`com.docker.network.bridge.inhibit_ipv4`), and `bypass.sh` checks it with a
