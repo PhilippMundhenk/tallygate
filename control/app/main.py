@@ -44,12 +44,16 @@ TERMINALS = dict(
 SESSION_SECRET = b""  # set in build_app()
 SESSION_TTL = int(os.environ.get("SESSION_TTL", str(12 * 3600)))  # absolute lifetime
 SESSION_IDLE = int(os.environ.get("SESSION_IDLE", str(2 * 3600)))  # idle timeout
+SESSION_RECHECK = float(os.environ.get("SESSION_RECHECK", "10"))  # open streams/consoles re-check this often (s)
 PROXY_AUTH_HEADER = os.environ.get("TRUST_PROXY_AUTH_HEADER", "")  # e.g. Remote-User (only behind a trusted proxy!)
 TRUST_FORWARDED = os.environ.get("TRUST_FORWARDED_FOR") == "1"
 # Peers whose X-Forwarded-* / auth headers are believed. Required for TRUST_PROXY_AUTH_HEADER.
 TRUSTED_PROXIES = [
     ipaddress.ip_network(c.strip(), strict=False) for c in os.environ.get("TRUSTED_PROXIES", "").split(",") if c.strip()
 ]
+# Optional shared secret: when set, the proxy must also send it, or its forwarded/auth headers are ignored.
+PROXY_SECRET = os.environ.get("TRUST_PROXY_SECRET", "")
+PROXY_SECRET_HEADER = "X-Tallygate-Proxy-Secret"  # noqa: S105 (a header name)
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
 GITHUB_API = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")  # tests point it elsewhere
 COOKIE = "tallygate_session"
@@ -86,7 +90,12 @@ def _peer_trusted(request: web.Request) -> bool:
         peer = ipaddress.ip_address(request.remote or "")
     except ValueError:
         return False
-    return any(peer in n for n in TRUSTED_PROXIES)
+    if not any(peer in n for n in TRUSTED_PROXIES):
+        return False
+    if PROXY_SECRET:  # constant-time: the header value must not leak through timing
+        sent = request.headers.get(PROXY_SECRET_HEADER, "")
+        return hmac.compare_digest(sent.encode(), PROXY_SECRET.encode())
+    return True
 
 
 def client_ip(request: web.Request) -> str:
@@ -118,7 +127,8 @@ def _session_id(request: web.Request) -> str | None:
     return sid
 
 
-def read_session(request: web.Request) -> str | None:
+def read_session(request: web.Request, touch: bool = True) -> str | None:
+    """The logged-in user, or None. touch=False checks without counting as activity (idle timeout)."""
     if PROXY_AUTH_HEADER and _peer_trusted(request) and request.headers.get(PROXY_AUTH_HEADER):
         return request.headers[PROXY_AUTH_HEADER][:64]
     sid = _session_id(request)
@@ -127,8 +137,29 @@ def read_session(request: web.Request) -> str | None:
     if not s or s["exp"] < now or now - s["seen"] > SESSION_IDLE:
         _sessions.pop(sid, None)
         return None
-    s["seen"] = now
+    if touch:
+        s["seen"] = now
     return s["user"]
+
+
+async def session_ended(request: web.Request) -> None:
+    """Returns once the request's session is gone (logout, idle or absolute expiry) or the browser has
+    disconnected. A stream that stays open does not keep its session alive."""
+    while True:
+        await asyncio.sleep(SESSION_RECHECK)
+        if read_session(request, touch=False) is None or request.transport is None or request.transport.is_closing():
+            return
+
+
+async def _first_done(*coros) -> None:
+    """Run the coroutines until the first one finishes, then cancel the rest."""
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _prune_sessions() -> None:
@@ -162,6 +193,15 @@ def check_password(pw: str) -> bool:
 
 _login_failures: dict[str, list[float]] = {}
 _login_lock = asyncio.Lock()  # one password check at a time: caps guessing rate globally, bounds memory
+_login_waiting = 0  # requests holding or queued on _login_lock
+LOGIN_MAX_BODY = 4096  # a password form is tiny; bigger bodies are refused before they are read
+LOGIN_MAX_WAITING = 5  # more queued checks get 429 at once instead of piling up (memory, operator lockout)
+LOGIN_MAX_FAILURES = 10  # per client address within LOGIN_WINDOW
+LOGIN_WINDOW = 900
+
+
+def _recent_failures(ip: str, now: float) -> list[float]:
+    return [t for t in _login_failures.get(ip, []) if now - t < LOGIN_WINDOW]
 
 
 @web.middleware
@@ -233,21 +273,36 @@ def _same_origin(request: web.Request) -> bool:
 
 # ------------------------------------------------------------------ pages
 async def login_page(request: web.Request) -> web.StreamResponse:
+    global _login_waiting
     if request.method == "GET":
         return web.FileResponse(STATIC / "login.html")
     if not _same_origin(request):
         return web.Response(status=403, text="bad origin")
+    if request.content_length is None or request.content_length > LOGIN_MAX_BODY:
+        return web.Response(status=413, text="Request too large.")  # also refuses chunked bodies, unread
     ip = client_ip(request)
-    now = time.time()
-    fails = [t for t in _login_failures.get(ip, []) if now - t < 900]
-    if len(fails) >= 10:
-        return web.Response(status=429, text="Too many attempts, try again later.")
-    form = await request.post()
-    pw = str(form.get("password", ""))[:1024]
-    async with _login_lock:  # serialised + 1 s penalty on failure -> ~1 guess/s globally
-        ok = await asyncio.get_running_loop().run_in_executor(None, check_password, pw)
-        if not ok:
-            await asyncio.sleep(1)
+    too_many = web.Response(status=429, text="Too many attempts, try again later.")
+    if len(_recent_failures(ip, time.time())) >= LOGIN_MAX_FAILURES:
+        return too_many
+    if _login_waiting >= LOGIN_MAX_WAITING:
+        return web.Response(status=429, text="Too many login attempts in progress, try again shortly.")
+    _login_waiting += 1
+    try:
+        form = await request.post()
+        pw = str(form.get("password", ""))[:1024]
+        async with _login_lock:  # serialised + 1 s penalty on failure -> ~1 guess/s globally
+            # re-check inside the lock: requests that queued together must not exceed the limit
+            now = time.time()
+            fails = _recent_failures(ip, now)
+            if len(fails) >= LOGIN_MAX_FAILURES:
+                return too_many
+            ok = await asyncio.get_running_loop().run_in_executor(None, check_password, pw)
+            if not ok:
+                fails.append(now)
+                _login_failures[ip] = fails
+                await asyncio.sleep(1)
+    finally:
+        _login_waiting -= 1
     if ok:
         _login_failures.pop(ip, None)
         _prune_sessions()
@@ -264,8 +319,6 @@ async def login_page(request: web.Request) -> web.StreamResponse:
             secure=os.environ.get("COOKIE_SECURE", "1") == "1",
         )
         raise resp
-    fails.append(now)
-    _login_failures[ip] = fails
     if len(_login_failures) > 10_000:  # bounded memory under address-spraying
         for k in sorted(_login_failures, key=lambda k: _login_failures[k][-1])[:5_000]:
             del _login_failures[k]
@@ -341,16 +394,20 @@ async def api_stream(request: web.Request):
         headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
     await resp.prepare(request)
-    try:
-        async with request.app["http"].get(
-            GW_URL + "/stream",
-            headers={"Authorization": f"Bearer {GW_TOKEN}"},
-            timeout=aiohttp.ClientTimeout(total=None, sock_read=60),
-        ) as up:
-            async for chunk in up.content.iter_any():
-                await resp.write(chunk)
-    except (TimeoutError, aiohttp.ClientError, ConnectionResetError):
-        pass
+
+    async def relay():
+        try:
+            async with request.app["http"].get(
+                GW_URL + "/stream",
+                headers={"Authorization": f"Bearer {GW_TOKEN}"},
+                timeout=aiohttp.ClientTimeout(total=None, sock_read=60),
+            ) as up:
+                async for chunk in up.content.iter_any():
+                    await resp.write(chunk)
+        except (TimeoutError, aiohttp.ClientError, ConnectionResetError):
+            pass
+
+    await _first_done(relay(), session_ended(request))  # logout/expiry ends the stream
     return resp
 
 
@@ -457,6 +514,8 @@ async def term_ws(request: web.Request):
                 async for msg in ws_client:
                     if msg.type not in (WSMsgType.TEXT, WSMsgType.BINARY):
                         break
+                    if read_session(request) is None:  # session ended (logout/expiry): nothing reaches the agent
+                        return
                     data = msg.data.encode() if msg.type == WSMsgType.TEXT else msg.data
                     if first:  # handshake: size only from the browser, credential from us
                         first = False
@@ -468,9 +527,6 @@ async def term_ws(request: web.Request):
                         await ws_up.send_str(json.dumps({"AuthToken": _ttyd_token(), **size}))
                     elif data[:1] in (b"0", b"1"):  # input, resize
                         await ws_up.send_bytes(data)
-                    if read_session(request) is None:  # session ended (logout/expiry): drop the console
-                        await ws_client.close(code=4401, message=b"session expired")
-                        break
 
             async def agent_to_browser():
                 async for msg in ws_up:
@@ -480,10 +536,9 @@ async def term_ws(request: web.Request):
                     if data[:1] == b"0":  # terminal output only; title/preferences are dropped
                         await ws_client.send_bytes(data)
 
-            tasks = [asyncio.create_task(browser_to_agent()), asyncio.create_task(agent_to_browser())]
-            _done, rest = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            for t in rest:
-                t.cancel()
+            await _first_done(browser_to_agent(), agent_to_browser(), session_ended(request))
+            if read_session(request, touch=False) is None:  # tells the browser not to reconnect
+                await ws_client.close(code=4401, message=b"session expired")
     except (aiohttp.ClientError, TimeoutError) as e:
         log.warning("terminal %s websocket failed: %s", name, e)
     finally:
@@ -528,7 +583,7 @@ async def watch_gateway(app: web.Application):
                     if line.startswith("data: "):
                         ev = json.loads(line[6:])
                         if ev.get("type") in ("ask", "resolved", "grant_request", "grant_resolved"):
-                            await app["notifier"].handle(ev)
+                            app["notifier"].enqueue(ev)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
@@ -545,6 +600,8 @@ def build_app() -> web.Application:
         bootstrap.ensure_password()
     if PROXY_AUTH_HEADER and not TRUSTED_PROXIES:
         raise SystemExit("TRUST_PROXY_AUTH_HEADER requires TRUSTED_PROXIES (CIDRs of your auth proxy)")
+    if PROXY_SECRET and len(PROXY_SECRET) < 16:
+        raise SystemExit("TRUST_PROXY_SECRET must be at least 16 characters")
     if TRUST_FORWARDED and not TRUSTED_PROXIES:
         log.warning("TRUST_FORWARDED_FOR=1 but TRUSTED_PROXIES is empty: X-Forwarded-* headers are ignored")
     if os.environ.get("CONTROL_PASSWORD") and not os.environ.get("CONTROL_PASSWORD_HASH"):
