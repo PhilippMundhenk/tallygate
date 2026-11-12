@@ -204,6 +204,18 @@ def test_preset_with_ttl(gateway):
     gateway["api"].call("DELETE", "/rules/open-https")
 
 
+def test_preset_ttl_does_not_demote_permanent_rules(gateway):
+    """#15: re-applying a preset with a TTL turned its permanent rules (e.g. `anthropic`) into expiring ones."""
+    api = gateway["api"]
+    api.call("POST", "/presets/lockdown", {})
+    api.call("POST", "/presets/lockdown", {"ttl": 60})
+    _, pol, _ = api.call("GET", "/policy")
+    rules = {r["id"]: r for r in pol["rules"]}
+    assert "expires" not in rules["anthropic"] and "expires" not in rules["claude-ai"]
+    for rid in ("anthropic", "claude-ai"):
+        api.call("DELETE", f"/rules/{rid}")
+
+
 # ---------------------------------------------------------------- security review regressions
 def test_denied_names_are_never_resolved(gateway):
     """TG-02: a name the policy denies must not reach a resolver (DNS exfiltration)."""

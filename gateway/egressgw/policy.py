@@ -27,6 +27,8 @@ from typing import Any
 
 import yaml
 
+from egressgw.store import atomic_write
+
 ACTIONS = ("allow", "deny", "ask")
 
 DEFAULT_HARD_DENY = [
@@ -355,9 +357,7 @@ class Policy:
         return cls.from_dict(yaml.safe_load(path.read_text()) or {})
 
     def save(self, path: Path) -> None:
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(yaml.safe_dump(self.to_dict(), sort_keys=False))
-        tmp.replace(path)
+        atomic_write(path, yaml.safe_dump(self.to_dict(), sort_keys=False))
 
 
 # ---------- approvals ----------

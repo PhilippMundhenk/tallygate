@@ -82,10 +82,11 @@ def build_app(gw: Gateway) -> web.Application:
         preset = Policy.load(path)
         ttl = (await request.json()).get("ttl") if request.can_read_body else None
         added = []
+        permanent = {r.id for r in gw.policy.rules if r.expires is None}
         for r in reversed(preset.rules):
             r.source = "preset"
             r.note = (r.note + " " if r.note else "") + f"[{name}]"
-            if ttl:
+            if ttl and r.id not in permanent:  # a TTL never turns a permanent rule into an expiring one
                 r.expires = time.time() + int(ttl)
             gw.policy.remove_rule(r.id)
             gw.policy.add_rule(r, top=True)

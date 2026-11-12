@@ -86,6 +86,12 @@ published images with `docker compose pull && docker compose up -d`.
 Recreate the networks so the new network option takes effect: `docker compose down && docker compose up -d`
 (compose warns that the network configuration changed).
 
+### Fixed
+- Gateway robustness: "repeated N×" counts are no longer lost when a new event replaces an unflushed one;
+  re-applying a preset with a TTL keeps its permanent rules permanent; policy, UI grants and secrets are
+  fsynced before the atomic rename; per-connection state is released when an upstream connect fails
+  ([#15](https://github.com/PhilippMundhenk/tallygate/issues/15)).
+
 ## [0.3.0] - 2026-11-11
 
 ### Added
