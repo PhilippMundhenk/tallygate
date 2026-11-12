@@ -19,9 +19,9 @@ All variables are optional. Secrets are created on first start when they are not
 | `AGENT_HOME` | volume `agent-home` | Agent home (Claude login, settings). A host path makes it a bind mount (owner uid 1000). |
 | `WORKSPACE` | volume `workspace` | Agent workspace. A host path makes it a bind mount (owner uid 1000). |
 | `CONTROL_DATA` | volume `control-data` | UI password hash and session secret. A host path makes it a bind mount (owner uid 10002, mode 700). See [host directories](operations.md#host-directories). |
-| `CONTROL_PUBLISH` | `127.0.0.1:8080` | Host address:port the UI is published on. Put a TLS reverse proxy in front. |
+| `CONTROL_PUBLISH` | `0.0.0.0:8080` | Host address:port the UI is published on. `127.0.0.1:8080` with a reverse proxy on the same host; see [reaching the UI](operations.md#reaching-the-ui). |
 | `PUBLIC_URL` | – | External UI URL, included in notifications. |
-| `COOKIE_SECURE` | `1` | Session cookie only over HTTPS. Set `0` only for local plain-HTTP testing. |
+| `COOKIE_SECURE` | `auto` | `auto`: the session cookie is `Secure` exactly when the browser uses HTTPS (directly, or `X-Forwarded-Proto` from a trusted proxy). `1` / `0` force it on or off. |
 | `TRUST_FORWARDED_FOR` | `0` | `1` when the UI sits behind your reverse proxy: trust `X-Forwarded-For`/`-Host`/`-Proto` for rate limiting and origin checks — **only** from peers in `TRUSTED_PROXIES`. |
 | `TRUSTED_PROXIES` | – | Comma-separated CIDRs of your reverse/auth proxy as seen by control. Forwarded and auth headers from any other peer are ignored. With a published port this is the `mgmt` bridge gateway `172.31.12.1/32`, which every local process shares: see [reverse proxy](operations.md#reverse-proxy). |
 | `SESSION_IDLE` | `7200` | UI session idle timeout in seconds (absolute lifetime: `SESSION_TTL`, 12 h). Sessions are server-side: logout and restarts end them, and open event streams and consoles are closed within 10 s. |

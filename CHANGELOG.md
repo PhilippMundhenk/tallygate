@@ -73,6 +73,10 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   module is at 98–100 % (#27).
 
 ### Changed
+- **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie
+  follows the connection (`COOKIE_SECURE=auto`): plain HTTP works out of the box, HTTPS keeps the cookie
+  `Secure`, and the UI warns on unencrypted access from another machine. The agent still cannot reach the UI
+  (#97).
 - State lives in Docker volumes by default. `TALLYGATE_DIR` is replaced by `GATEWAY_DATA`, `AGENT_HOME` and
   `WORKSPACE`, which take a host path instead of the volume; `./setup.sh /path` prepares host directories (#16).
 - The default `config/gateway.yaml` is built into the gateway image; mount your own file to change it (#16).
@@ -124,7 +128,10 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 5. **Behaviour changes to check:** CIDR `allow` rules cover IP literals only (#10); UI grants with `inject` or
    `tls_verify: false` are ignored, so move them to the config file (#12); the Hugging Face and registry
    hosts are read-only (#58).
-6. Start: `docker compose pull && docker compose up -d`, or `make up` from source. Then run the self-test or
+6. **UI address:** the UI is now published on all interfaces (`0.0.0.0:8080`). With a reverse proxy on the
+   same host, set `CONTROL_PUBLISH=127.0.0.1:8080` to keep it local; remove `COOKIE_SECURE=1` from `.env` unless
+   you only use HTTPS (the new default `auto` decides per connection) (#97).
+7. Start: `docker compose pull && docker compose up -d`, or `make up` from source. Then run the self-test or
    `bash bypass.sh`.
 
 ## [0.3.0] - 2026-11-11

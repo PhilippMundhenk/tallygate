@@ -268,14 +268,30 @@ def _security_headers(resp: web.StreamResponse, path: str) -> None:
         resp.headers.setdefault("Cache-Control", "no-store")
 
 
+def _request_scheme(request: web.Request) -> str:
+    """http or https as the browser sees it: X-Forwarded-Proto counts only from a trusted proxy."""
+    trusted = TRUST_FORWARDED and _peer_trusted(request)
+    return ((request.headers.get("X-Forwarded-Proto") if trusted else None) or request.scheme).lower()
+
+
+def cookie_secure(request: web.Request) -> bool:
+    """COOKIE_SECURE: 1 = always Secure, 0 = never, auto (default) = Secure exactly when the browser uses HTTPS.
+    `auto` makes plain HTTP on the LAN work out of the box and keeps the cookie Secure behind a TLS proxy (#97)."""
+    mode = os.environ.get("COOKIE_SECURE", "auto").strip().lower()
+    if mode in ("1", "true", "yes"):
+        return True
+    if mode in ("0", "false", "no"):
+        return False
+    return _request_scheme(request) == "https"
+
+
 def _expected_origin(request: web.Request) -> str:
     if PUBLIC_URL:
         u = urllib.parse.urlsplit(PUBLIC_URL)
         return f"{u.scheme}://{u.netloc}".lower()
     trusted = TRUST_FORWARDED and _peer_trusted(request)
     host = (request.headers.get("X-Forwarded-Host") if trusted else None) or request.host
-    scheme = (request.headers.get("X-Forwarded-Proto") if trusted else None) or request.scheme
-    return f"{scheme}://{host}".lower()
+    return f"{_request_scheme(request)}://{host}".lower()
 
 
 def _same_origin(request: web.Request) -> bool:
@@ -332,7 +348,7 @@ async def login_page(request: web.Request) -> web.StreamResponse:
             # and must arrive logged in. Cross-site POSTs still carry no cookie, and every state-changing
             # API call additionally needs the X-Tallygate header and a same-origin Origin.
             samesite="Lax",
-            secure=os.environ.get("COOKIE_SECURE", "1") == "1",
+            secure=cookie_secure(request),
         )
         raise resp
     if len(_login_failures) > 10_000:  # bounded memory under address-spraying
