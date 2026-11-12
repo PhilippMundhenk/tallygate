@@ -11,6 +11,23 @@ import time
 from pathlib import Path
 
 
+def atomic_write(path: Path, text: str, mode: int = 0o644) -> None:
+    """Write via a temp file, fsync, then rename (and fsync the directory): after a power loss the file is
+    either the old or the new version, never empty."""
+    tmp = path.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    tmp.replace(path)
+    dfd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
 class EventLog:
     def __init__(self, path: Path, keep_days: int = 30, max_events: int = 500_000) -> None:
         self.db = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
@@ -115,11 +132,7 @@ class Secrets:
             self._data[name] = value
         else:
             self._data.pop(name, None)
-        tmp = self.path.with_suffix(".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            json.dump(self._data, f)
-        tmp.replace(self.path)
+        atomic_write(self.path, json.dumps(self._data), 0o600)
 
 
 def render(template: str, secrets: Secrets) -> str | None:

@@ -75,7 +75,7 @@ Used by the bundled web UI; documented for scripting and review.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/healthz` | – | Liveness |
-| GET/POST | `/login` | – | Login form / submit (`password`); 10 failures per 15 min per client lock out |
+| GET/POST | `/login` | – | Login form / submit (`password`); 10 failures per 15 min per client lock out (429); bodies over 4 KiB get 413; 429 while 5 checks are already queued |
 | POST | `/logout` | session | Clears the session |
 | GET | `/` | session | Single-page UI |
 | GET | `/api/meta` | session | Current user, terminal names, notification status |

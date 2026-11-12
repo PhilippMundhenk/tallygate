@@ -1,11 +1,21 @@
 version: 2
+# Minor and patch updates are grouped per ecosystem; majors come as single PRs.
 updates:
   - package-ecosystem: pip
     directories: ["/gateway", "/control", "/"]
     schedule: { interval: weekly }
+    labels: [dependencies]
+    groups:
+      pip-minor: { update-types: [minor, patch] }
   - package-ecosystem: docker
     directories: ["/gateway", "/control", "/agent"]
     schedule: { interval: weekly }
+    labels: [dependencies]
+    groups:
+      docker-minor: { update-types: [minor, patch] }
   - package-ecosystem: github-actions
     directory: "/"
     schedule: { interval: weekly }
+    labels: [dependencies]
+    groups:
+      actions-minor: { update-types: [minor, patch] }

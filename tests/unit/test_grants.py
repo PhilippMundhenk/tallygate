@@ -73,8 +73,9 @@ def test_activation_matching_and_levels(tmp_path):
     a = g.activate("ha", "read", 99999, "check lights", "test")
     assert a.expires - a.created == 4 * 3600  # clamped to max_ttl
     assert g.match("HA.LAN.", 8123)[0].level == "read"
-    g.activate("ha", "write", 600, "", "test")
+    b = g.activate("ha", "write", 600, "", "test")
     assert len(g.active) == 1 and g.match("ha.lan", 8123)[0].level == "write"  # replaced, not stacked
+    assert b.id == a.id  # #14: same id, so open connections bound to it keep working
     with pytest.raises(ValueError):
         g.activate("ha", "admin", 60, "", "t")
 
@@ -138,6 +139,22 @@ def test_agent_sees_no_secrets(tmp_path):
     )
     s = g.defs["pve"].summary()
     assert "inject" not in s and "PVEAPIToken" not in str(s)
+
+
+def test_ui_grants_cannot_inject_or_disable_tls_verification(tmp_path):
+    """#12: a UI session must not be able to send a stored secret to a host of its choosing."""
+    import yaml
+
+    g = make(tmp_path)
+    target = {"host": "x.example", "port": 443}
+    inject = [{"host": "x.example", "header": "Authorization", "value": "Bearer ${github_token}"}]
+    for bad in ({"targets": [target], "inject": inject}, {"targets": [{**target, "tls_verify": False}]}):
+        with pytest.raises(ValueError, match="config file"):
+            g.upsert_ui("exfil", bad)
+        assert GrantDef.from_dict("ok", bad, "config")  # still fine in the config file
+    # a UI grant with inject saved by an older version is ignored at startup instead of being used
+    (tmp_path / "grants.yaml").write_text(yaml.safe_dump({"old": {"targets": [target], "inject": inject}}))
+    assert "old" not in Grants({"grants": {"ha": HA}}, tmp_path).defs
 
 
 def test_clean_reason():
