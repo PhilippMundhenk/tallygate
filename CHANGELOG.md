@@ -37,6 +37,7 @@ All notable changes to this project are documented here. The format follows
   keeps its id, so open connections survive; agent credentials are stripped on inject hosts reached
   through a grant ([#14](https://github.com/PhilippMundhenk/tallygate/issues/14)).
 ### Added
+- `python -m app.passwd --print-hash` prints a hash for `CONTROL_PASSWORD_HASH` without a checkout and writes nothing (#62).
 - Line-coverage gate of 95 % per module in CI (`make coverage`), measuring the gateway and control
   processes too; every module is now at 98-100 % (424 tests) (#27).
 - **Help and examples**: `docs/rules.md` (how a connection is decided, ~20 worked examples), an example for
@@ -108,6 +109,7 @@ All notable changes to this project are documented here. The format follows
   Hugging Face were writable. They are now read-only by default; `readonly` entries can refuse POST as
   well (`post_is_write`, with `read_posts` exceptions) and take `*.domain` patterns. The container template
   is called "pull only" (#58).
+- Changing the UI password (`python -m app.passwd`) ends every session opened with the old one: sessions remember a fingerprint of the password in effect at login. The first-start log no longer claims the password is "shown only once"; it stays in the log until rotated (#62).
 - The agent could reach services on the Docker host that listen on all interfaces through the host's
   address on `agent-net` (`172.31.10.1`), bypassing the gateway. `agent-net` and `control-net` no longer
   give the host an address (`com.docker.network.bridge.inhibit_ipv4`), and `bypass.sh` checks it with a

@@ -75,7 +75,7 @@ Claude Code. All you need is [`compose.yaml`](compose.yaml):
 mkdir tallygate && cd tallygate
 curl -fsSLO https://raw.githubusercontent.com/PhilippMundhenk/tallygate/main/compose.yaml
 docker compose up -d
-docker compose logs control | grep -A1 password    # generated UI password, shown once
+docker compose logs control | grep -A1 password    # generated UI password (change it after login)
 ```
 
 Open <http://127.0.0.1:8080> and follow **Setup**: GitHub token → `claude auth login` → git identity →

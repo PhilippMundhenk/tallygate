@@ -115,10 +115,18 @@ def _sign(payload: str) -> str:
 _sessions: dict[str, dict] = {}
 
 
-def make_session(user: str) -> str:
+def password_fingerprint() -> str:
+    """Identifies the password in effect (environment hash or plain password, else the stored hash), without
+    keeping it. A session remembers the fingerprint from its login and ends when it changes, so
+    `python -m app.passwd` logs out every session opened with the old password."""
+    secret = os.environ.get("CONTROL_PASSWORD_HASH") or os.environ.get("CONTROL_PASSWORD") or bootstrap.password_hash()
+    return hmac.new(SESSION_SECRET, b"password:" + secret.encode(), hashlib.sha256).hexdigest()
+
+
+def make_session(user: str, fingerprint: str | None = None) -> str:
     sid = secrets.token_urlsafe(32)
     now = time.time()
-    _sessions[sid] = {"user": user, "exp": now + SESSION_TTL, "seen": now}
+    _sessions[sid] = {"user": user, "exp": now + SESSION_TTL, "seen": now, "pw": fingerprint}
     return f"{sid}.{_sign(sid)}"
 
 
@@ -137,8 +145,8 @@ def read_session(request: web.Request, touch: bool = True) -> str | None:
     sid = _session_id(request)
     s = _sessions.get(sid) if sid else None
     now = time.time()
-    if not s or s["exp"] < now or now - s["seen"] > SESSION_IDLE:
-        _sessions.pop(sid, None)
+    if not s or s["exp"] < now or now - s["seen"] > SESSION_IDLE or s.get("pw") != password_fingerprint():
+        _sessions.pop(sid, None)  # expired, idle, or the password was changed since this login
         return None
     if touch:
         s["seen"] = now
@@ -302,6 +310,8 @@ async def login_page(request: web.Request) -> web.StreamResponse:
             fails = _recent_failures(ip, now)
             if len(fails) >= LOGIN_MAX_FAILURES:
                 return too_many
+            # taken before the check: a password change during the check can only end the new session
+            fingerprint = password_fingerprint()
             ok = await asyncio.get_running_loop().run_in_executor(None, check_password, pw)
             if not ok:
                 fails.append(now)
@@ -315,7 +325,7 @@ async def login_page(request: web.Request) -> web.StreamResponse:
         resp = web.HTTPFound("/")
         resp.set_cookie(
             COOKIE,
-            make_session("admin"),
+            make_session("admin", fingerprint),
             max_age=SESSION_TTL,
             httponly=True,
             # Lax, not Strict: the PUBLIC_URL link in a Telegram/Matrix message is a cross-site navigation

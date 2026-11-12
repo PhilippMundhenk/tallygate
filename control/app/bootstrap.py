@@ -6,7 +6,8 @@ Every value can still be given as an environment variable, which always wins. Ot
 - SESSION_SECRET     created in /data/session-secret
 - TTYD_CREDENTIAL    created in the console volume, shared read-only with the agent
 - UI password        scrypt hash in /data/password-hash; on first start a random password is
-                     generated and printed once to the log. Change it with `python -m app.passwd`.
+                     generated and printed to the log, where it stays readable until the log is
+                     rotated. Change it with `python -m app.passwd` (this ends all open sessions).
 """
 
 from __future__ import annotations
@@ -89,8 +90,9 @@ def ensure_password() -> None:
     _write(PASSWORD_FILE, hash_password(pw))
     bar = "=" * 72
     log.warning(
-        "\n%s\n  tallygate web UI password (shown only once): %s\n"
-        "  Change it:  docker compose exec control python -m app.passwd\n%s",
+        "\n%s\n  tallygate web UI password: %s\n"
+        "  It stays readable in this log until the log is rotated: change it after the first login with\n"
+        "  docker compose exec control python -m app.passwd\n%s",
         bar,
         pw,
         bar,

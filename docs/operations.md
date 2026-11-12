@@ -36,8 +36,11 @@ Prebuilt images for amd64 and arm64 are published on GHCR: `tallygate-gateway`, 
 mkdir tallygate && cd tallygate
 curl -fsSLO https://raw.githubusercontent.com/PhilippMundhenk/tallygate/main/compose.yaml
 docker compose up -d
-docker compose logs control | grep -A1 password    # the generated UI password, shown once
+docker compose logs control | grep -A1 password    # the generated UI password
 ```
+
+The generated password stays readable in the control log (`docker compose logs`) until the log is rotated,
+so change it after the first login, see [Changing the UI password](#changing-the-ui-password).
 
 Open <http://127.0.0.1:8080> on the Docker host (from elsewhere through an SSH tunnel,
 `ssh -L 8080:127.0.0.1:8080 <host>`) and continue with [First-time setup](#first-time-setup).
@@ -222,6 +225,27 @@ Open the UI → **Setup**:
 
 Then clone repositories in the *bash* console: `gh repo clone owner/repo /workspace/repo`.
 
+## Changing the UI password
+
+```bash
+docker compose exec control python -m app.passwd
+```
+
+It asks for the new password twice (at least 12 characters) and stores its scrypt hash in `control-data`.
+It applies at once, no restart needed: **every session opened with the old password ends** at its next
+request (each session remembers a fingerprint of the password it was opened with), so a leaked password
+cannot be used through a session that is already open.
+
+This has no effect while `CONTROL_PASSWORD_HASH` or `CONTROL_PASSWORD` are set; change those in `.env` or
+`compose.yaml` and recreate control (`docker compose up -d control`), which also ends all sessions. To create
+a value for `CONTROL_PASSWORD_HASH` without a checkout of the repository:
+
+```bash
+docker compose exec control python -m app.passwd --print-hash   # prints scrypt:16:..., writes nothing
+```
+
+`python3 control/hashpw.py` in a checkout does the same.
+
 ## Day-to-day
 
 | Task | How |
@@ -310,7 +334,7 @@ to a new gateway, the CA changes. That's harmless: the agent re-reads the CA on 
 | TLS errors only for github.com | The agent doesn't trust the gateway CA: check `/ca/egress-gw-ca.pem` exists in the agent (`ls /ca`) and restart the agent after the gateway. |
 | `ENOSPC: no space left on device` | Host disk full. Free space (`docker system df`, logs) or grow the VM disk. |
 | UI login loops | `COOKIE_SECURE=1` while accessing via plain HTTP from another machine. Use HTTPS, or an SSH tunnel to `127.0.0.1` (localhost counts as secure); set `0` for tests only. |
-| Lost the UI password | `docker compose exec control python -m app.passwd` sets a new one. |
+| Lost the UI password | `docker compose exec control python -m app.passwd` sets a new one and ends all open sessions. |
 | Self-test "Management endpoint … UNEXPECTEDLY SUCCEEDED" | Network wiring changed. Re-check `compose.yaml` and run `make bypass-test`. |
 
 ## Migrating from another Claude Code container
