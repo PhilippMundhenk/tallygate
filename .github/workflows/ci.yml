@@ -75,6 +75,11 @@ jobs:
           for i in $(seq 1 60); do
             [ "$(docker inspect -f '{{.State.Health.Status}}' tallygate-agent-1)" = healthy ] && break; sleep 2
           done
+          # The first-start password line can lag behind agent health (log flush); poll for it instead of
+          # grepping once, so the check is deterministic rather than racing the control log.
+          for i in $(seq 1 30); do
+            docker compose logs control 2>/dev/null | grep -q "password (shown only once)" && break; sleep 1
+          done
           docker compose logs control | grep -q "password (shown only once)"
           docker compose exec -T control test -s /data/password-hash
           docker compose exec -T control test -s /run/tallygate/ttyd/credential
