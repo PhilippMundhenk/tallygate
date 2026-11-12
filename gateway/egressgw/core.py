@@ -834,6 +834,12 @@ class Gateway:
             return None
         port = address[1] if address else 0
         if valid_hostname(sni) and self.policy.evaluate_name(sni, port).action == "allow":
+            # An intercepted host (credential inject / read-only) must be reached BY NAME, where
+            # server_connect pins its real IP and intercepts. Passing through to an IP literal with the
+            # host's SNI would skip interception: the agent's own Authorization/Cookie would not be
+            # stripped, the configured token not injected, and read-only writes not refused (#108).
+            if self._intercepted(sni):
+                return f"TLS SNI {sni} names an intercepted host; reach it by name, not by IP literal"
             return None
         return f"TLS SNI {sni} on IP {orig} is not allowed by the rules"
 

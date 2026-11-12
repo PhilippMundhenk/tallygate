@@ -63,7 +63,18 @@ def path_ok(path: str, patterns: list[str]) -> bool:
     raw = path.split("?", 1)[0].split("#", 1)[0] or "/"
     if not raw.startswith("/") or _BAD_PATH.search(raw):
         return False
-    decoded = urllib.parse.unquote(raw)
+    # Decode to a fixed point: a single unquote lets multiply-encoded traversal (%252e%252e -> %2e%2e)
+    # slip past _BAD_PATH while the raw path, forwarded upstream, decodes further to `..` (#111).
+    decoded = raw
+    for _ in range(3):
+        step = urllib.parse.unquote(decoded)
+        if step == decoded:
+            break
+        decoded = step
+    else:
+        return False  # still changing after three rounds: refuse
+    if _BAD_PATH.search(decoded) or "%" in decoded:  # residual %: an encoding we did not fully resolve
+        return False
     return any(fnmatch.fnmatchcase(decoded, p) for p in patterns)
 
 
