@@ -219,10 +219,18 @@ def _recent_failures(ip: str, now: float) -> list[float]:
     return [t for t in _login_failures.get(ip, []) if now - t < LOGIN_WINDOW]
 
 
+def _per_ip_lockout() -> bool:
+    # The per-address failure lockout only protects when we actually see per-client addresses. Behind a reverse
+    # proxy without trusted forwarding, every client shares the proxy's address, so the lockout would let one
+    # attacker lock the operator out (#101). Without it, brute force is still capped at ~1 guess/s by the global
+    # lock, plus LOGIN_MAX_WAITING for floods.
+    return TRUST_FORWARDED and bool(TRUSTED_PROXIES)
+
+
 @web.middleware
 async def security(request: web.Request, handler):
     path = request.path
-    if path in ("/login", "/healthz") or path.startswith("/static/login"):
+    if path in ("/login", "/healthz", "/static/logo.svg", "/static/favicon.svg") or path.startswith("/static/login"):
         resp = await handler(request)
     else:
         user = read_session(request)
@@ -313,7 +321,7 @@ async def login_page(request: web.Request) -> web.StreamResponse:
         return web.Response(status=413, text="Request too large.")  # also refuses chunked bodies, unread
     ip = client_ip(request)
     too_many = web.Response(status=429, text="Too many attempts, try again later.")
-    if len(_recent_failures(ip, time.time())) >= LOGIN_MAX_FAILURES:
+    if _per_ip_lockout() and len(_recent_failures(ip, time.time())) >= LOGIN_MAX_FAILURES:
         return too_many
     if _login_waiting >= LOGIN_MAX_WAITING:
         return web.Response(status=429, text="Too many login attempts in progress, try again shortly.")
@@ -325,14 +333,15 @@ async def login_page(request: web.Request) -> web.StreamResponse:
             # re-check inside the lock: requests that queued together must not exceed the limit
             now = time.time()
             fails = _recent_failures(ip, now)
-            if len(fails) >= LOGIN_MAX_FAILURES:
+            if _per_ip_lockout() and len(fails) >= LOGIN_MAX_FAILURES:
                 return too_many
             # taken before the check: a password change during the check can only end the new session
             fingerprint = password_fingerprint()
             ok = await asyncio.get_running_loop().run_in_executor(None, check_password, pw)
             if not ok:
-                fails.append(now)
-                _login_failures[ip] = fails
+                if _per_ip_lockout():  # meaningless and unbounded when every client shares one address
+                    fails.append(now)
+                    _login_failures[ip] = fails
                 await asyncio.sleep(1)
     finally:
         _login_waiting -= 1
@@ -1038,6 +1047,11 @@ def build_app() -> web.Application:
         raise SystemExit("TRUST_PROXY_SECRET must be at least 16 characters")
     if TRUST_FORWARDED and not TRUSTED_PROXIES:
         log.warning("TRUST_FORWARDED_FOR=1 but TRUSTED_PROXIES is empty: X-Forwarded-* headers are ignored")
+    if not _per_ip_lockout():
+        log.info(
+            "per-IP login lockout off (set TRUST_FORWARDED_FOR=1 + TRUSTED_PROXIES behind a proxy to enable it); "
+            "brute force stays capped at ~1 guess/s by the global lock"
+        )
     if os.environ.get("CONTROL_PASSWORD") and not os.environ.get("CONTROL_PASSWORD_HASH"):
         log.warning("CONTROL_PASSWORD (plain text) is in use - prefer CONTROL_PASSWORD_HASH")
     app = web.Application(middlewares=[security], client_max_size=2 * 1024 * 1024)
