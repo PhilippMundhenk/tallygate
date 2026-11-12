@@ -96,6 +96,8 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   other prompts, expired prompts are skipped (#22, #63).
 - Gateway robustness: event counts, preset time limits, `fsync` before renames, connection state (#15).
 - `bypass.sh` works when downloaded next to `compose.yaml` (#65).
+- State directories that are bind mounts with the wrong owner stop the containers with a clear message (directory, uid, the
+  `chown` to run) instead of a traceback; the docs list every volume with its owner; `CONTROL_DATA` (#95).
 - CI: the image scan, release notes and pushes from other branches (#64).
 
 ### Removed

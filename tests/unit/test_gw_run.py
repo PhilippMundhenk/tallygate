@@ -100,3 +100,14 @@ def test_service_with_a_non_numeric_listen_port_stops_startup(tmp_path):
     (tmp_path / "config.yaml").write_text("services: [{listen: http, target: 'x:1'}]\n")
     with pytest.raises(ValueError):
         run.build_args({"GW_LISTEN_HOST": "h"}, tmp_path)
+
+
+def test_unwritable_directories_are_reported_with_a_chown_hint(tmp_path):
+    """#95: a bind mount owned by root used to end in a PermissionError traceback."""
+    ok = tmp_path / "ok"
+    blocked = tmp_path / "file" / "sub"  # the parent is a file: nothing can be created below it
+    (tmp_path / "file").write_text("x")
+    bad = run.unwritable([ok, blocked])
+    assert bad == [str(blocked)] and ok.is_dir() and not list(ok.iterdir())  # probe file removed
+    msg = run.owner_hint("egress-gw", bad, 10001, 10001)
+    assert str(blocked) in msg and "uid 10001" in msg and "chown 10001:10001" in msg

@@ -3,6 +3,16 @@
 set -uo pipefail
 
 log() { echo "[agent] $*"; }
+# State directories must be writable (bind mounts owned by root are the usual mistake, #95).
+for d in "$HOME" /workspace; do
+  probe="$d/.write-test-$$"
+  if ! { : >"$probe"; } 2>/dev/null; then
+    log "ERROR: cannot write to $d (the agent runs as uid $(id -u)). If it is a bind mount, give the host"
+    log "directory to that user, e.g. chown $(id -u):$(id -g) <host directory>. See docs/operations.md#host-directories."
+    exit 1
+  fi
+  rm -f "$probe"
+done
 # Console credential (user:pass) shared with the control plane: from the environment, or created by
 # control on its first start in a volume mounted read-only here.
 if [[ -z "${TTYD_CREDENTIAL:-}" ]]; then

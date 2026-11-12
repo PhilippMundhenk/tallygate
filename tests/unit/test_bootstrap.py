@@ -86,3 +86,15 @@ def test_gateway_creates_token_file(tmp_path):
     assert len(token) >= 40
     subprocess.run([sys.executable, str(ROOT / "gateway" / "run.py")], env=env, capture_output=True)
     assert (tmp_path / "gw" / "api-token").read_text() == token  # reused, not rotated
+
+
+def test_check_dirs_refuses_unwritable_state_with_a_hint(boot, tmp_path, monkeypatch):
+    """#95: control names the directory and the owner it needs."""
+    boot.check_dirs()  # writable tmp dirs: fine
+    (tmp_path / "blocker").write_text("x")
+    monkeypatch.setattr(boot, "DATA", tmp_path / "blocker" / "data")
+    with pytest.raises(SystemExit, match=r"cannot write to .*blocker.*chown"):
+        boot.check_dirs()
+    monkeypatch.setenv("SESSION_SECRET", "s")
+    monkeypatch.setenv("CONTROL_PASSWORD", "p")
+    boot.check_dirs()  # nothing to store in /data any more

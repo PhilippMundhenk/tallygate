@@ -3,6 +3,7 @@
 - [Requirements](#requirements)
 - [Installation](#installation)
   - [With Docker Compose (recommended)](#with-docker-compose-recommended)
+  - [Host directories](#host-directories)
   - [From source](#from-source)
   - [Custom agent image](#custom-agent-image)
 - [Reverse proxy](#reverse-proxy)
@@ -42,8 +43,12 @@ docker compose logs control | grep -A1 password    # the generated UI password
 The generated password stays readable in the control log (`docker compose logs`) until the log is rotated,
 so change it after the first login, see [Changing the UI password](#changing-the-ui-password).
 
-Open <http://127.0.0.1:8080> on the Docker host (from elsewhere through an SSH tunnel,
-`ssh -L 8080:127.0.0.1:8080 <host>`) and continue with [First-time setup](#first-time-setup).
+The UI is published **only on localhost of the Docker host** (`CONTROL_PUBLISH=127.0.0.1:8080`). Open
+<http://127.0.0.1:8080> on the host, or from elsewhere through an SSH tunnel (`ssh -L 8080:127.0.0.1:8080 <host>`,
+then the same address), or through a [reverse proxy](#reverse-proxy). For a short test on a trusted network you
+can publish it on the LAN with `CONTROL_PUBLISH=0.0.0.0:8080` **and** `COOKIE_SECURE=0` (browsers drop the
+secure session cookie over plain HTTP from another machine, so the login would loop); password and session
+then travel unencrypted. Continue with [First-time setup](#first-time-setup).
 
 On first start the containers create everything they need in Docker volumes:
 
@@ -61,9 +66,7 @@ Settings go into a `.env` file next to `compose.yaml`; all of them are optional.
 most likely want: `PUBLIC_URL` and `TRUSTED_PROXIES` for a [reverse proxy](#reverse-proxy), `RC_NAME`, and
 Telegram or Matrix for phone approvals. Apply changes with `docker compose up -d`.
 
-To keep state in host directories instead of volumes (for example to see the workspace from the host), set
-`GATEWAY_DATA`, `AGENT_HOME` and `WORKSPACE` to paths owned by uid 10001 (gateway) and 1000 (agent).
-`./setup.sh /srv/tallygate` from the repository does this for you.
+To keep state in host directories instead of volumes, see [Host directories](#host-directories).
 
 To change the static gateway configuration (grants, service ports, credential injection), save
 [`config/gateway.yaml`](../config/gateway.yaml) as `gateway.yaml` next to `compose.yaml`, edit it and
@@ -79,6 +82,39 @@ bash bypass.sh                 # must end with ALL CHECKS PASSED
 
 Pin a version with `TALLYGATE_VERSION=0.4` (minor version, gets patches) or `0.4.0` in `.env`. Each release
 also attaches `compose.yaml`, `.env.example`, `gateway.yaml` and `bypass.sh` for that version.
+
+### Host directories
+
+Docker volumes get the right owners automatically. **Host directories do not**: Docker creates a missing
+directory as `root`, and the containers run as fixed unprivileged users without any capabilities, so they
+cannot write there. The container then stops with a message like `egress-gw cannot write to /data (it runs as
+uid 10001)`. Create the directories with these owners before the first start:
+
+| Volume | Container path | Owner (uid:gid) | Mode | `.env` variable | Contains |
+|---|---|---|---|---|---|
+| `gateway-data` | egress-gw `/data` | `10001:10001` | 700 | `GATEWAY_DATA` | policy, log, secrets, CA key |
+| `gw-token` | egress-gw `/run/tallygate/gw`, control (ro) | `10001:10001` | 755 | – | API token (recreated) |
+| `ca` | egress-gw `/ca`, agent (ro) | `10001:10001` | 755 | – | public CA certificate (recreated) |
+| `control-data` | control `/data` | `10002:10002` | 700 | `CONTROL_DATA` | UI password hash, session secret |
+| `ttyd` | control `/run/tallygate/ttyd`, agent (ro) | `10002:10002` | 755 | – | console credential (recreated) |
+| `agent-home` | agent `/home/agent` | `1000:1000` | 755 | `AGENT_HOME` | Claude login, settings |
+| `workspace` | agent `/workspace` | `1000:1000` | 755 | `WORKSPACE` | your repositories |
+
+The users don't need to exist on the host; `chown` takes the numbers. For all seven under one directory:
+
+```bash
+cd /srv/tallygate
+sudo mkdir -p gateway-data gw-token ca control-data ttyd agent-home workspace
+sudo chown 10001:10001 gateway-data gw-token ca
+sudo chown 10002:10002 control-data ttyd
+sudo chown 1000:1000 agent-home workspace
+sudo chmod 700 gateway-data control-data
+```
+
+The four with an `.env` variable hold everything worth keeping; set them to the host paths. `./setup.sh
+/srv/tallygate` from the repository prepares those four and writes the variables. `gw-token`, `ca` and `ttyd`
+are recreated on every start; keep them as volumes unless you replace them in `compose.yaml` yourself as above.
+Don't set `user:` in compose: the images are built for these uids.
 
 ### From source
 

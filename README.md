@@ -78,8 +78,11 @@ docker compose up -d
 docker compose logs control | grep -A1 password    # generated UI password (change it after login)
 ```
 
-Open <http://127.0.0.1:8080> and follow **Setup**: GitHub token → `claude auth login` → git identity →
-confirm Remote Control → self-test. Your session then appears in the Claude app under **Code**.
+The UI listens **only on localhost of the Docker host** (`127.0.0.1:8080`), so it is never exposed unencrypted
+by accident. On the host open <http://127.0.0.1:8080>; from your laptop use an SSH tunnel
+(`ssh -L 8080:127.0.0.1:8080 <host>`) and open the same address, or put a TLS reverse proxy in front
+([details](docs/operations.md#reverse-proxy)). Then follow **Setup**: GitHub token → `claude auth login` → git
+identity → confirm Remote Control → self-test. Your session then appears in the Claude app under **Code**.
 
 No configuration is needed to start: secrets are created on first start and kept in Docker volumes. Optional
 settings go into a `.env` file next to `compose.yaml`, for example:

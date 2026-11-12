@@ -615,6 +615,7 @@ async def watch_gateway(app: web.Application):
 
 def build_app() -> web.Application:
     global GW_TOKEN, TTYD_AUTH, SESSION_SECRET
+    bootstrap.check_dirs(proxy_auth=bool(PROXY_AUTH_HEADER))
     GW_TOKEN = bootstrap.gw_token()
     TTYD_AUTH = bootstrap.ttyd_credential()
     SESSION_SECRET = bootstrap.session_secret()
