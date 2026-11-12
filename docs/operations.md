@@ -311,6 +311,7 @@ docker compose exec control python -m app.passwd --print-hash   # prints scrypt:
 | Temporarily open the internet | Rules → Presets → `open` with TTL `900` |
 | Emergency stop | Rules → Quick actions → *Emergency stop* (revokes grants, denies what is pending, removes the internet shortcuts, mode `deny`, suspends auto-approved grants), or `docker compose stop agent` |
 | Several sessions in parallel | New session in the Claude app on the same environment; `RC_ARGS=--spawn worktree` for isolated worktrees |
+| Files into or out of the workspace | UI → Files (upload into the open folder, download results) |
 | Shell in the agent | UI → Console → bash (or `docker compose exec agent bash`) |
 
 ## Upgrades

@@ -114,8 +114,15 @@ Used by the bundled web UI; documented for scripting and review.
 | GET/POST | `/api/agent/setup/git-identity` | session (+ CSRF for POST) | Preview from GitHub / set `{"name", "email"}` |
 | POST | `/api/agent/setup/remote-control` | session + CSRF | Give Remote Control's one-time consent and restart it |
 | GET | `/api/setup/checks?origin=<page origin>` | session | Deployment checks of the setup wizard: `{"checks": [{"id", "state": "ok"\|"warn"\|"bad"\|"info", "title", "detail"}], "password": "generated"\|"changed"\|"env-hash"\|"env-plain"\|"proxy"}`. `origin` is only compared, never trusted. |
+| GET | `/api/files?path=<dir>` | session | Workspace folder listing: `{"path", "entries": [{"name", "type": "file"\|"dir"\|"link"\|"other", "size", "mtime"}], "truncated", "max_upload", "max_download"}`. Odd entries from the agent are dropped |
+| GET | `/api/files/download?path=<file>` | session | The file as `application/octet-stream` with `Content-Disposition: attachment` and `Content-Security-Policy: sandbox`; 413 over `FILES_MAX_DOWNLOAD` |
+| PUT | `/api/files?path=<file>&overwrite=1` | session + CSRF | Upload the request body (`Content-Length` required, at most `FILES_MAX_UPLOAD`, else 411 / 413); 409 if the file exists without `overwrite=1` or is a folder or link |
 | GET | `/term/{name}/` | session | Console page (served by control: vendored xterm.js, no agent content) |
 | GET (WS) | `/term/{name}/ws` | session + Origin | Filtered relay to the agent's ttyd `name`: browser → `0` input / `1` resize, agent → `0` output only; control adds the ttyd credential |
+
+Paths under `/api/files` are relative to `/workspace`; absolute paths, `.` / `..` components, backslashes
+and control characters get 400 before the agent is asked. The agent answers 403 for anything that resolves
+outside the workspace (symlinks) and 404 for what does not exist; both are passed on.
 
 Agent requests are relayed only for the listed methods and paths; bodies over 4 KiB get 413, and every answer
 from the agent is size-limited (1 MiB) and must be a JSON object. The agent's own refusals (400, 409) are passed
@@ -142,4 +149,7 @@ It runs as the agent user and only does what that user can do anyway; control re
 | POST | `/setup/claude-code` | `{"code"}` (8–2048 characters of `A-Za-z0-9._~#+/=-`), typed into `tg-login`; waits up to 30 s for the result. 400 for a malformed code, 409 if no login waits for one |
 | GET | `/setup/git-identity` | `gh api -i user`: `{"ok": true, "login", "name", "email": "<id>+<login>@users.noreply.github.com", "token_expires", "current"}` or `{"ok": false, "reason": "token"\|"network"\|"github", "message", "current"}` |
 | POST | `/setup/git-identity` | `{"name", "email"}` → `git config --global user.name/user.email`. 400 for an empty name (or over 100 characters) or an invalid address: nothing is written |
+| GET | `/files?path=` | Folder listing (at most 2000 entries, folders first); `link` entries are not followed |
+| GET | `/files/download?path=` | The regular file (opened with `O_NOFOLLOW`), `application/octet-stream` with its `Content-Length` |
+| PUT | `/files?path=&overwrite=0\|1` | Store the body (`Content-Length` required) through a temporary file in the same folder, then rename; the folder must exist |
 | POST | `/setup/remote-control` | Sets `remoteDialogSeen` and `projects["/workspace"].hasTrustDialogAccepted` in `~/.claude.json` (atomically, mode 0600) and restarts the Remote Control loop (`tmux respawn-pane -k -t rc`). 409 with `RC_ENABLE=0` or before the Claude login |

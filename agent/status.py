@@ -9,12 +9,14 @@ start `claude auth login` in a tmux session and type the code into it, set the g
 Remote Control's one-time consent in ~/.claude.json. They give the agent nothing new.
 """
 
+import contextlib
 import json
 import os
 import re
 import shutil
 import socket
 import ssl
+import stat
 import struct
 import subprocess
 import threading
@@ -414,6 +416,106 @@ def selftest() -> list[dict]:
     return results
 
 
+# ---------------------------------------------------------------- workspace files (#76)
+# Strictly inside WORKSPACE: relative paths only, no "." / ".." components, and the resolved path (symlinks
+# followed) must stay inside the resolved workspace. Files are opened with O_NOFOLLOW and must be regular files.
+# This server runs as the agent user, so it can never reach more than the agent itself.
+FILES_MAX_ENTRIES = 2000
+FILES_HARD_MAX = 1024**3  # absolute upper bound for one upload; control enforces the configured limit
+CHUNK = 64 * 1024
+
+
+def rel_path(raw: object) -> str:
+    """A normalised relative path ("" = the workspace itself), or SetupError(400)."""
+    p = str(raw or "")
+    if len(p) > 1024 or CONTROL_CHARS.search(p) or "\\" in p or p.startswith("/"):
+        raise SetupError(400, "invalid path")
+    parts = [x for x in p.split("/") if x]
+    if any(x in (".", "..") or len(x.encode("utf-8", "surrogatepass")) > 255 for x in parts):
+        raise SetupError(400, "invalid path")
+    return "/".join(parts)
+
+
+def inside(rel: str) -> Path:
+    """The real path of `rel`, refused (403) if it leaves the workspace, e.g. through a symlink."""
+    root = os.path.realpath(WORKSPACE)
+    real = os.path.realpath(os.path.join(root, rel))
+    if real != root and not real.startswith(root + os.sep):
+        raise SetupError(403, "outside the workspace")
+    return Path(real)
+
+
+def files_list(query: dict) -> dict:
+    rel = rel_path(query.get("path"))
+    d = inside(rel)
+    if not d.is_dir():
+        raise SetupError(404, "no such folder")
+    entries = []
+    with os.scandir(d) as it:
+        for e in it:
+            try:
+                e.name.encode("utf-8")
+                st = e.stat(follow_symlinks=False)
+            except (UnicodeEncodeError, OSError):
+                continue  # undecodable name or vanished
+            kind = "link" if e.is_symlink() else "dir" if e.is_dir(follow_symlinks=False) else "file"
+            if kind == "file" and not e.is_file(follow_symlinks=False):
+                kind = "other"
+            entries.append({"name": e.name, "type": kind, "size": st.st_size, "mtime": st.st_mtime})
+            if len(entries) >= FILES_MAX_ENTRIES:
+                break
+    entries.sort(key=lambda x: (x["type"] != "dir", x["name"].lower()))
+    return {"path": rel, "entries": entries, "truncated": len(entries) >= FILES_MAX_ENTRIES}
+
+
+def open_regular(rel: str) -> int:
+    """A file descriptor of the regular file `rel` (never a symlink, a device or a FIFO)."""
+    if not rel:
+        raise SetupError(400, "not a file")
+    real = inside(rel)
+    try:
+        fd = os.open(real, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        raise SetupError(404, "no such file") from None
+    except OSError:
+        raise SetupError(403, "cannot open this file") from None
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise SetupError(400, "not a regular file")
+    return fd
+
+
+def write_upload(rel: str, length: int, read, overwrite: bool) -> dict:
+    """Store `length` bytes from `read` at `rel`: through a temporary file in the same folder, then renamed."""
+    if not rel:
+        raise SetupError(400, "no file name")
+    parent_rel, _, name = rel.rpartition("/")
+    parent = inside(parent_rel)
+    if not parent.is_dir():
+        raise SetupError(404, "no such folder")
+    target = parent / name
+    if target.is_symlink() or (target.exists() and not target.is_file()):
+        raise SetupError(409, "a folder or link of this name exists")
+    if target.exists() and not overwrite:
+        raise SetupError(409, "a file of this name exists")
+    tmp = parent / f".{name[:200]}.tallygate-upload-{os.getpid()}-{threading.get_ident()}"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    done = 0
+    try:
+        with os.fdopen(fd, "wb") as f:
+            while done < length:
+                chunk = read(min(CHUNK, length - done))
+                if not chunk:
+                    raise SetupError(400, "upload ended early")
+                f.write(chunk)
+                done += len(chunk)
+        os.replace(tmp, target)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()
+    return {"path": rel, "size": done}
+
+
 # ---------------------------------------------------------------- HTTP
 # Looked up at call time (lambdas), so the functions can be replaced in tests.
 GET_ROUTES = {
@@ -446,6 +548,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send(e.status, {"error": str(e)})
 
     def do_GET(self):
+        url = urllib.parse.urlsplit(self.path)
+        query = dict(urllib.parse.parse_qsl(url.query))
+        if url.path == "/files":
+            self._dispatch(files_list, query)
+            return
+        if url.path == "/files/download":
+            self._download(query)
+            return
         fn = GET_ROUTES.get(self.path)
         if fn is None:
             self._send(404, {"error": "not found"})
@@ -472,6 +582,44 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": "expected a JSON object"})
             return
         self._dispatch(fn, body)
+
+    def _download(self, query: dict) -> None:
+        try:
+            fd = open_regular(rel_path(query.get("path")))
+        except SetupError as e:
+            self._send(e.status, {"error": str(e)})
+            return
+        with os.fdopen(fd, "rb") as f:
+            left = os.fstat(f.fileno()).st_size
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(left))
+            self.end_headers()
+            while left > 0 and (chunk := f.read(min(CHUNK, left))):
+                self.wfile.write(chunk)
+                left -= len(chunk)
+
+    def do_PUT(self):
+        url = urllib.parse.urlsplit(self.path)
+        if url.path != "/files":
+            self._send(404, {"error": "not found"})
+            return
+        query = dict(urllib.parse.parse_qsl(url.query))
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            length = -1
+        if not 0 <= length <= FILES_HARD_MAX:
+            self.close_connection = True
+            self._send(413 if length > 0 else 411, {"error": "Content-Length missing or too large"})
+            return
+        try:
+            result = write_upload(rel_path(query.get("path")), length, self.rfile.read, query.get("overwrite") == "1")
+        except SetupError as e:
+            self.close_connection = True  # the rest of the body is not read
+            self._send(e.status, {"error": str(e)})
+            return
+        self._send(200, result)
 
     def log_message(self, *args):
         pass

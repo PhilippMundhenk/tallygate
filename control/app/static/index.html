@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>tallygate</title><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/wizard.css"><link rel="stylesheet" href="/static/overview.css"><link rel="stylesheet" href="/static/keys.css"><link rel="stylesheet" href="/static/update.css"></head>
+<title>tallygate</title><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/wizard.css"><link rel="stylesheet" href="/static/overview.css"><link rel="stylesheet" href="/static/keys.css"><link rel="stylesheet" href="/static/update.css"><link rel="stylesheet" href="/static/files.css"></head>
 <body>
 <header>
   <span class="brand">🔐 tallygate</span>
@@ -11,6 +11,7 @@
     <button data-tab="rules" id="tabbtn-rules" role="tab" aria-selected="false" aria-controls="tab-rules">Rules</button>
     <button data-tab="grants" id="tabbtn-grants" role="tab" aria-selected="false" aria-controls="tab-grants">Grants <span id="grantActiveCount" class="badge ok hidden">0</span></button>
     <button data-tab="console" id="tabbtn-console" role="tab" aria-selected="false" aria-controls="tab-console">Console</button>
+    <button data-tab="files" id="tabbtn-files" role="tab" aria-selected="false" aria-controls="tab-files">Files</button>
     <button data-tab="setup" id="tabbtn-setup" role="tab" aria-selected="false" aria-controls="tab-setup">Setup</button>
   </nav>
   <span class="conn" role="status"><span id="conn" class="dot" aria-hidden="true"></span><span id="connText">connecting</span></span>
@@ -245,6 +246,21 @@
     <iframe id="termFrame" title="terminal"></iframe>
   </section>
 
+  <!-- FILES (files.js) -->
+  <section id="tab-files" role="tabpanel" aria-labelledby="tabbtn-files" class="hidden">
+    <h2>Workspace files</h2>
+    <p class="hint">Files in the agent's <code>/workspace</code>: upload a spec, a dataset or a patch, download results.
+      Downloads are saved, never opened here.</p>
+    <nav id="fileCrumbs" class="crumbs" aria-label="Folder"></nav>
+    <div class="card"><h3>Upload to this folder</h3>
+      <form id="fileForm" class="row wrap"><input type="file" id="fileInput" multiple aria-describedby="fileHint" aria-label="Files to upload">
+        <label class="check-inline"><input type="checkbox" id="fileOverwrite"> replace existing files</label><button id="fileUpload">Upload</button></form>
+      <p class="hint" id="fileHint"></p><div id="fileStatus" class="status" role="status" aria-live="polite"></div></div>
+    <div class="table-wrap"><table class="files"><thead><tr><th>Name</th><th>Size</th><th>Modified</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody id="fileBody"></tbody></table></div>
+    <p id="fileTruncated" class="hint hidden">Only the first 2000 entries are shown.</p>
+  </section>
+
   <!-- SETUP (wizard.js) -->
   <section id="tab-setup" role="tabpanel" aria-labelledby="tabbtn-setup" class="hidden">
     <h2>First start</h2>
@@ -309,4 +325,5 @@
 <script src="/static/overview.js"></script>
 <script src="/static/keys.js"></script>
 <script src="/static/update.js"></script>
+<script src="/static/files.js"></script>
 </body></html>

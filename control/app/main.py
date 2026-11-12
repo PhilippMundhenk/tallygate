@@ -748,6 +748,159 @@ async def api_version(request: web.Request):
     return web.json_response(out)
 
 
+# ------------------------------------------------------------------ workspace files (#76)
+# Through the agent's status server only (no new network path). Paths are checked here and again in the agent
+# (which also refuses symlink escapes). Downloads are attachments of type application/octet-stream with a
+# sandboxing CSP: nothing from the workspace is ever rendered on the UI origin.
+FILES_MAX_UPLOAD = int(os.environ.get("FILES_MAX_UPLOAD", str(50 * 1024 * 1024)))
+FILES_MAX_DOWNLOAD = int(os.environ.get("FILES_MAX_DOWNLOAD", str(200 * 1024 * 1024)))
+FILE_TYPES = {"file", "dir", "link", "other"}
+FILE_CHUNK = 64 * 1024
+
+
+def files_path(request: web.Request, file: bool = False) -> str:
+    """The normalised relative path of ?path= (400 if it is absolute, has . / .. or control characters)."""
+    p = request.query.get("path", "")
+    parts = [x for x in p.split("/") if x]
+    bad = len(p) > 1024 or p.startswith("/") or "\\" in p or re.search(r"[\x00-\x1f\x7f]", p)
+    if bad or any(x in (".", "..") for x in parts) or (file and not parts):
+        raise web.HTTPBadRequest(text=json.dumps({"error": "invalid path"}), content_type="application/json")
+    return "/".join(parts)
+
+
+def _agent_files_url(what: str, **query) -> str:
+    return f"http://{AGENT_HOST}:{AGENT_STATUS_PORT}/{what}?" + urllib.parse.urlencode(query)
+
+
+def _agent_status(status: int) -> int:
+    return status if status in (400, 403, 404, 409, 411, 413) else 502
+
+
+async def api_files_list(request: web.Request):
+    path = files_path(request)
+    try:
+        status, data = await agent_call(request.app, "GET", "files?" + urllib.parse.urlencode({"path": path}))
+    except (TimeoutError, aiohttp.ClientError, ValueError) as e:
+        return web.json_response({"error": f"agent unreachable or invalid response: {e}"}, status=502)
+    if status != 200:
+        return web.json_response({"error": str(data.get("error", "failed"))[:200]}, status=_agent_status(status))
+    entries = []
+    raw = data.get("entries")
+    for e in raw if isinstance(raw, list) else []:
+        if not isinstance(e, dict):
+            continue
+        name, kind, size, mtime = e.get("name"), e.get("type"), e.get("size"), e.get("mtime")
+        if (
+            not isinstance(name, str)
+            or not 0 < len(name) <= 255
+            or "/" in name
+            or name in (".", "..")
+            or re.search(r"[\x00-\x1f\x7f]", name)
+            or kind not in FILE_TYPES
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
+            or not isinstance(mtime, (int, float))
+        ):
+            continue  # the agent's answer is untrusted: odd entries are dropped
+        entries.append({"name": name, "type": kind, "size": size, "mtime": mtime})
+    return web.json_response(
+        {
+            "path": path,
+            "entries": entries[:2000],
+            "truncated": data.get("truncated") is True,
+            "max_upload": FILES_MAX_UPLOAD,
+            "max_download": FILES_MAX_DOWNLOAD,
+        }
+    )
+
+
+def content_disposition(name: str) -> str:
+    ascii_name = re.sub(r"[^A-Za-z0-9._-]", "_", name)[:100] or "download"
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{urllib.parse.quote(name, safe='')}"
+
+
+async def api_files_download(request: web.Request):
+    path = files_path(request, file=True)
+    resp = None
+    try:
+        async with request.app["http"].get(
+            _agent_files_url("files/download", path=path),
+            timeout=aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=60),
+        ) as r:
+            if r.status != 200:
+                try:
+                    err = json.loads(await r.content.read(4096)).get("error")
+                except (ValueError, AttributeError):
+                    err = None
+                return web.json_response({"error": str(err or "download failed")[:200]}, status=_agent_status(r.status))
+            size = r.content_length
+            if size is None:
+                return web.json_response({"error": "the agent sent no length"}, status=502)
+            if size > FILES_MAX_DOWNLOAD:
+                return web.json_response(
+                    {"error": f"file larger than FILES_MAX_DOWNLOAD ({FILES_MAX_DOWNLOAD} bytes)"}, status=413
+                )
+            resp = web.StreamResponse(
+                headers={
+                    "Content-Type": "application/octet-stream",
+                    "Content-Disposition": content_disposition(path.rsplit("/", 1)[-1]),
+                    "Content-Security-Policy": "sandbox; default-src 'none'",
+                    "Cache-Control": "no-store",
+                }
+            )
+            resp.content_length = size
+            _security_headers(resp, request.path)
+            await resp.prepare(request)
+            async for chunk in r.content.iter_chunked(FILE_CHUNK):
+                await resp.write(chunk)
+            await resp.write_eof()
+            return resp
+    except (TimeoutError, aiohttp.ClientError) as e:
+        if resp is None:
+            return web.json_response({"error": f"agent unreachable: {e}"}, status=502)
+        log.warning("download of %s from the agent broke off: %s", path, e)
+        resp.force_close()  # the browser sees an incomplete download (fewer bytes than Content-Length)
+        return resp
+
+
+async def api_files_upload(request: web.Request):
+    path = files_path(request, file=True)
+    length = request.content_length
+    if length is None:
+        return web.json_response({"error": "Content-Length required"}, status=411)
+    if length > FILES_MAX_UPLOAD:
+        return web.json_response({"error": f"file larger than FILES_MAX_UPLOAD ({FILES_MAX_UPLOAD} bytes)"}, status=413)
+
+    async def body():
+        left = length
+        while left > 0:
+            chunk = await request.content.read(min(FILE_CHUNK, left))
+            if not chunk:
+                raise ConnectionResetError("upload ended early")
+            left -= len(chunk)
+            yield chunk
+
+    overwrite = "1" if request.query.get("overwrite") == "1" else "0"
+    try:
+        async with request.app["http"].put(
+            _agent_files_url("files", path=path, overwrite=overwrite),
+            data=body(),
+            headers={"Content-Length": str(length), "Content-Type": "application/octet-stream"},
+            timeout=aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=120),
+        ) as r:
+            data = json.loads(await r.content.read(64 * 1024))
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+            status = r.status
+    except (TimeoutError, aiohttp.ClientError, ConnectionResetError, ValueError) as e:
+        return web.json_response({"error": f"upload failed: {e}"}, status=502)
+    if status != 200:
+        return web.json_response({"error": str(data.get("error", "failed"))[:200]}, status=_agent_status(status))
+    log.info("workspace upload: %s (%d bytes) by %s", path, length, request["user"])
+    return web.json_response({"path": path, "size": length})
+
+
 async def api_meta(request: web.Request):
     return web.json_response(
         {
@@ -897,6 +1050,9 @@ def build_app() -> web.Application:
     app.router.add_get("/api/stream", api_stream)
     app.router.add_get("/api/meta", api_meta)
     app.router.add_get("/api/version", api_version)
+    app.router.add_get("/api/files", api_files_list)
+    app.router.add_put("/api/files", api_files_upload)
+    app.router.add_get("/api/files/download", api_files_download)
     app.router.add_post("/api/github/check", api_github_check)
     app.router.add_route("*", "/api/agent/{what:.*}", api_agent)
     app.router.add_get("/api/setup/checks", api_setup_checks)

@@ -91,6 +91,11 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   the release and the upgrade command. Control asks GitHub's releases API from its own network (never through
   the agent), caches the answer for 6 h, and `UPDATE_CHECK=0` switches it off. The gateway image carries
   `VERSION` and reports it in `/info` (#81).
+- **Workspace files** in a new *Files* tab: browse `/workspace`, upload into the open folder and download
+  results, through the agent's status server (no new network path). Paths stay inside the workspace (no
+  `..`, symlinks that leave it are refused), uploads are size-limited (`FILES_MAX_UPLOAD`, 50 MiB) and never
+  replace a file unasked or write through a link, downloads are attachments that are never rendered in the
+  UI (`FILES_MAX_DOWNLOAD`, 200 MiB) (#76).
 
 ### Changed
 - **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie

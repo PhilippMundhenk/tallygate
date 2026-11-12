@@ -6,8 +6,8 @@ const HOUR = 3600;
 const ovVisible = () => !$("#tab-overview").classList.contains("hidden");
 function fmtBytes(n) {
   if (!Number.isFinite(n)) return "?";
-  const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
-  while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
+  const u = ["B", "KiB", "MiB", "GiB", "TiB"]; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
   return `${n >= 10 || i === 0 ? Math.round(n) : n.toFixed(1)} ${u[i]}`;
 }
 function diskText(d) {

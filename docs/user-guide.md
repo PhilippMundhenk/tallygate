@@ -9,6 +9,7 @@ consoles into the agent, and run the setup wizard. Remote Control itself is used
 - [Log](#log)
 - [Rules](#rules)
 - [Console](#console)
+- [Files](#files)
 - [Setup wizard](#setup-wizard)
 - [Telegram approvals](#telegram-approvals)
 - [Matrix approvals](#matrix-approvals)
@@ -155,6 +156,20 @@ inside `grants_lan_allow` in the gateway config; the button explains what to add
 | **claude** | An interactive Claude Code session in the terminal. |
 
 Sessions persist when you close the tab. tmux basics: `Ctrl-b d` detaches, scroll with `Ctrl-b [`.
+
+## Files
+
+The agent's `/workspace` in the browser: open folders, upload files into the open folder (a spec, a dataset,
+a patch) and download results, without `docker cp` or a shell.
+
+- Uploads go into the folder you are in. An existing file is only replaced with **replace existing files**;
+  folders and links are never replaced. Up to `FILES_MAX_UPLOAD` (default 50 MiB) per file.
+- **Download** saves the file (up to `FILES_MAX_DOWNLOAD`, default 200 MiB). Files are always sent as
+  downloads (`application/octet-stream`, `Content-Disposition: attachment`), never shown in the UI, so a
+  file the agent wrote (HTML, SVG, a script) cannot run on the UI's address.
+- Everything stays inside `/workspace`: no `..`, no absolute paths, and links that point outside are refused
+  (they are listed as *link*, but cannot be opened or written through).
+- Uploads are logged by control (`workspace upload: <path> (<bytes>) by <user>`).
 
 ## Setup wizard
 
