@@ -75,7 +75,7 @@ jobs:
           for i in $(seq 1 60); do
             [ "$(docker inspect -f '{{.State.Health.Status}}' tallygate-agent-1)" = healthy ] && break; sleep 2
           done
-          docker compose logs control | grep -q "password (shown only once)"
+          docker compose logs control | grep -q "tallygate web UI password:"
           docker compose exec -T control test -s /data/password-hash
           docker compose exec -T control test -s /run/tallygate/ttyd/credential
           docker compose exec -T agent test -s /run/tallygate/ttyd/credential
