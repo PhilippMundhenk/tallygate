@@ -10,7 +10,9 @@ Base URL: `http://172.31.11.2:8081` (control-net only). All endpoints except `/h
 |---|---|---|---|
 | GET | `/health` | – | `{"ok": true}` (no auth) |
 | GET | `/policy` | – | Full policy (`default`, `ask_timeout`, `hard_deny` = extras, `rules`) plus read-only `hard_deny_floor` |
-| PUT | `/policy` | Full policy | Validated and replaced; returns the new policy |
+| PUT | `/policy` | Full policy | Validated and replaced; returns the new policy. Replaces **every** rule: send only a policy you have just read |
+| PATCH | `/policy` | `{"default": "ask"\|"deny"\|"allow", "ask_timeout": 5..3600}` (either or both) | Changes only the mode and/or the approval timeout; the rules stay as they are. Any other key, a non-integer timeout or an empty body is a `400` |
+| POST | `/emergency-stop` | optional `{"by": "who"}` | Best-effort stop, see below: `{"ok": bool, "steps": [{"step", "ok", "errors"?, ...}]}` |
 | POST | `/rules` | Rule (+ optional `"top": false` to append) | `201` created rule |
 | DELETE | `/rules/{id}` | – | `{"ok": true}` or `404` |
 | GET | `/presets` | – | `["baseline", "containers", …]`; with `?details=1`: `[{name, title, description, category, default, rules}]` |
@@ -24,12 +26,32 @@ Base URL: `http://172.31.11.2:8081` (control-net only). All endpoints except `/h
 | GET | `/secrets` | – | `{"names": [...]}` — values are never returned |
 | PUT | `/secrets/{name}` | `{"value": "..."}` (empty removes) | `{"names": [...]}` |
 | GET | `/info` | – | `inject_hosts`, `inject_secrets_needed`, `services`, `ca_pem`, `pending` |
-| GET | `/grants` | – | `defs` (with `source` config/ui), `active`, pending `requests`, `lan_allow_ui`, `missing_secrets` |
+| GET | `/grants` | – | `defs` (with `source` config/ui), `active`, pending `requests`, `lan_allow_ui`, `missing_secrets`, `auto_suspended` (`null` or `{"since", "by"}` after an emergency stop) |
 | PUT | `/grants/{name}` | Grant definition ([grants](grants.md)) | Validated, stored as a UI grant; `400` for config grants or LAN targets outside `grants_lan_allow` |
 | DELETE | `/grants/{name}` | – | UI grants only; also ends an active instance |
 | POST | `/grants/{name}/activate` | `{"level": "read"\|"write", "ttl": "1h", "by": "who"}` | Active grant (admin activation without a request) |
 | DELETE | `/active-grants/{id}?by=who` | – | Revoked active grant |
 | POST | `/grant-requests/{id}/decide` | `{"decision": "approve"\|"read"\|"deny", "by": "who", "ttl": optional}` | The decided request; `read` downgrades a write request |
+
+### Emergency stop
+
+`POST /emergency-stop` runs these steps in this order. Every step runs even if an earlier one failed; each
+reports `ok` and, if it failed, `errors`:
+
+| Step | What it does | Result fields |
+|---|---|---|
+| `suspend_auto_approval` | Grant levels with `approval: auto` need a human until the mode is changed again | – |
+| `revoke_grants` | Revokes every active grant | `revoked` (grant names) |
+| `deny_pending` | Denies every connection waiting for approval | `denied` (`host:port`) |
+| `deny_grant_requests` | Denies every pending grant request | `denied` (grant names) |
+| `remove_internet_presets` | Removes the rules of every `category: internet` preset (`open`, `internet`) | `removed` (rule ids) |
+| `mode_deny` | Sets the mode to `deny` | `previous` (the mode before) |
+
+The suspension is stored in `grants-state.yaml` in the gateway's data volume, so it survives a restart (an
+unreadable file keeps it on). It ends when the mode changes (`PATCH /policy` or `PUT /policy` with a
+different `default`); a write that keeps `deny` does not end it. The stop is logged as one `admin` event
+(`action: emergency-stop`). The control plane relays it as `POST /api/gw/emergency-stop` and sets `by` to
+the session user.
 
 ### Event log entry
 

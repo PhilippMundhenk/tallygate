@@ -283,6 +283,26 @@ def test_revoking_a_grant_is_attributed_to_the_session_user(load):
     ]
 
 
+def test_mode_patch_and_emergency_stop_are_relayed_and_attributed(load):
+    main = load()
+    world = World()
+
+    async def body():
+        async with started(main, world) as c:
+            assert (await c.patch("/api/gw/policy", json={"default": "deny"}, headers=CSRF)).status == 200
+            r = await c.post("/api/gw/emergency-stop", json={"by": "spoofed", "skip": ["revoke"]}, headers=CSRF)
+            assert r.status == 200
+            assert (await c.post("/api/gw/emergency-stop", headers=CSRF)).status == 200  # no body
+            assert (await c.patch("/api/gw/rules/x", json={}, headers=CSRF)).status == 404
+
+    run(body())
+    assert world.seen == [
+        ("PATCH", "/gw/policy", {}, {"default": "deny"}),
+        ("POST", "/gw/emergency-stop", {}, {"by": "web:admin"}),
+        ("POST", "/gw/emergency-stop", {}, {"by": "web:admin"}),
+    ]
+
+
 def test_gateway_down(load):
     main = load()
 

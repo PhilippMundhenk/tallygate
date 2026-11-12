@@ -184,15 +184,17 @@ const POLICY_FIELDS = ["#defaultAction", "#askTimeout", "#hardDeny", "#rawPolicy
 POLICY_FIELDS.forEach((s) => $(s).addEventListener("input", () => ($(s).dataset.dirty = "1")));
 function setField(sel, value, keepEdits) {
   const el = $(sel);
-  if (keepEdits && el.dataset.dirty) { el.classList.add("stale"); el.title = "Changed elsewhere since you started editing"; return; }
+  if (keepEdits && el.dataset.dirty) { el.classList.add("stale"); el.title = "Changed elsewhere since you started editing"; return false; }
   el.value = value; delete el.dataset.dirty; el.classList.remove("stale"); el.title = "";
+  return true;
 }
+let rawBase = null;  // the policy the raw editor's text was loaded from (JSON)
 async function loadPolicy(keepEdits = false) {
   policy = await gw("GET", "/policy");
   setField("#defaultAction", policy.default, keepEdits); setField("#askTimeout", policy.ask_timeout, keepEdits);
   $("#hardDenyFloor").textContent = (policy.hard_deny_floor || []).join("  ");
   setField("#hardDeny", policy.hard_deny.join("\n"), keepEdits);
-  setField("#rawPolicy", JSON.stringify(policy, null, 2), keepEdits);
+  if (setField("#rawPolicy", JSON.stringify(policy, null, 2), keepEdits)) rawBase = JSON.stringify(policy);
   const body = $("#rulesBody"); body.innerHTML = "";
   policy.rules.forEach((r, i) => {
     const tr = document.createElement("tr");
@@ -205,16 +207,34 @@ async function loadPolicy(keepEdits = false) {
   });
   await renderQuick();
 }
+// PUT /policy replaces every rule. The browser's copy goes stale (other tab, Telegram "Always", approvals),
+// so only the raw editor and the hard deny use it, and both start from the policy as it is now.
 async function putPolicy(p) { await gw("PUT", "/policy", p); toast("Policy saved"); await loadPolicy(); }
-$("#saveMode").onclick = guard(() => putPolicy({ ...policy, default: $("#defaultAction").value, ask_timeout: +$("#askTimeout").value }));
-$("#saveHard").onclick = guard(() => {
-  return putPolicy({ ...policy, hard_deny: $("#hardDeny").value.split(/\s+/).filter(Boolean) });
+// Mode and timeout only: the rules on the gateway stay untouched.
+async function patchPolicy(change) {
+  await gw("PATCH", "/policy", change); toast("Mode saved");
+  ["#defaultAction", "#askTimeout"].forEach((s) => delete $(s).dataset.dirty);
+  await loadPolicy(true);
+}
+$("#saveMode").onclick = guard(() => patchPolicy({ default: $("#defaultAction").value, ask_timeout: Number($("#askTimeout").value) }));
+$("#saveHard").onclick = guard(async () => {
+  const fresh = await gw("GET", "/policy");
+  return putPolicy({ ...fresh, hard_deny: $("#hardDeny").value.split(/\s+/).filter(Boolean) });
 });
-$("#saveRaw").onclick = guard(() => {
+$("#saveRaw").onclick = guard(async () => {
   let p;
   try { p = JSON.parse($("#rawPolicy").value); } catch (e) { throw new Error(`Invalid JSON: ${e.message}`); }
+  const fresh = await gw("GET", "/policy");
+  if (JSON.stringify(fresh) !== rawBase) {
+    // Changed elsewhere since the text was loaded: saving it now would drop or revive rules. The text is kept;
+    // a second click replaces the policy on purpose.
+    rawBase = JSON.stringify(fresh);
+    const el = $("#rawPolicy"); el.classList.add("stale"); el.title = "Changed elsewhere since you started editing";
+    throw new Error("The policy was changed elsewhere since this text was loaded. Reload it, or click Replace policy again to overwrite.");
+  }
   return putPolicy(p);
 });
+$("#reloadRaw").onclick = guard(async () => { delete $("#rawPolicy").dataset.dirty; await loadPolicy(true); });
 $("#nrAdd").onclick = guard(async () => {
   checkMatch($("#nrKind").value, $("#nrMatch").value.trim());
   const rule = { action: $("#nrAction").value, [$("#nrKind").value]: $("#nrMatch").value.trim(), port: parsePort($("#nrPort").value) };
@@ -298,15 +318,26 @@ async function renderQuick() {
 $$("#quick [data-preset]").forEach((b) => (b.onclick = guard(() => applyPreset(b.dataset.preset, b.dataset.ttl))));
 $$("#quick [data-mode]").forEach((b) => (b.onclick = guard(async () => {
   if (b.dataset.mode === "allow" && !confirm("Allow every unknown public destination (the local network stays blocked)? Everything is still logged.")) return;
-  await putPolicy({ ...policy, default: b.dataset.mode });
+  await patchPolicy({ default: b.dataset.mode });
 })));
+const STOP_STEPS = {
+  suspend_auto_approval: "Automatic grant approval suspended", revoke_grants: "Active grants revoked",
+  deny_pending: "Waiting connections denied", deny_grant_requests: "Grant requests denied",
+  remove_internet_presets: "Internet shortcuts removed", mode_deny: "Unknown destinations blocked",
+};
+function showStopResult(r) {
+  const box = $("#qaStopResult"); box.classList.remove("hidden");
+  box.innerHTML = `<b>${r.ok ? "Emergency stop complete" : "Emergency stop incomplete: check the failed steps"}</b><ul>${r.steps.map((s) => {
+    const n = ["revoked", "denied", "removed"].map((k) => s[k]).find(Array.isArray);
+    return `<li class="${s.ok ? "ok" : "bad"}">${s.ok ? "✔" : "✖"} ${esc(STOP_STEPS[s.step] || s.step)}${n ? ` (${n.length})` : ""}` +
+      `${(s.errors || []).length ? `: ${esc(s.errors.join("; "))}` : ""}</li>`;
+  }).join("")}</ul>`;
+}
 $("#qaStop").onclick = guard(async () => {
-  if (!confirm("Emergency stop: block everything unknown, undo the internet shortcuts and revoke all active grants?")) return;
-  await gw("PUT", "/policy", { ...policy, default: "deny" });
-  for (const p of (presetInfo || []).filter((x) => x.category === "internet")) await gw("DELETE", `/presets/${p.name}`);
-  const g = await gw("GET", "/grants");
-  for (const a of g.active || []) await gw("DELETE", `/active-grants/${a.id}`);
-  toast("Emergency stop: unknown destinations are blocked"); await loadPolicy();
+  if (!confirm("Emergency stop: revoke all grants, deny everything pending, undo the internet shortcuts and block everything unknown?")) return;
+  const r = await gw("POST", "/emergency-stop", {});
+  showStopResult(r); toast(r.ok ? "Emergency stop: unknown destinations are blocked" : "Emergency stop incomplete", !r.ok);
+  await Promise.allSettled([loadPolicy(true), loadGrants(), loadPending()]);
 });
 $("#qaLan").onclick = guard(async () => {
   const g = await gw("GET", "/grants");
@@ -361,6 +392,9 @@ function grantRequestCard(r) {
 }
 function renderGrants() {
   const act = $("#activeGrants"); act.innerHTML = "";
+  const sus = grants.auto_suspended;
+  $("#autoSuspended").classList.toggle("hidden", !sus);
+  if (sus) $("#autoSuspended").textContent = `Automatic approval is suspended since the emergency stop${sus.since ? " at " + fmtDate(sus.since) : ""}: every grant request needs you. Change the mode in the Rules tab to resume it.`;
   $("#activeEmpty").classList.toggle("hidden", grants.active.length > 0);
   for (const a of grants.active) {
     const el = document.createElement("div"); el.className = "card row-between";
@@ -531,6 +565,7 @@ function connectStream() {
     setConn(true);
     if (streamOpened) {
       loadPending().catch(() => {}); loadGrants().catch(() => {});
+      if (policy) loadPolicy(true).catch(() => {});  // rule changes during the gap
       if (logLoaded) loadLog().catch(() => {});
     }
     streamOpened = true;
