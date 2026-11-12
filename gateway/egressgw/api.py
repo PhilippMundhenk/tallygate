@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from egressgw import history
+from egressgw import history, usage
 from egressgw.policy import ACTIONS, SCOPES, Decision, Policy, Rule, is_ip, load_preset, valid_hostname
 
 if TYPE_CHECKING:
@@ -237,6 +237,58 @@ def build_app(gw: Gateway) -> web.Application:
         gw.secrets.set(name, body.get("value") or None)
         gw.record(kind="admin", action="secret", reason=f"secret {name} {'set' if body.get('value') else 'removed'}")
         return _json({"names": gw.secrets.names()})
+
+    # ---------------------------------------------------------------- rule usage and suggestions (#70)
+    @routes.get("/rules/stats")
+    async def rule_stats(_):
+        rules = usage.rule_usage(gw.policy, gw.events.hit_stats(), gw.hits, time.time(), gw.stale_days)
+        return _json({"rules": rules, "stale_days": gw.stale_days})
+
+    @routes.post("/rules/cleanup")
+    async def rule_cleanup(request):
+        """Remove the given rules, but only those that are still unused (checked again here)."""
+        body = await request.json()
+        ids = body.get("ids") if isinstance(body, dict) else None
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            raise ValueError("expected {ids: [rule ids]}")
+        rules = usage.rule_usage(gw.policy, gw.events.hit_stats(), gw.hits, time.time(), gw.stale_days)
+        stale = {r["id"] for r in rules if r["stale"]}
+        removed = [i for i in dict.fromkeys(ids) if i in stale]
+        for rid in removed:
+            gw.policy.remove_rule(rid)
+        if removed:
+            gw.save_policy(_by(request), f"unused rules removed: {', '.join(removed)}")
+            gw.record(kind="admin", action="rule-", reason=f"unused rules removed: {', '.join(removed)}")
+        return _json({"removed": removed, "kept": [i for i in ids if i not in removed]})
+
+    def _suggestions() -> list[dict]:
+        since = time.time() - gw.suggest_days * 86400
+        return usage.suggestions(gw.events.approvals_since(since), gw.policy, gw.events.dismissed(), gw.suggest_min)
+
+    @routes.get("/suggestions")
+    async def suggestions(_):
+        return _json({"suggestions": _suggestions(), "min_approvals": gw.suggest_min, "window_days": gw.suggest_days})
+
+    @routes.post("/suggestions/accept")
+    async def accept_suggestion(request):
+        """Add the permanent rule of a current suggestion (built here, not taken from the request)."""
+        key = str((await request.json()).get("key", ""))
+        s = next((s for s in _suggestions() if s["key"] == key), None)
+        if s is None:
+            return _json({"error": "no such suggestion (already accepted or dismissed?)"}, 404)
+        note = f"suggested: approved {s['count']}x in {gw.suggest_days} days"
+        rule = gw.policy.add_rule(Rule(**s["rule"], note=note, source="suggestion"))
+        gw.save_policy(_by(request), f"suggestion accepted: rule {rule.id} (allow {rule.host})")
+        gw.record(kind="admin", action="rule+", host=rule.host, reason=json.dumps(rule.to_dict()))
+        return _json(rule.to_dict(), 201)
+
+    @routes.post("/suggestions/dismiss")
+    async def dismiss_suggestion(request):
+        key = str((await request.json()).get("key", ""))
+        if not key:
+            raise ValueError("expected {key}")
+        gw.events.dismiss(key)
+        return _json({"dismissed": key})
 
     # ---------------------------------------------------------------- policy history, export, import
     @routes.get("/policy/history")

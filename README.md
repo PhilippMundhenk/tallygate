@@ -41,6 +41,8 @@ only then let through, turned back, or held for you to decide.
   read-only hosts (e.g. the npm registry) refuse uploads.
 - **Operator UI.** Approvals, live log, rules editor with dry-run test, presets, browser consoles (Remote
   Control, bash, claude), and a setup wizard for GitHub, Claude login, git and Remote Control.
+- **Rule usage.** Hit counters per rule, unused rules offered for removal, and a permanent rule suggested when
+  you keep approving the same destination for an hour.
 - **Policy history.** Every change is a version with author and time: see what changed since yesterday,
   restore an earlier version, or export the policy and UI grants as one YAML file for another host.
 - **Phone approvals** via Telegram buttons or Matrix reactions (outbound polling only, no webhooks).

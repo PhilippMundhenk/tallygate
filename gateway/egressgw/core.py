@@ -227,6 +227,11 @@ class Gateway:
         self.readonly = parse_readonly(self.config.get("readonly") or [])
         self.strip_headers = [str(h) for h in self.config.get("inject_strip_headers") or ["Authorization", "Cookie"]]
         self.max_pending = int(self.config.get("max_pending", 10))
+        # rule usage (#70): matches per rule id since the last flush to the event log, as [count, last ts]
+        self.hits: dict[str, list] = {}
+        self.stale_days = int(self.config.get("rule_stale_days", 30))
+        self.suggest_min = int(self.config.get("suggest_min_approvals", 3))
+        self.suggest_days = int(self.config.get("suggest_window_days", 7))
         self._dups: dict[tuple, list] = {}
         self.grants = Grants(self.config, DATA_DIR)
         # server connection id -> (active grant id, host the agent asked for, target)
@@ -303,6 +308,7 @@ class Gateway:
         now = time.time()
         self.neg_cache = {k: v for k, v in self.neg_cache.items() if v > now}
         self._flush_dups(now)
+        self.flush_hits()
         self.events.enforce_cap()
         expired, timed_out = self.grants.prune()
         for a in expired:
@@ -355,6 +361,20 @@ class Gateway:
         rep = {k: v for k, v in ev.items() if k not in ("id", "ts")}
         rep["reason"] = f"{ev.get('reason')} (repeated {count}x)"
         self.publish({"type": "event", "event": self.events.add(rep)})
+
+    def _hit(self, dec: Decision) -> None:
+        """Count a match of a rule (hot path: one dict update, flushed to the event log by housekeeping)."""
+        if dec.rule_id and dec.rule_id != "hard_deny":
+            h = self.hits.get(dec.rule_id)
+            if h is None:
+                self.hits[dec.rule_id] = [1, time.time()]
+            else:
+                h[0] += 1
+                h[1] = time.time()
+
+    def flush_hits(self) -> None:
+        hits, self.hits = self.hits, {}
+        self.events.flush_hits(hits, [r.id for r in self.policy.rules])
 
     def save_policy(self, by: str = "api", what: str = "policy changed") -> None:
         self.policy.save(self.policy_path)
@@ -439,6 +459,10 @@ class Gateway:
                 if not p.future.done():
                     p.future.set_result(dec)
                 self.publish({"type": "resolved", "id": p.id, "action": rule.action, "scope": scope, "by": by})
+                try:  # for rule suggestions; the decision itself is already made
+                    self.events.add_approval(p.host, p.port, scope, by)
+                except Exception:
+                    log.exception("approval not stored for rule suggestions")
                 return {"rule": rule.to_dict()}
         raise KeyError(pending_id)
 
@@ -586,6 +610,7 @@ class Gateway:
             if hint := self._grant_hint(host, port):
                 dec = self.policy.evaluate(host, port, ips, proto)
                 if dec.action != "allow":
+                    self._hit(dec)
                     return block(f"{dec.reason}; {hint}", ips)
             dec = await self.decide(host, port, ips, proto, client)
         else:
@@ -603,10 +628,12 @@ class Gateway:
             pre = self.policy.evaluate_name(host, port)
             hint = self._grant_hint(host, port)
             if hint and pre.action != "allow":
+                self._hit(pre)
                 return block(f"{pre.reason}; {hint}")
             if pre.action == "ask":
                 pre = await self.ask(host, port, [], proto, client)
             if pre.action != "allow":
+                self._hit(pre)
                 return block(f"{pre.reason} (not resolved)")
             # 2) resolve and re-check with IPs (hard deny, CIDR rules); pin to the checked IP
             try:
@@ -617,6 +644,7 @@ class Gateway:
                 return block("no address")
             dec = await self.decide(host, port, ips, proto, client)
         reason = dec.reason
+        self._hit(dec)
         if dec.action != "allow":
             data.server.error = f"egress policy: blocked ({dec.reason})"
             if hint := self._grant_hint(host, port):

@@ -74,6 +74,9 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - **Policy history:** every change to the policy is a version with time, author and what changed. The Rules
   tab shows a diff between any two versions and restores one; the policy and the UI grants can be exported
   as one YAML file and imported again, validated like any policy change (#71).
+- **Rule usage:** hit counters and the last match per rule, sortable and filterable in the Rules tab; permanent
+  rules that did not match for `rule_stale_days` are offered for removal, and destinations you keep approving
+  for a limited time are offered as a permanent rule (#70).
 
 ### Changed
 - **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie

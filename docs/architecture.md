@@ -248,7 +248,7 @@ Concurrent connections to the same `host:port` share one pending request (one no
 | Data | Location | Owner | Notes |
 |---|---|---|---|
 | Policy | `gateway-data`: `policy.yaml` | egress-gw (uid 10001) | Written atomically; seeded from the `baseline` preset on first start. |
-| Event log | `gateway-data`: `events.db` | egress-gw | SQLite/WAL, pruned after `log_keep_days`. |
+| Event log | `gateway-data`: `events.db` | egress-gw | SQLite/WAL, pruned after `log_keep_days`. Also holds the per-rule hit counters (counted in memory, written every 15 s), the approvals of the last `log_keep_days` and dismissed suggestions. |
 | Policy history | `gateway-data`: `policy-history.db` | egress-gw | Every saved policy as a version (time, author, what), the last `policy_history_keep`. Same content as `policy.yaml`: no floor, no secrets. |
 | Secrets | `gateway-data`: `secrets.json` | egress-gw | Mode 0600, never returned by the API. |
 | Gateway CA | `gateway-data`: `mitmproxy/` | egress-gw | Public cert exported to the `ca` volume for the agent. |

@@ -68,6 +68,9 @@ create a rule for exactly that host:port.
 - **Hard deny**: CIDRs that are never reachable. The built-in floor is read-only here (change it only in the
   gateway config file); you can add more, e.g. your Docker host's public IP.
 - **Raw policy JSON**: edit everything at once (validated server-side).
+- **Rule usage and suggestions**: how often each rule matched and when it last did (sortable, filterable),
+  unused rules to clean up, and permanent rules for destinations you keep approving for a limited time. See
+  [Rule usage](#rule-usage).
 - **History, export and import**: every version of the policy, a diff between any two, *Restore*, and the
   policy with your UI grants as one YAML file. See [History and rollback](#history-and-rollback).
 
@@ -110,6 +113,23 @@ no rule or shortcut can open it. This is deliberate: an agent with broad access 
 risk tallygate exists for. To let the agent reach one device, define a [grant](grants.md): exact host and port,
 read or write, a time limit, and your approval each time. Grants created in the UI may only reach addresses
 inside `grants_lan_allow` in the gateway config; the button explains what to add when that list is empty.
+
+### Rule usage
+
+*Rules → Rule usage and suggestions* shows, for every rule, how many connections it decided and when it last
+matched. The counts are kept in the gateway's memory and written to the event log every 15 seconds, so they
+cost nothing noticeable per connection. Click a column header to sort (again to reverse), type to filter, or
+show only unused or only matched rules.
+
+- **Make it permanent?** When you allowed the same destination for 2 minutes or 1 hour at least
+  `suggest_min_approvals` (3) times in `suggest_window_days` (7) days, and no permanent rule covers it, the card
+  offers a permanent allow rule. Several hosts of one domain on the same port become one `*.domain` rule (the
+  domain comes from the Public Suffix List, like *Always (*.domain)*). *Dismiss* hides a suggestion for
+  `log_keep_days`.
+- **Unused rules**: permanent rules that did not match anything for `rule_stale_days` (30) days, counted from
+  when the gateway first saw the rule. Rules with a time limit are never offered, they end by themselves. Tick
+  the ones to remove and click *Remove selected*; the gateway checks again that each one is still unused, and
+  the policy history keeps them in case you need one back.
 
 ### History and rollback
 

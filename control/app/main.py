@@ -74,6 +74,10 @@ GW_ALLOW = [
     ("POST", r"/emergency-stop"),
     ("POST", r"/rules"),
     ("DELETE", r"/rules/[A-Za-z0-9_:-]+"),  # template rules are <preset>:<id>
+    ("GET", r"/rules/stats"),
+    ("POST", r"/rules/cleanup"),
+    ("GET", r"/suggestions"),
+    ("POST", r"/suggestions/(accept|dismiss)"),
     ("GET", r"/pending"),
     ("POST", r"/pending/[a-f0-9]+/decide"),
     ("GET", r"/events"),

@@ -39,6 +39,15 @@ class EventLog:
                 host TEXT, port INTEGER, ips TEXT, action TEXT, reason TEXT, extra TEXT)"""
         )
         self.db.execute("CREATE INDEX IF NOT EXISTS events_ts ON events(ts)")
+        # per-rule hit counters (flushed from memory by housekeeping) and approvals, for suggestions (#70)
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS rule_hits(rule_id TEXT PRIMARY KEY, hits INTEGER NOT NULL, last REAL, since REAL NOT NULL)"
+        )
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS approvals(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,"
+            " host TEXT NOT NULL, port INTEGER NOT NULL, scope TEXT NOT NULL, by TEXT)"
+        )
+        self.db.execute("CREATE TABLE IF NOT EXISTS dismissed(key TEXT PRIMARY KEY, ts REAL NOT NULL)")
         self.keep_days = keep_days
         self.max_events = max_events
         self._last_prune = 0.0
@@ -65,6 +74,49 @@ class EventLog:
             self._last_prune = ev["ts"]
             self.db.execute("DELETE FROM events WHERE ts < ?", (ev["ts"] - self.keep_days * 86400,))
         return ev
+
+    # ---------------------------------------------------------------- rule hits (#70)
+    def flush_hits(self, hits: dict[str, list], rule_ids: list[str], now: float | None = None) -> None:
+        """Add in-memory counts ({rule id: [count, last ts]}) and start the clock for rules seen the first time.
+        Counters of rules that are gone and were not used for log_keep_days are forgotten."""
+        now = now or time.time()
+        self.db.executemany(
+            "INSERT OR IGNORE INTO rule_hits(rule_id, hits, last, since) VALUES(?, 0, NULL, ?)",
+            [(rid, now) for rid in rule_ids],
+        )
+        self.db.executemany(
+            "INSERT INTO rule_hits(rule_id, hits, last, since) VALUES(?, ?, ?, ?) ON CONFLICT(rule_id) DO UPDATE"
+            " SET hits = hits + excluded.hits, last = MAX(COALESCE(last, 0), excluded.last)",
+            [(rid, n, last, now) for rid, (n, last) in hits.items()],
+        )
+        old = now - self.keep_days * 86400
+        ids = list(rule_ids)
+        marks = ",".join("?" * len(ids))
+        self.db.execute(
+            f"DELETE FROM rule_hits WHERE rule_id NOT IN ({marks}) AND COALESCE(last, since) < ?",  # noqa: S608
+            [*ids, old],
+        )
+        self.db.execute("DELETE FROM approvals WHERE ts < ?", (old,))
+        self.db.execute("DELETE FROM dismissed WHERE ts < ?", (old,))
+
+    def hit_stats(self) -> dict[str, dict]:
+        rows = self.db.execute("SELECT rule_id, hits, last, since FROM rule_hits")
+        return {r[0]: {"hits": r[1], "last": r[2], "since": r[3]} for r in rows}
+
+    def add_approval(self, host: str, port: int, scope: str, by: str) -> None:
+        self.db.execute(
+            "INSERT INTO approvals(ts, host, port, scope, by) VALUES(?,?,?,?,?)", (time.time(), host, port, scope, by)
+        )
+
+    def approvals_since(self, ts: float) -> list[tuple[str, int, str, float]]:
+        """(host, port, scope, ts) of every approval since ts."""
+        return list(self.db.execute("SELECT host, port, scope, ts FROM approvals WHERE ts >= ? ORDER BY ts", (ts,)))
+
+    def dismiss(self, key: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO dismissed(key, ts) VALUES(?, ?)", (key[:300], time.time()))
+
+    def dismissed(self) -> set[str]:
+        return {r[0] for r in self.db.execute("SELECT key FROM dismissed")}
 
     def enforce_cap(self) -> None:
         """Hard row cap on top of the age-based retention (disk-fill protection)."""

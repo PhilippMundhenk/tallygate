@@ -73,3 +73,7 @@ button.armed{outline:2px solid var(--amber);outline-offset:2px}.confirm-q{color:
 .cellbtns{display:flex;gap:4px;flex-wrap:wrap}#historyBox label.inline select{flex:1;min-width:0;margin:0}
 label.filebtn{display:inline-block;margin:0;background:#2c313c;color:var(--fg);border-radius:6px;padding:7px 12px;cursor:pointer}
 label.filebtn input{position:absolute;opacity:0;width:1px;height:1px}label.filebtn:focus-within{outline:2px solid #93c5fd;outline-offset:2px}
+/* rule usage (#70) */
+th button.sort{background:none;color:inherit;padding:0;font:inherit;font-size:12px}th[aria-sort=ascending] button.sort::after{content:" ▲"}th[aria-sort=descending] button.sort::after{content:" ▼"}
+.suggest{border:1px solid var(--blue);border-radius:8px;padding:8px 12px;margin:8px 0}.suggest p{margin:0 0 6px}
+ul.checklist{list-style:none;padding:0;margin:6px 0 10px}ul.checklist label{display:flex;gap:6px;align-items:baseline;margin:3px 0;color:var(--fg);overflow-wrap:anywhere}
