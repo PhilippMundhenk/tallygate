@@ -221,7 +221,7 @@ def _per_ip_lockout() -> bool:
 @web.middleware
 async def security(request: web.Request, handler):
     path = request.path
-    if path in ("/login", "/healthz") or path.startswith("/static/login"):
+    if path in ("/login", "/healthz", "/static/logo.svg", "/static/favicon.svg") or path.startswith("/static/login"):
         resp = await handler(request)
     else:
         user = read_session(request)
