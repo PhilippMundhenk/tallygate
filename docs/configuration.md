@@ -95,11 +95,37 @@ Every key with an example. The file in the repository lists them all, commented 
 | `log_max_events` | `500000` | `100000` | Hard cap on stored events. |
 | `max_pending` | `10` | `5` | Open approvals at once; more unknown destinations are denied immediately. |
 | `hard_deny_floor` | built-in list | `[203.0.113.7/32]` | **Added** to the built-in hard deny (your VPS's public IP). |
-| `readonly` | `[registry.npmjs.org]` | `[registry.npmjs.org, pypi.org]` | Hosts where writes (PUT/PATCH/DELETE) are refused. |
+| `readonly` | npm, Yarn, crates.io, Docker Hub, GHCR, Quay, Hugging Face | `[registry.npmjs.org, {host: ghcr.io, post_is_write: true}]` | Hosts where writes are refused: PUT/PATCH/DELETE, and with `post_is_write` also POST (except `read_posts`). See [Read-only hosts](#read-only-hosts). |
 | `inject` | GitHub entries | see below | Credential injection per host. |
 | `inject_strip_headers` | `[Authorization, Cookie]` | `[Authorization, Cookie, X-Api-Key]` | Agent headers always removed on inject hosts. |
 | `services` | `[]` | `[{name: pg, listen: 15432, target: db.example.org:5432}]` | TCP service ports. |
 | `grants`, `grants_*`, `grant_*` | – | see [Grants](#grants) and [grants.md](grants.md) | Grants. |
+
+### Read-only hosts
+
+TLS to a read-only host is intercepted (the agent must trust the gateway CA, which the agent image does), and
+writes are refused with `403`, so a package registry cannot be used to publish data. An entry is a host or
+`*.domain` (the domain and all its subdomains), or a mapping:
+
+| Key | Meaning |
+|---|---|
+| `host` | Host or `*.domain`. |
+| `post_is_write` | `true` = POST is refused too. Default `false`, because some registries read with POST (`npm audit`). |
+| `read_posts` | With `post_is_write`: path patterns (glob, `*` matches `/` too) where POST only reads and stays allowed. |
+
+The default list and why:
+
+| Host | POST | Why |
+|---|---|---|
+| `registry.npmjs.org`, `registry.yarnpkg.com` | allowed | Publish is a PUT; `npm audit` / `yarn audit` are POSTs. |
+| `crates.io` | refused | Publish, yank and owner changes are PUT/DELETE; Cargo reads with GET. |
+| `registry-1.docker.io`, `ghcr.io`, `*.quay.io` | refused | A push starts with `POST /v2/<name>/blobs/uploads/`; pulls are GET/HEAD. Token requests (`auth.docker.io`, `ghcr.io/token`) are GETs. |
+| `huggingface.co` | refused, except `read_posts` | Uploads and commits are POSTs. Reads that POST: `paths-info`, the git-lfs download batch and `git-upload-pack` (clone/fetch). |
+
+Not covered: Hugging Face's storage hosts (`*.hf.co`, Xet) accept chunk uploads by POST. Without a commit on
+`huggingface.co` such data is not attached to any repository, but it reaches Hugging Face's storage. Leave
+the Hugging Face template off if that matters to you. The templates are pull-only only as long as their
+hosts are in this list: a `gateway.yaml` of your own replaces the whole list.
 
 
 ```yaml
@@ -110,6 +136,8 @@ max_pending: 10            # open approvals at once; further unknown destination
 # hard_deny_floor: [...]   # ADDED to the built-in hard deny below (cannot remove from it). Only this file can change it.
 readonly:                  # TLS intercepted, PUT/PATCH/DELETE refused (e.g. blocks `npm publish`)
   - registry.npmjs.org
+  - host: ghcr.io            # POST refused too (an image push starts with a POST)
+    post_is_write: true
 # inject_strip_headers: [Authorization, Cookie]   # always removed from agent requests to inject hosts
 
 inject:                    # credential injection (TLS interception only for these exact hosts)

@@ -96,6 +96,10 @@ All notable changes to this project are documented here. The format follows
   CDN an allowed name gave access to other sites. TLS is now passed through only when the SNI matches the
   CONNECT name (a missing SNI is refused; for an IP literal an SNI name must be allowed by the rules), and
   HTTP requests with another `Host` get `403` (#57).
+- The templates opened publish paths around `readonly`: Yarn, crates.io, the container registries and
+  Hugging Face were writable. They are now read-only by default; `readonly` entries can refuse POST as
+  well (`post_is_write`, with `read_posts` exceptions) and take `*.domain` patterns. The container template
+  is called "pull only" (#58).
 - The agent could reach services on the Docker host that listen on all interfaces through the host's
   address on `agent-net` (`172.31.10.1`), bypassing the gateway. `agent-net` and `control-net` no longer
   give the host an address (`com.docker.network.bridge.inhibit_ipv4`), and `bypass.sh` checks it with a

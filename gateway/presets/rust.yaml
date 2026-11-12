@@ -2,7 +2,7 @@
 # Apply on top of your policy in the UI (Rules -> Quick actions) or with POST /presets/rust.
 title: "Rust (crates.io, rustup)"
 category: template
-description: "Cargo's registry and downloads, and rustup toolchains."
+description: "Cargo's registry and downloads, and rustup toolchains. Publishing is refused: crates.io is read-only in the gateway config."
 rules:
   - {id: rust-index, action: allow, host: "index.crates.io", port: 443}
   - {id: rust-crates, action: allow, host: "crates.io", port: 443}

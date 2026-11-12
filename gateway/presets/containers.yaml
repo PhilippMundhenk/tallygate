@@ -1,8 +1,9 @@
-# Container registries (pull): Docker Hub, GitHub Container Registry and Quay, for tools like crane or skopeo.
+# Container registries (pull only): Docker Hub, GitHub Container Registry and Quay, for tools like crane
+# or skopeo. Pushing is refused because the registries are `readonly` in the default gateway.yaml.
 # Apply on top of your policy in the UI (Rules -> Quick actions) or with POST /presets/containers.
-title: "Container registries (pull)"
+title: "Container registries (pull only)"
 category: template
-description: "Docker Hub, GitHub Container Registry and Quay, for tools like crane or skopeo."
+description: "Pull images from Docker Hub, GitHub Container Registry and Quay (crane, skopeo). Pushing is refused: the registries are read-only in the gateway config."
 rules:
   - {id: oci-dockerhub, action: allow, host: "registry-1.docker.io", port: 443}
   - {id: oci-dockerhub-auth, action: allow, host: "auth.docker.io", port: 443}
