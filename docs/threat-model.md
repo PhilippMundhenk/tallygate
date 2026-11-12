@@ -59,12 +59,13 @@ service, **E**levation of privilege.
 | # | Threat | STRIDE | Mitigation | Verified by |
 |---|---|---|---|---|
 | T1 | Agent connects directly to the internet, bypassing the proxy | E, I | `agent-net` is `internal` (no route); agent attached to no other network | `bypass.sh` (direct IP/name), structure checks |
+| T1a | Agent connects directly to services on the Docker host through the host's address on `agent-net` | E, I | The bridge gets no IPv4 address (`com.docker.network.bridge.inhibit_ipv4`), so the host is not a peer on `agent-net` | `bypass.sh` (listener in the host namespace, #7) |
 | T2 | Agent reaches LAN/host/metadata through the proxy (incl. via public names resolving to private IPs) | E, I | Hard deny on literal **and resolved** IPs, before rules, not approvable; immutable floor (incl. NAT64/6to4/Teredo); service exceptions only on their own port | unit + e2e (`lan.test`, floor), `bypass.sh` |
 | T3 | DNS rebinding between check and connect | E | Upstream address pinned to the checked IP | design + e2e (pinned connections) |
 | T4 | Data exfiltration via DNS queries (agent's own lookups **or** names it asks the proxy for) | I | Agent DNS → gateway → NXDOMAIN, logged; the gateway resolves a name only after it is allowed/approved | e2e DNS + "denied names are never resolved" |
 | T5 | IPv6 side channel (incl. link-local on internal networks) | E, I | IPv6 disabled on all networks and by sysctl in every container; IPv6 targets subject to hard deny/policy | `bypass.sh`, self-test |
 | T6 | Agent steals the GitHub token | I | Token only in gateway; injected in flight; never returned by API; placeholders in agent | e2e (secrets write-only, no token in logs) |
-| T7 | Agent obtains injected token by spoofing SNI/Host towards another server | S, I | Injection requires CONNECT target = SNI = Host = configured host; plaintext never injected | e2e SNI-spoofing test |
+| T7 | Agent obtains injected token by spoofing SNI/Host towards another server | S, I | Injection requires CONNECT target = Host = configured host; TLS to inject/read-only hosts is always intercepted (no SNI-based passthrough); plaintext never injected | e2e SNI tests (both directions) |
 | T8 | MITM of intercepted upstream (gateway trusts a bad cert) | S, I | Upstream TLS verified against the configured hostname | e2e bad-cert test |
 | T9 | Agent changes policy (calls gateway API or control UI) | E | API bound to control-net only + bearer token; UI bound to mgmt only; agent on neither | `bypass.sh`, self-test |
 | T10 | Agent uses the Docker socket to escape | E | No docker.sock in any container | `bypass.sh` structure check |
@@ -84,12 +85,15 @@ service, **E**levation of privilege.
 | T24 | Agent uses its *own* account on an allowed credential host (token/cookie) to exfiltrate | I | Agent `Authorization`/`Cookie` stripped on inject hosts, also before a secret is set | e2e (TG-05) |
 | T25 | Exfiltration by publishing to a package registry (`npm publish`) | I | `readonly` hosts: writes (PUT/PATCH/DELETE) refused | e2e (TG-11) |
 | T26 | Disk/log flood by a looping or hostile agent | D | Identical events coalesced; hard row cap; retention | e2e (TG-09) |
-| T27 | A compromised control plane (or UI session) removes LAN protection | E | Hard-deny floor only in the read-only config file; API can only add | unit + e2e (TG-03) |
+| T27 | A compromised control plane (or UI session) removes LAN protection | E | Hard-deny floor only in the read-only config file; the configured floor extends the built-in list (never replaces it); API can only add | unit + e2e (TG-03, #11) |
 | T28 | Agent abuses an approved grant beyond its intent (other paths, other vhosts on the same IP, writes on read, WebSocket, raw TCP on an HTTP port) | E, T | Per-request checks: Host == granted host, canonical path match (no `..`, `//`, encoded separators), safe methods + no upgrade on read, non-HTTP cut; pinned IP | unit + e2e grants tests |
 | T29 | Agent talks the human into a broad grant (misleading reason, request flooding) | S | Only operator-defined grants can be requested; reason sanitised and labelled unverified; write can be downgraded to read; max 3 pending, rate-limited API | e2e grants + notification tests |
 | T30 | UI compromise defines a grant to arbitrary LAN hosts | E | UI grants may use `lan` only inside `grants_lan_allow` (config file); `grants_never` always applies | unit + e2e |
 | T31 | Self-signed LAN service impersonated on the path | S, I | Leaf certificate pinned by SHA-256 (`tls_fingerprint`); disabling verification needs an explicit setting and UI confirmation | e2e pinned/badpin |
 | T32 | Access outlives the task | E | Grants expire (≤ 7 days, capped per grant), are revocable from UI/Telegram/Matrix, end on restart; open HTTP connections are re-checked per request | e2e revoke test |
+| T33 | An internal error (broken config entry, full disk, locked event log) lets a connection through unchecked | E, I | Every mitmproxy hook fails closed: an exception refuses the connection/flow; the error is set before the event is recorded; CIDRs are validated at startup (the gateway does not start otherwise) | e2e (`test_fail_closed.py`) |
+| T34 | A compromised UI session or API token defines a grant that injects a stored secret into requests to a host of its choosing | I | `inject` and `tls_verify: false` only in config-file grants; UI/API grants with them are rejected | unit + e2e (#12) |
+| T35 | Rule bypass through odd notation: IPv4-mapped IPv6 literals (`[::ffff:127.0.0.1]`) or a null/garbled port that matches every port | E | Mapped addresses normalised in hard deny, rules, approvals and grants; ports validated strictly in the API and the UI | unit + e2e (#13) |
 
 ## Residual risks
 

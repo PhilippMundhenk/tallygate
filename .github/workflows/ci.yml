@@ -14,29 +14,30 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  TTYD_VERSION: "1.7.7"
-  TTYD_SHA256: "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55"
-
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: { python-version: "3.13" }
-      - run: pip install ruff==0.16.9 shellcheck-py
+      - run: pip install $(grep -E '^(ruff|shellcheck-py)==' requirements-dev.txt)   # versions pinned there
       - run: make lint
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: { python-version: "3.13", cache: pip, cache-dependency-path: "**/requirements*.txt" }
       - run: pip install -r requirements-dev.txt
       - name: Install ttyd (checksum-verified) for the web-console test
         run: |
+          # same version and checksum as the agent image (single source: agent/Dockerfile)
+          TTYD_VERSION=$(sed -n 's/^ARG TTYD_VERSION=//p' agent/Dockerfile)
+          TTYD_SHA256=$(sed -n 's/^ARG TTYD_SHA256_AMD64=//p' agent/Dockerfile)
           curl -fsSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"
           echo "${TTYD_SHA256}  /usr/local/bin/ttyd" | sha256sum -c -
           chmod +x /usr/local/bin/ttyd
@@ -52,7 +53,7 @@ jobs:
       COMPOSE_FILE: compose.yaml:compose.build.yaml
       RC_ENABLE: "0"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker compose build
       - run: docker compose up -d
       - name: Wait for gateway health
@@ -79,7 +80,8 @@ jobs:
 
   images:
     # Multi-arch images on GHCR: :main and :sha-… from main, :X.Y.Z / :X.Y / :latest from v* tags.
-    if: github.event_name != 'pull_request'
+    # Everything else (pull requests, manual runs on other branches, e.g. the Claude Code update branch)
+    # builds linux/amd64 only and pushes nothing, which tests the Dockerfiles and these actions.
     needs: [integration]
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -94,16 +96,17 @@ jobs:
           - { image: tallygate-control, context: control, file: control/Dockerfile }
           - { image: tallygate-agent, context: agent, file: agent/Dockerfile }
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
@@ -112,18 +115,45 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          platforms: linux/amd64,linux/arm64
-          push: true
+          platforms: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
           provenance: true
           sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  image-scan:
+    # Known vulnerabilities in the published images. Reports only (does not fail the build) for now.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    needs: [images]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [tallygate-gateway, tallygate-control, tallygate-agent]
+    steps:
+      - id: ref
+        # image names must be lower case; the images job tags type=sha as sha-<7 characters>
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${{ matrix.image }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.ref.outputs.image }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -133,8 +163,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: softprops/action-gh-release@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: v
+        # image tags carry no "v": v0.4.0 -> 0.4.0 and 0.4
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           generate_release_notes: true
           files: |
@@ -143,5 +178,5 @@ jobs:
             config/gateway.yaml
             tests/integration/bypass.sh
           body: |
-            Images: `ghcr.io/${{ github.repository_owner }}/tallygate-{gateway,control,agent}:${{ github.ref_name }}` (linux/amd64, linux/arm64).
+            Images: `ghcr.io/${{ steps.v.outputs.owner }}/tallygate-{gateway,control,agent}:${{ steps.v.outputs.version }}` (linux/amd64, linux/arm64).
             Install or upgrade: see the [README](https://github.com/${{ github.repository }}#quick-start) and [CHANGELOG](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md).

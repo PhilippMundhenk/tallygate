@@ -9,6 +9,7 @@
 - [First-time setup](#first-time-setup)
 - [Day-to-day](#day-to-day)
 - [Upgrades](#upgrades)
+- [Resource limits](#resource-limits)
 - [Backup and restore](#backup-and-restore)
 - [Monitoring](#monitoring)
 - [Troubleshooting](#troubleshooting)
@@ -18,8 +19,8 @@
 ## Requirements
 
 - Linux host or VM with Docker Engine ≥ 25 and the Compose plugin (amd64 or arm64).
-- ~6 GB free disk for images plus your workspace. Keep an eye on the root filesystem: a full disk makes
-  Claude Code fail with `ENOSPC` in confusing places.
+- ~6 GB free disk for images plus your workspace. Keep an eye on the disk: see
+  [resource limits](#resource-limits).
 - A claude.ai subscription (Pro/Max/Team/Enterprise) for Remote Control. API keys don't work with Remote
   Control.
 - Recommended: a reverse proxy with TLS and SSO (Caddy, Traefik, nginx + Authelia/Authentik/oauth2-proxy).
@@ -129,7 +130,12 @@ whole host. That is acceptable for `X-Forwarded-For` on a single-user host, but 
 `TRUST_PROXY_AUTH_HEADER`: then use the [safe setup for an authenticating proxy](#authenticating-proxy) below.
 
 If the Docker host has a public IP (VPS), add it to `hard_deny_floor` in `config/gateway.yaml` so the agent
-cannot reach host services through the egress path.
+cannot reach host services through the egress path. Entries there are added to the built-in list
+(RFC 1918, loopback, metadata, ...), which always stays in force:
+
+```yaml
+hard_deny_floor: [203.0.113.7/32]   # your host's public IP; the built-in ranges still apply
+```
 
 Caddy on the host, with SSO in front of the built-in password:
 
@@ -234,12 +240,30 @@ Then clone repositories in the *bash* console: `gh repo clone owner/repo /worksp
 |---|---|
 | tallygate (Compose) | Read the [CHANGELOG](../CHANGELOG.md) → `docker compose pull && docker compose up -d` → self-test or `bash bypass.sh`. Download the new `compose.yaml` when the changelog says so. |
 | tallygate (from source) | `git pull` → read `CHANGELOG.md` → `make up` → `make bypass-test`. |
-| Claude Code | Part of the agent image, which has no auto-updater by design: update tallygate. From source, set `CLAUDE_VERSION` in `.env` and run `make up`. |
+| Claude Code | Part of the agent image, which has no auto-updater by design. New Claude Code versions arrive as tallygate patch releases: update tallygate. From source, set `CLAUDE_VERSION` in `.env` and run `make up`. |
 | Base images / dependencies | Published images are rebuilt for every release. From source: `docker compose -f compose.yaml -f compose.build.yaml build --pull && make up`. |
 
 Running sessions are reconnected by Remote Control after a restart if you're back within about 4 hours.
 
-## Backup and restore
+## Resource limits
+
+The agent is limited to `AGENT_MEM_LIMIT` (6 GB) of memory, 1024 processes and a 1 GB `/tmp`. CPU is unlimited
+by default; set `AGENT_CPUS` (e.g. `2`) so a busy or looping agent leaves CPU for the gateway, the UI and the
+host.
+
+Disk is the limit Docker does not enforce. The workspace and the agent home grow without bound, and by default
+they share a filesystem with Docker itself (`/var/lib/docker`) and the gateway's event log. A runaway or
+hostile agent can fill it, and then Claude Code fails with `ENOSPC` in confusing places and other containers
+on the host suffer too. On a host that runs more than tallygate:
+
+- Put the workspace on its own filesystem or a dataset with a quota (LVM volume, ZFS/btrfs dataset, a loop
+  file) and point `WORKSPACE` (and `AGENT_HOME`) there. Keep `GATEWAY_DATA` on a different filesystem, so the
+  gateway can still log and decide while the agent's disk is full.
+- Alternatively give Docker's data root its own filesystem.
+- Monitor free space; `docker system df` shows what Docker uses.
+
+The gateway's event log is capped by `log_max_events` and `log_keep_days`, and identical events are coalesced.
+
 
 Back up the volumes (or the directories in `GATEWAY_DATA`, `AGENT_HOME`, `WORKSPACE`), plus `.env` and your
 `gateway.yaml` if you have them:

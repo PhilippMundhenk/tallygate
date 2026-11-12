@@ -35,9 +35,10 @@ All variables are optional. Secrets are created on first start when they are not
 | `RC_ENABLE` | `1` | Start `claude remote-control` automatically in the `rc` tmux session. |
 | `RC_ARGS` | – | Extra arguments for `claude remote-control`, e.g. `--spawn worktree`. |
 | `AGENT_PERMISSION_MODE` | `bypassPermissions` | Claude Code permission mode for Remote Control and the `claude` console. Seeded into `~/.claude/settings.json` on first start. |
-| `CLAUDE_VERSION` | `2.1.304` | Only when building from source: Claude Code npm version baked into the agent image (no auto-updater). |
+| `CLAUDE_VERSION` | pinned in `agent/Dockerfile` | Only when building from source: Claude Code npm version baked into the agent image (no auto-updater). |
 | `AGENT_EXTRA_PACKAGES` | – | Only when building from source: extra Debian packages for the agent image, e.g. `build-essential golang-go`. With published images, use a [custom agent image](operations.md#custom-agent-image). |
 | `AGENT_MEM_LIMIT` | `6g` | Memory limit of the agent container. |
+| `AGENT_CPUS` | `0` | CPU limit of the agent container (e.g. `2`); `0` means no limit. See [resource limits](operations.md#resource-limits). |
 | `TELEGRAM_BOT_TOKEN` | – | Bot token from @BotFather. Enables Telegram approvals together with the chat ID. |
 | `TELEGRAM_CHAT_ID` | – | Chat (user or group) that receives approval requests. |
 | `TELEGRAM_ALLOWED_USER_IDS` | – | **Required** for Telegram: comma-separated user IDs allowed to decide. Without it Telegram approvals stay disabled. |
@@ -53,7 +54,7 @@ initial_preset: baseline   # preset used to create policy.yaml on first start
 log_keep_days: 30          # event log retention
 log_max_events: 500000     # hard cap on stored events; identical events within 2 s are counted, not stored
 max_pending: 10            # open approvals at once; further unknown destinations are denied immediately
-# hard_deny_floor: [...]   # immutable hard deny (default: built-in list below). Only this file can change it.
+# hard_deny_floor: [...]   # ADDED to the built-in hard deny below (cannot remove from it). Only this file can change it.
 readonly:                  # TLS intercepted, PUT/PATCH/DELETE refused (e.g. blocks `npm publish`)
   - registry.npmjs.org
 # inject_strip_headers: [Authorization, Cookie]   # always removed from agent requests to inject hosts
@@ -120,8 +121,10 @@ Built-in hard-deny floor: `0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 16
 192.0.0.0/24, 192.0.2.0/24, 192.88.99.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24,
 224.0.0.0/4, 240.0.0.0/4, ::/96, ::ffff:0:0/96, 64:ff9b::/96, 64:ff9b:1::/48, 100::/64, 2001::/32,
 2001:db8::/32, 2002::/16, fc00::/7, fe80::/10, fec0::/10, ff00::/8` (NAT64, 6to4 and Teredo prefixes are
-included because they embed IPv4 addresses). The floor is set only by `hard_deny_floor` in the read-only
-gateway config; `policy.yaml`/the API can only add CIDRs. If the Docker host has a public IP (VPS), add it.
+included because they embed IPv4 addresses). The floor always contains this list; `hard_deny_floor` in the
+read-only gateway config **adds** to it (it cannot remove built-in ranges), and an invalid entry stops the
+gateway. `policy.yaml`/the API can only add further CIDRs. If the Docker host has a public IP (VPS), add it
+to `hard_deny_floor`.
 For LAN services use a service port with `allow_private: true` (exempts exactly that target, and only on
 that service port — not via the proxy or SOCKS) rather than shrinking the floor.
 
@@ -149,6 +152,7 @@ These are wired by the compose file and normally need no change.
 | egress-gw | `GW_CONFIG`, `DATA_DIR`, `CA_EXPORT_DIR`, `PRESET_DIR` | Paths. |
 | egress-gw | `GW_EXTRA_ARGS` | Extra mitmdump arguments (advanced). |
 | egress-gw | `GW_TEST_STATIC_HOSTS` | **Test suite only.** Never set in production (logged as a warning). |
+| egress-gw | `GW_TEST_FLOOR_REPLACE` | **Test suite only.** `1` = `hard_deny_floor` replaces the built-in list (the e2e upstreams run on loopback). Never set in production (logged as a warning). |
 | control | `CONTROL_BIND_HOST` / `CONTROL_PORT` | UI bind address (mgmt network only) / port. |
 | control | `GW_URL` | Gateway API base URL. |
 | control | `AGENT_HOST`, `AGENT_STATUS_PORT`, `TERMINALS` | Agent address, status port, `name:port` list of ttyd consoles. |

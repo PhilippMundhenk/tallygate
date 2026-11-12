@@ -8,7 +8,9 @@ Evaluation order for a connection attempt to (host, port) resolving to ips:
   3. default action (allow | deny | ask).
 
 Hostnames are first evaluated *without* resolving them (`evaluate_name`), so names the policy
-denies or still has to ask about never reach a DNS resolver (no DNS exfiltration).
+denies or still has to ask about never reach a DNS resolver (no DNS exfiltration). CIDR allow/ask rules
+(e.g. from approving an IP literal) apply to IP-literal destinations only; for hostnames only the name
+decides, and CIDR deny rules and the hard deny can narrow that after resolution.
 """
 
 from __future__ import annotations
@@ -24,6 +26,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from egressgw.store import atomic_write
 
 ACTIONS = ("allow", "deny", "ask")
 
@@ -78,12 +82,51 @@ def _psl():
     return PublicSuffixList()  # bundled snapshot incl. the PRIVATE section (github.io, s3, ngrok, ...)
 
 
+def ip_addr(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Parsed address; IPv4-mapped IPv6 (::ffff:a.b.c.d) is normalised to IPv4, so a v4 CIDR covers it."""
+    addr = ipaddress.ip_address(value.strip("[]"))
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+        return addr.ipv4_mapped
+    return addr
+
+
+_PORT = re.compile(r"(\d{1,5})(?:-(\d{1,5}))?")
+
+
+def valid_port_spec(spec: Any) -> bool:
+    """One port item: 443, "443", "8000-8100" or "*"/"any". Rejects None, bools, floats and typos."""
+    if spec in ("*", "any") and isinstance(spec, str):
+        return True
+    if isinstance(spec, int) and not isinstance(spec, bool):
+        return 0 < spec < 65536
+    m = _PORT.fullmatch(spec) if isinstance(spec, str) else None
+    if not m:
+        return False
+    lo, hi = int(m.group(1)), int(m.group(2) or m.group(1))
+    return 0 < lo <= hi < 65536
+
+
 def is_ip(value: str) -> bool:
     try:
         ipaddress.ip_address(value.strip("[]"))
         return True
     except ValueError:
         return False
+
+
+def parse_cidrs(values, what: str) -> list[str]:
+    """Normalised CIDR strings; a clear error naming the setting for anything that is not a network."""
+    if isinstance(values, str) or not isinstance(values, (list, tuple)):
+        raise ValueError(f"{what}: expected a list of CIDRs")
+    out = []
+    for c in values:
+        try:
+            net = str(ipaddress.ip_network(str(c), strict=False))
+        except ValueError as e:
+            raise ValueError(f"{what}: invalid CIDR {c!r} ({e})") from None
+        if net not in out:
+            out.append(net)
+    return out
 
 
 def host_matches(pattern: str, host: str) -> bool:
@@ -134,11 +177,9 @@ class Rule:
             raise ValueError(f"rule {self.id}: use either 'host' or 'cidr', not both")
         if self.cidr:
             ipaddress.ip_network(self.cidr, strict=False)
-        port_matches(self.port, 1)  # raises on garbage
-        for p in self.port if isinstance(self.port, (list, tuple)) else [self.port]:
-            for n in str(p).split("-") if p not in (None, "*", "any") else []:
-                if not 0 < int(n) < 65536:
-                    raise ValueError(f"rule {self.id}: port {p} out of range")
+        items = self.port if isinstance(self.port, (list, tuple)) else [self.port]
+        if not items or not all(valid_port_spec(p) for p in items):
+            raise ValueError(f'rule {self.id}: invalid port {self.port!r} (use 443, [80, 443], "8000-8100" or "*")')
 
     def expired(self, now: float | None = None) -> bool:
         return self.expires is not None and (now or time.time()) >= self.expires
@@ -149,7 +190,7 @@ class Rule:
         if self.host:
             return host_matches(self.host, host)
         net = ipaddress.ip_network(self.cidr, strict=False)
-        addrs = [ipaddress.ip_address(i) for i in ips] if ips else []
+        addrs = [ip_addr(i) for i in ips] if ips else []
         if not addrs:
             return False
         if self.action == "allow":
@@ -180,9 +221,7 @@ class Rule:
         if unknown:
             raise ValueError(f"unknown rule keys: {sorted(unknown)}")
         r = cls(**{k: v for k, v in d.items() if k in known})
-        if r.port is None:
-            r.port = "*"
-        r.validate()
+        r.validate()  # an explicit null port is rejected: it used to mean "all ports"
         return r
 
 
@@ -212,6 +251,12 @@ class Policy:
         self.rules: list[Rule] = []
         self.exceptions: list[Exception_] = []
 
+    def use_floor(self, floor: list[str]) -> None:
+        """Attach the effective floor; extras that are already part of it are dropped (compared with the
+        floor actually in force, so a range missing from it can always be added)."""
+        self.hard_deny_floor = list(floor)
+        self.hard_deny = [c for c in self.hard_deny if c not in self.hard_deny_floor]
+
     # ---------- evaluation ----------
     def hard_denied(self, host: str, port: int, ips: list[str], mode: str | None = None) -> str | None:
         if mode == "reverse":
@@ -223,27 +268,19 @@ class Policy:
         if is_ip(host):
             candidates.append(host.strip("[]"))
         for ip in candidates:
-            addr = ipaddress.ip_address(ip)
-            # normalise IPv4-mapped IPv6
-            if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
-                addr = addr.ipv4_mapped
+            addr = ip_addr(ip)
             for n in nets:
                 if addr.version == n.version and addr in n:
                     return f"hard-deny {n} ({ip})"
         return None
 
-    def evaluate_name(self, host: str, port: int) -> Decision | None:
-        """Decide on the *name* alone, before any DNS lookup. Returns None when a CIDR rule that
-        could allow/ask comes first, i.e. the answer genuinely depends on the resolved IPs."""
+    def evaluate_name(self, host: str, port: int) -> Decision:
+        """Decide on the *name* alone, before any DNS lookup. CIDR rules are skipped: allow/ask ones
+        never apply to hostnames, deny ones are re-checked after resolution (they can only narrow)."""
         now = time.time()
         for r in self.rules:
-            if r.expired(now) or not port_matches(r.port, port):
-                continue
-            if r.host:
-                if host_matches(r.host, host):
-                    return Decision(r.action, f"rule {r.id}" + (f" ({r.note})" if r.note else ""), r.id)
-            elif r.action != "deny":
-                return None  # CIDR allow/ask: needs IPs (CIDR deny is re-checked after resolution)
+            if r.host and not r.expired(now) and port_matches(r.port, port) and host_matches(r.host, host):
+                return Decision(r.action, f"rule {r.id}" + (f" ({r.note})" if r.note else ""), r.id)
         return Decision(self.default, "default")
 
     def evaluate(self, host: str, port: int, ips: list[str], mode: str | None = None) -> Decision:
@@ -251,9 +288,10 @@ class Policy:
         if hd:
             return Decision("deny", hd, "hard_deny")
         now = time.time()
+        name = not is_ip(host)
         for r in self.rules:
-            if r.expired(now):
-                continue
+            if r.expired(now) or (name and r.cidr and r.action != "deny"):
+                continue  # CIDR allow/ask only for IP literals: a name must never be allowed by its IPs
             if r.matches(host, port, ips):
                 return Decision(r.action, f"rule {r.id}" + (f" ({r.note})" if r.note else ""), r.id)
         return Decision(self.default, "default")
@@ -305,13 +343,7 @@ class Policy:
         p.ask_timeout = int(d.get("ask_timeout", 60))
         if not 5 <= p.ask_timeout <= 3600:
             raise ValueError("ask_timeout must be 5..3600 seconds")
-        floor = {str(ipaddress.ip_network(c, strict=False)) for c in DEFAULT_HARD_DENY}
-        extras = []
-        for c in d.get("hard_deny") or []:
-            net = str(ipaddress.ip_network(str(c), strict=False))
-            if net not in floor and net not in extras:
-                extras.append(net)
-        p.hard_deny = extras
+        p.hard_deny = parse_cidrs(d.get("hard_deny") or [], "hard_deny")  # deduped against the floor by use_floor
         p.rules = [Rule.from_dict(r) for r in d.get("rules") or []]
         ids = [r.id for r in p.rules]
         if len(ids) != len(set(ids)):
@@ -325,9 +357,7 @@ class Policy:
         return cls.from_dict(yaml.safe_load(path.read_text()) or {})
 
     def save(self, path: Path) -> None:
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(yaml.safe_dump(self.to_dict(), sort_keys=False))
-        tmp.replace(path)
+        atomic_write(path, yaml.safe_dump(self.to_dict(), sort_keys=False))
 
 
 # ---------- approvals ----------
@@ -357,7 +387,7 @@ def rule_for_approval(host: str, port: int, scope: str) -> Rule:
         raise ValueError(f"invalid scope {scope!r}")
     action, ttl, kind = SCOPES[scope]
     if is_ip(host):
-        pattern_rule = Rule(action=action, cidr=host.strip("[]"), port=port)
+        pattern_rule = Rule(action=action, cidr=str(ip_addr(host)), port=port)
     elif kind == "domain":
         base = registrable_domain(host)
         if not base:
