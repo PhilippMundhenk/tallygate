@@ -140,6 +140,7 @@ def upstream(tmp_path_factory):
 def gateway(tmp_path_factory, upstream):
     if not shutil.which("mitmdump"):
         pytest.skip("mitmproxy not installed (pip install -r gateway/requirements.txt)")
+    pytest.importorskip("aiohttp", reason="the gateway API needs aiohttp (pip install -r gateway/requirements.txt)")
     data = tmp_path_factory.mktemp("gw-data")
     ports = {k: free_port() for k in ("http", "socks", "dns", "api", "svc", "grants")}
     http_t = {"scheme": "http", "port": upstream["http"]}
@@ -299,6 +300,7 @@ def make_gateway(tmp_path, upstream):
 # ------------------------------------------------------------------ control
 @pytest.fixture(scope="session")
 def mockbots():
+    pytest.importorskip("aiohttp", reason="the mock bot APIs need aiohttp (pip install -r control/requirements.txt)")
     from .mockbots import MockBots
 
     m = MockBots()
@@ -325,6 +327,7 @@ def ttyd_port(tmp_path_factory):
 
 
 def start_control(tmp: Path, gateway: dict, extra: dict, ttyd_port: int | None = None):
+    pytest.importorskip("aiohttp", reason="control needs aiohttp (pip install -r control/requirements.txt)")
     port = free_port()
     defaults = dict(
         GW_URL=f"http://127.0.0.1:{gateway['ports']['api']}",

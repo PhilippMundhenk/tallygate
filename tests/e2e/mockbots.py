@@ -69,6 +69,20 @@ class MockBots:
         return [text for k, text in self.log if k == kind]
 
     # ---------------------------------------------------------------- Telegram
+    async def _press(self, btn: dict, plan: dict, message_id=None, text=None) -> None:
+        await asyncio.sleep(0.8)
+        self._tg_updates.append(
+            {
+                "update_id": next(self._ids),
+                "callback_query": {
+                    "id": "cb",
+                    "data": btn["callback_data"],
+                    "from": {"id": plan.get("user_id", 4242), "username": "tester"},
+                    "message": {"chat": {"id": plan.get("chat_id", 777)}, "message_id": message_id, "text": text},
+                },
+            }
+        )
+
     async def _tg(self, request: web.Request) -> web.Response:
         method = request.match_info["method"]
         p = await request.json()
@@ -114,6 +128,12 @@ class MockBots:
             return web.json_response({"ok": True, "result": updates})
         if method in ("answerCallbackQuery", "editMessageText"):
             self.log.append((f"tg.{method}", p.get("text", "")))
+            plan = self.plan.get("telegram") or {}
+            if method == "editMessageText" and plan.get("then"):  # e.g. press "Revoke" once it appears
+                buttons = [b for row in (p.get("reply_markup") or {}).get("inline_keyboard", []) for b in row]
+                btn = next((b for b in buttons if b["text"] == plan["then"]), None)
+                if btn:
+                    self._keep(asyncio.create_task(self._press(btn, plan, p.get("message_id"), p.get("text"))))
             return web.json_response({"ok": True, "result": True})
         return web.json_response({"ok": False, "description": f"unknown {method}"})
 
@@ -137,7 +157,9 @@ class MockBots:
                 async def act():
                     await asyncio.sleep(0.8)
                     for sender, kind, value in plan["actions"]:
-                        if kind == "reaction":
+                        if kind == "wait":  # e.g. until a grant is active before replying "revoke {n}"
+                            await asyncio.sleep(float(value))
+                        elif kind == "reaction":
                             self._mx_events.append(
                                 {
                                     "type": "m.reaction",

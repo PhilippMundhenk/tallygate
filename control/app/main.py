@@ -175,6 +175,9 @@ def check_password(pw: str) -> bool:
     h = os.environ.get("CONTROL_PASSWORD_HASH", "")
     if not h and not os.environ.get("CONTROL_PASSWORD"):
         h = bootstrap.password_hash()  # read per attempt: `python -m app.passwd` applies without a restart
+    if h and not h.startswith("scrypt:"):  # fail closed: never fall back to CONTROL_PASSWORD
+        log.error("CONTROL_PASSWORD_HASH is malformed")
+        return False
     if h.startswith("scrypt:"):
         parts = h.split(":")
         try:

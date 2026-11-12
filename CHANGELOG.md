@@ -71,6 +71,13 @@ All notable changes to this project are documented here. The format follows
 ### Removed
 - `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
 
+### Security
+- A `CONTROL_PASSWORD_HASH` that is not an scrypt hash refuses every login instead of falling back to
+  `CONTROL_PASSWORD` (#27).
+
+### Fixed
+- e2e tests skip instead of erroring without aiohttp, and cover password hash formats, idle and absolute
+  session expiry, dropped console frames, grant deny and revoke through Telegram and Matrix (#27).
 ### Fixed
 - Web UI (#23):
   - Log tab: history loads even after live events arrived; "Load older" no longer duplicates rows.
