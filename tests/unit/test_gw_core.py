@@ -411,6 +411,31 @@ def test_tls_passes_through_only_with_the_checked_sni(make):
     assert last_event(gw)["reason"] == "TLS SNI bad_name on IP 192.0.2.1 is not allowed by the rules"
 
 
+def test_ip_literal_with_intercepted_host_sni_is_refused(make):
+    # #108: reaching an intercepted host (inject / read-only) by its IP literal plus the host's SNI would
+    # skip interception (no credential strip or injection, no read-only check). It must be refused, so the
+    # agent reaches intercepted hosts only by name.
+    gw = make(
+        {"inject": [{"host": "api.example", "value": "x"}], "readonly": ["ro.example"]},
+        {
+            "default": "deny",
+            "rules": [
+                {"id": "a", "action": "allow", "host": "api.example", "port": 443},
+                {"id": "b", "action": "allow", "host": "ro.example", "port": 443},
+                {"id": "c", "action": "allow", "host": "ok.example", "port": 443},
+            ],
+        },
+    )
+    for sni in ("api.example", "ro.example"):  # intercepted hosts by IP literal + SNI: refused
+        data = hello(gw, "192.0.2.1", sni, sid=f"i-{sni}")
+        assert data.ignore_connection is False, sni
+        assert f"i-{sni}" in gw.tls_refused
+        assert "intercepted host" in last_event(gw)["reason"]
+    data = hello(gw, "192.0.2.1", "ok.example", sid="ok")  # a non-intercepted allowed name still passes
+    assert data.ignore_connection is True
+    assert "ok" not in gw.tls_refused
+
+
 def test_refused_tls_fails_both_handshakes_and_is_forgotten_on_disconnect(make):
     gw = make()
     hello(gw, "ok.example", "front.example", sid="s1")

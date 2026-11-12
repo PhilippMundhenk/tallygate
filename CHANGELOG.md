@@ -11,6 +11,13 @@ set of security fixes from two review rounds, quick actions and templates, help 
 coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you update.
 
 ### Security
+- **SNI on an IP literal:** an intercepted host (credential injection / read-only) could be reached without
+  interception by connecting to its IP as a literal and sending the host's name as the TLS SNI — skipping the
+  credential strip/inject and the read-only check. The passthrough is now refused when the SNI names an
+  intercepted host; reach those hosts by name (#108).
+- **Grant path scope:** `path_ok` decoded the request path only once, so a multiply-encoded traversal
+  (`%252e%252e`) slipped past the check while the raw path decoded to `..` on a double-decoding upstream. The
+  path is now decoded to a fixed point and a residual `%` is refused (#111).
 - **Host services:** the agent could reach services on the Docker host that listen on all interfaces through
   the host's address on `agent-net`, bypassing the gateway. `agent-net` and `control-net` no longer give the
   host an address (`com.docker.network.bridge.inhibit_ipv4`); `bypass.sh` checks it with a real listener (#7).

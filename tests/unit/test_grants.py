@@ -43,6 +43,10 @@ def test_ttl_parsing():
         ("/api/x\\..\\y", False),
         ("/api/x%00", False),
         ("api/states", False),
+        ("/api/%252e%252e/config", False),  # double-encoded .. -> upstream /api/../config (#111)
+        ("/api/%252f%252f", False),  # double-encoded //
+        ("/api/%25%32%65%25%32%65/config", False),  # another double-encoding of %2e%2e
+        ("/api/%25252e%25252e", False),  # triple-encoded: still changing / residual %
     ],
 )
 def test_path_matching_rejects_traversal_tricks(path, ok):
