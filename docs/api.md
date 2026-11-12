@@ -14,7 +14,7 @@ Base URL: `http://172.31.11.2:8081` (control-net only). All endpoints except `/h
 | POST | `/rules` | Rule (+ optional `"top": false` to append) | `201` created rule |
 | DELETE | `/rules/{id}` | – | `{"ok": true}` or `404` |
 | GET | `/presets` | – | `["baseline", "containers", …]`; with `?details=1`: `[{name, title, description, category, default, rules}]` |
-| POST | `/presets/{name}` | optional `{"ttl": seconds}` | `{"added": [rule ids]}`: rules inserted on top, tagged `source: preset:<name>` |
+| POST | `/presets/{name}` | optional `{"ttl": seconds}` | `{"added": [rule ids], "expires": ts \| null}`: rules inserted on top as `<name>:<id>`, tagged `source: preset:<name>`; applying again replaces them (new TTL). `409` if another rule uses such an id; `400` for `policy` presets (use `PUT /policy`) |
 | DELETE | `/presets/{name}` | – | `{"removed": [rule ids]}`: removes the rules tagged `preset:<name>` (undo) |
 | GET | `/pending` | – | Pending approvals: `id, host, port, ips, proto, client, created, expires, attempts` |
 | POST | `/pending/{id}/decide` | `{"scope": "once"\|"hour"\|"always"\|"domain"\|"deny"\|"deny_always", "by": "who"}` | `{"rule": {...}}`; `404` if already decided/timed out |

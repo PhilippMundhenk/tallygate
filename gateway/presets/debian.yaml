@@ -1,11 +1,12 @@
-# Debian and Ubuntu packages: apt mirrors for Debian and Ubuntu (port 80 too: apt verifies packages with signatures, not TLS).
+# Debian and Ubuntu packages: Debian over HTTPS only (switch the apt sources to https://; Debian images default to
+# http://). Ubuntu mirrors also on port 80: not all of them serve HTTPS, and apt checks the package signatures.
 # Apply on top of your policy in the UI (Rules -> Quick actions) or with POST /presets/debian.
 title: "Debian and Ubuntu packages"
 category: template
-description: "apt mirrors for Debian and Ubuntu (port 80 too: apt verifies packages with signatures, not TLS)."
+description: "apt mirrors for Debian (HTTPS only: switch the apt sources from http:// to https://) and Ubuntu (ports 80 and 443)."
 rules:
-  - {id: deb-debian, action: allow, host: "deb.debian.org", port: [80, 443]}
-  - {id: deb-security, action: allow, host: "security.debian.org", port: [80, 443]}
-  - {id: deb-ubuntu, action: allow, host: "archive.ubuntu.com", port: [80, 443]}
-  - {id: deb-ubuntu-security, action: allow, host: "security.ubuntu.com", port: [80, 443]}
-  - {id: deb-ubuntu-ports, action: allow, host: "ports.ubuntu.com", port: [80, 443]}
+  - {id: debian, action: allow, host: "deb.debian.org", port: 443}
+  - {id: security, action: allow, host: "security.debian.org", port: 443}
+  - {id: ubuntu, action: allow, host: "archive.ubuntu.com", port: [80, 443]}
+  - {id: ubuntu-security, action: allow, host: "security.ubuntu.com", port: [80, 443]}
+  - {id: ubuntu-ports, action: allow, host: "ports.ubuntu.com", port: [80, 443]}

@@ -4,7 +4,7 @@ title: "Rust (crates.io, rustup)"
 category: template
 description: "Cargo's registry and downloads, and rustup toolchains. Publishing is refused: crates.io is read-only in the gateway config."
 rules:
-  - {id: rust-index, action: allow, host: "index.crates.io", port: 443}
-  - {id: rust-crates, action: allow, host: "crates.io", port: 443}
-  - {id: rust-static, action: allow, host: "static.crates.io", port: 443}
-  - {id: rust-toolchains, action: allow, host: "static.rust-lang.org", port: 443, note: rustup}
+  - {id: index, action: allow, host: "index.crates.io", port: 443}
+  - {id: crates, action: allow, host: "crates.io", port: 443}
+  - {id: static, action: allow, host: "static.crates.io", port: 443}
+  - {id: toolchains, action: allow, host: "static.rust-lang.org", port: 443, note: rustup}

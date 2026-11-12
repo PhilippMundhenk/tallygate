@@ -80,8 +80,12 @@ create a rule for exactly that host:port.
 | Allow a device on the local network | Opens the grant editor with a LAN target (see below) | delete the grant |
 | Templates | Allow what a tool ecosystem needs: Python, Node.js, Go, Rust, Debian/Ubuntu apt, container registries, Hugging Face. Until undone, for 1 h or for 1 day | *Undo* on the template |
 
-All of them create normal rules at the top of the list, tagged `preset:<name>` in the table, so you can see what
-a shortcut added. *Undo* removes exactly those rules. Rules you added yourself are never touched.
+All of them create normal rules at the top of the list, with ids like `python:pypi` and tagged `preset:<name>` in
+the table, so you can see what a shortcut added. *Undo* removes exactly those rules. Rules you added yourself are
+never touched. Because they sit at the top, **template and shortcut rules win over your own rules while they are
+active, deny rules included**: a template that allows `*.quay.io` opens it even if you deny it further down. Undo
+them, or pick a time limit. *Apply again* replaces the template's rules with the new time limit; the message shows
+the time the gateway actually set.
 
 **The local network** (private ranges, the Docker host, cloud metadata) is always blocked by the hard deny, and
 no rule or shortcut can open it. This is deliberate: an agent with broad access to your network is the main

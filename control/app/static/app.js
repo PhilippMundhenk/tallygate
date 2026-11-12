@@ -258,9 +258,9 @@ function presetExpiry(rules) {
   return exp.length === rules.length && exp.length ? Math.max(...exp) : null;
 }
 async function applyPreset(name, ttl) {
-  await gw("POST", `/presets/${name}`, ttl ? { ttl: +ttl } : {});
+  const r = await gw("POST", `/presets/${name}`, ttl ? { ttl: +ttl } : {});
   const p = presetInfo.find((x) => x.name === name);
-  toast(`${p ? p.title : name} allowed${ttl ? ` for ${fmtLeft(Date.now() / 1000 + +ttl)}` : ""}`); await loadPolicy();
+  toast(`${p ? p.title : name} allowed ${r && r.expires ? `for ${fmtLeft(r.expires)}` : "until undone"}`); await loadPolicy();
 }
 async function undoPreset(name) { await gw("DELETE", `/presets/${name}`); toast("Undone"); await loadPolicy(); }
 async function renderQuick() {

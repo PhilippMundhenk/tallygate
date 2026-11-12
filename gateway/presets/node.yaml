@@ -2,8 +2,9 @@
 # Apply on top of your policy in the UI (Rules -> Quick actions) or with POST /presets/node.
 title: "Node.js (npm, Yarn)"
 category: template
-description: "Install from the npm and Yarn registries (npm, pnpm, Yarn), and Node.js downloads. Publishing is refused: the registries are read-only in the gateway config."
+description: "Install from the npm and Yarn registries (npm, pnpm, Yarn), Yarn releases for corepack, and Node.js downloads. Publishing is refused: the registries are read-only in the gateway config."
 rules:
-  - {id: node-npm, action: allow, host: "registry.npmjs.org", port: 443}
-  - {id: node-yarn, action: allow, host: "registry.yarnpkg.com", port: 443}
-  - {id: node-dist, action: allow, host: "nodejs.org", port: 443, note: Node.js releases}
+  - {id: npm, action: allow, host: "registry.npmjs.org", port: 443}
+  - {id: yarn, action: allow, host: "registry.yarnpkg.com", port: 443}
+  - {id: yarn-repo, action: allow, host: "repo.yarnpkg.com", port: 443, note: Yarn releases for corepack and Yarn Berry}
+  - {id: dist, action: allow, host: "nodejs.org", port: 443, note: Node.js releases}

@@ -1,9 +1,9 @@
-# Go modules: The Go module proxy and checksum database, and Go toolchain downloads.
+# Go modules: the Go module proxy and checksum database (also the source of GOTOOLCHAIN switches), and Go release archives.
 # Apply on top of your policy in the UI (Rules -> Quick actions) or with POST /presets/go.
 title: "Go modules"
 category: template
-description: "The Go module proxy and checksum database, and Go toolchain downloads."
+description: "The Go module proxy and checksum database (GOTOOLCHAIN downloads come from there too), and the Go release archives on dl.google.com."
 rules:
-  - {id: go-proxy, action: allow, host: "proxy.golang.org", port: 443}
-  - {id: go-sum, action: allow, host: "sum.golang.org", port: 443}
-  - {id: go-dl, action: allow, host: "dl.google.com", port: 443, note: Go toolchains}
+  - {id: proxy, action: allow, host: "proxy.golang.org", port: 443}
+  - {id: sum, action: allow, host: "sum.golang.org", port: 443}
+  - {id: dl, action: allow, host: "dl.google.com", port: 443, note: Go release archives (go.dev/dl); GOTOOLCHAIN uses the module proxy}

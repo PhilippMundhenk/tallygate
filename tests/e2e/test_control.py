@@ -161,5 +161,6 @@ def test_ui_can_apply_and_undo_templates(ui):
     status, details, _ = ui.call("GET", "/api/gw/presets?details=1")
     assert status == 200 and any(p["name"] == "node" and p["category"] == "template" for p in details)
     assert ui.call("POST", "/api/gw/presets/node", {})[0] == 200
+    assert ui.call("DELETE", "/api/gw/rules/node:dist")[0] == 200  # one template rule, id <preset>:<id>
     status, data, _ = ui.call("DELETE", "/api/gw/presets/node")
-    assert status == 200 and "node-npm" in data["removed"]
+    assert status == 200 and "node:npm" in data["removed"] and "node:dist" not in data["removed"]
