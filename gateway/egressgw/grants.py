@@ -321,6 +321,32 @@ class Grants:
                     log.error("UI grant %s ignored: %s", name, e)
         self.active: dict[str, Active] = {}
         self.requests: dict[str, GrantRequest] = {}
+        # Set by the emergency stop, cleared by the next mode change: while set, "auto" levels need a human.
+        # Persisted, so a gateway restart does not quietly turn auto-approval back on.
+        self.state_path = data_dir / "grants-state.yaml"
+        self.auto_suspended: dict | None = None
+        if self.state_path.exists():
+            try:
+                self.auto_suspended = (yaml.safe_load(self.state_path.read_text()) or {}).get("auto_suspended")
+            except (OSError, yaml.YAMLError, AttributeError) as e:  # fail closed: keep auto-approval off
+                log.error("%s unreadable (%s): auto-approval stays suspended", self.state_path, e)
+                self.auto_suspended = {"since": 0, "by": "unreadable state file"}
+
+    # ---------------------------------------------------------------- auto-approval suspension
+    def _save_state(self) -> None:
+        atomic_write(self.state_path, yaml.safe_dump({"auto_suspended": self.auto_suspended}, sort_keys=False))
+
+    def suspend_auto(self, by: str) -> None:
+        self.auto_suspended = {"since": time.time(), "by": by[:64]}
+        self._save_state()
+
+    def resume_auto(self) -> bool:
+        """End a suspension; True if one was in effect."""
+        if not self.auto_suspended:
+            return False
+        self.auto_suspended = None
+        self._save_state()
+        return True
 
     # ---------------------------------------------------------------- definitions (UI)
     def save_ui(self) -> None:

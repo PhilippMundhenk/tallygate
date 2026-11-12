@@ -75,10 +75,21 @@ create a rule for exactly that host:port.
 |---|---|---|
 | Allow web for 15 min / 1 h | Adds the `open` preset (any public host, ports 80 and 443) with that time limit | *Active → Undo*, or wait |
 | Allow all ports for 15 min | Adds the `internet` preset (any public host and port: SSH, databases, ...) | same |
-| Unknown destinations: ask me / block / allow | Sets the mode (`ask`, `deny`, `allow`) | click another mode |
-| Emergency stop | Mode `deny`, undoes the internet shortcuts, revokes all active grants | set the mode again |
+| Unknown destinations: ask me / block / allow | Sets the mode (`ask`, `deny`, `allow`); changes nothing else | click another mode |
+| Emergency stop | Revokes all active grants, denies everything waiting for approval (connections and grant requests), undoes the internet shortcuts, sets the mode `deny` and suspends automatic grant approval | set the mode again |
 | Allow a device on the local network | Opens the grant editor with a LAN target (see below) | delete the grant |
 | Templates | Allow what a tool ecosystem needs: Python, Node.js, Go, Rust, Debian/Ubuntu apt, container registries, Hugging Face. Until undone, for 1 h or for 1 day | *Undo* on the template |
+
+The **emergency stop** runs on the gateway, most important step first, and carries on when a step fails.
+The panel lists every step with a ✔ or ✖, so you can see what did not work. Until you change the mode again,
+grants with automatic approval need your approval like any other: the agent cannot switch its access back on
+right after the stop. The Grants tab shows when this is in effect.
+
+The mode buttons and *Save* in the Mode card change only the mode and the approval timeout, never the rules.
+*Save additional hard deny* starts from the policy as it is on the gateway. *Replace policy* (raw JSON) refuses
+to save when the policy was changed elsewhere after the text was loaded (another tab, a Telegram approval): it
+keeps your text and marks it; *Reload from the gateway* fetches the current policy, a second *Replace policy*
+overwrites on purpose.
 
 All of them create normal rules at the top of the list, with ids like `python:pypi` and tagged `preset:<name>` in
 the table, so you can see what a shortcut added. *Undo* removes exactly those rules. Rules you added yourself are

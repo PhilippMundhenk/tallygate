@@ -64,6 +64,8 @@ BROWSER_MAX_FRAME = 64 * 1024
 GW_ALLOW = [
     ("GET", r"/policy"),
     ("PUT", r"/policy"),
+    ("PATCH", r"/policy"),
+    ("POST", r"/emergency-stop"),
     ("POST", r"/rules"),
     ("DELETE", r"/rules/[A-Za-z0-9_:-]+"),  # template rules are <preset>:<id>
     ("GET", r"/pending"),
@@ -378,7 +380,9 @@ async def api_gw(request: web.Request):
         return web.json_response({"error": "not allowed"}, status=404)
     body = await json_body(request)
     by = f"web:{request['user']}"
-    if (sub.endswith("/decide") or sub.endswith("/activate")) and isinstance(body, dict):
+    if sub == "/emergency-stop":
+        body = {}  # nothing to choose: the whole stop always runs
+    if (sub.endswith("/decide") or sub.endswith("/activate") or sub == "/emergency-stop") and isinstance(body, dict):
         body["by"] = by  # attribution is set here, never taken from the browser
     qs = ("?" + request.query_string) if request.query_string else ""
     if sub.startswith("/active-grants/"):

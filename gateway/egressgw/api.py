@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hmac
 import json
 import time
@@ -10,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from egressgw.policy import SCOPES, Policy, Rule, is_ip, load_preset, valid_hostname
+from egressgw.policy import ACTIONS, SCOPES, Decision, Policy, Rule, is_ip, load_preset, valid_hostname
 
 if TYPE_CHECKING:
     from egressgw.core import Gateway
@@ -45,10 +46,39 @@ def build_app(gw: Gateway) -> web.Application:
 
     @routes.put("/policy")
     async def put_policy(request):
+        old = gw.policy.default
         gw.adopt(Policy.from_dict(await request.json()))  # floor + service exceptions stay as configured
         gw.save_policy()
-        gw.record(kind="admin", action="policy", reason="policy replaced via API")
+        gw.record(kind="admin", action="policy", reason="policy replaced via API" + _mode_changed(gw, old))
         return _json(gw.policy.describe())
+
+    @routes.patch("/policy")
+    async def patch_policy(request):
+        """Change only the mode and/or the approval timeout; the rules stay as they are on the server."""
+        body = await request.json()
+        if not isinstance(body, dict) or not body:
+            raise ValueError("expected an object with default and/or ask_timeout")
+        unknown = set(body) - {"default", "ask_timeout"}
+        if unknown:
+            raise ValueError(f"PATCH /policy changes only default and ask_timeout, not {sorted(unknown)}")
+        default = body.get("default", gw.policy.default)
+        if default not in ACTIONS:
+            raise ValueError(f"default must be one of {list(ACTIONS)}")
+        timeout = body.get("ask_timeout", gw.policy.ask_timeout)
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or not 5 <= timeout <= 3600:
+            raise ValueError("ask_timeout must be a whole number of seconds, 5..3600")
+        old = gw.policy.default
+        gw.policy.default, gw.policy.ask_timeout = default, timeout
+        gw.save_policy()
+        reason = f"mode {default}, approval timeout {timeout} s via API" + _mode_changed(gw, old)
+        gw.record(kind="admin", action="policy", reason=reason)
+        return _json(gw.policy.describe())
+
+    @routes.post("/emergency-stop")
+    async def emergency_stop_route(request):
+        body = (await request.json()) if request.can_read_body else {}
+        by = str(body.get("by", "api") if isinstance(body, dict) else "api")[:64]
+        return _json(emergency_stop(gw, by))
 
     @routes.post("/rules")
     async def add_rule(request):
@@ -223,6 +253,7 @@ def build_app(gw: Gateway) -> web.Application:
                 "requests": [r.to_dict() for r in g.pending()],
                 "lan_allow_ui": [str(n) for n in g.ui_lan_allow],
                 "missing_secrets": needed,
+                "auto_suspended": g.auto_suspended,
             }
         )
 
@@ -287,6 +318,107 @@ def build_app(gw: Gateway) -> web.Application:
     app = web.Application(middlewares=[auth], client_max_size=1024 * 1024)
     app.add_routes(routes)
     return app
+
+
+def _mode_changed(gw: Gateway, old: str) -> str:
+    """A mode change ends an auto-approval suspension left by the emergency stop. Returns a note for the log."""
+    if gw.policy.default != old and gw.grants.resume_auto():
+        return "; grant auto-approval resumed"
+    return ""
+
+
+def _step(steps: list, name: str, fn) -> None:
+    """Run one emergency-stop step; a failure is reported and does not stop the steps after it."""
+    try:
+        res = fn() or {}
+        steps.append({"step": name, "ok": not res.get("errors"), **res})
+    except Exception as e:  # noqa: BLE001 - best effort: every later step must still run
+        steps.append({"step": name, "ok": False, "errors": [f"{type(e).__name__}: {e}"]})
+
+
+def emergency_stop(gw: Gateway, by: str) -> dict:
+    """Best effort, most important first: suspend auto-approval, revoke grants, deny what is pending,
+    remove internet shortcuts, mode deny. Every step runs even if an earlier one failed."""
+    steps: list[dict] = []
+    reason = f"emergency stop by {by}"
+
+    def revoke() -> dict:
+        done, errors = [], []
+        for a in list(gw.grants.active.values()):
+            try:
+                gw.revoke_grant(a.id, by)
+                done.append(a.name)
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{a.name}: {e}")
+        return {"revoked": done, "errors": errors}
+
+    def deny_asks() -> dict:
+        denied = []
+        for key, p in list(gw.pending.items()):
+            if gw.pending.pop(key, None) is not p:
+                continue
+            if p.future is not None and not p.future.done():
+                p.future.set_result(Decision("deny", reason))
+            gw.publish({"type": "resolved", "id": p.id, "action": "deny", "scope": "deny", "by": by})
+            denied.append(f"{p.host}:{p.port}")
+        return {"denied": denied}
+
+    def deny_grant_requests() -> dict:
+        denied, errors = [], []
+        for r in gw.grants.pending():
+            try:
+                gw.decide_grant(r.id, "deny", by)
+                denied.append(r.name)
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{r.name}: {e}")
+        return {"denied": denied, "errors": errors}
+
+    def remove_internet() -> dict:
+        from egressgw.core import PRESET_DIR
+
+        sources, ids, errors = set(), set(), []
+        for path in sorted(PRESET_DIR.glob("*.yaml")):
+            try:
+                meta, pol = load_preset(path)
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"preset {path.stem}: {e}")
+                continue
+            if meta["category"] == "internet":
+                sources.add(f"preset:{path.stem}")
+                ids |= {r.id for r in pol.rules}
+        if not sources:
+            errors.append(f"no internet presets found in {PRESET_DIR}")
+        removed = [r.id for r in gw.policy.rules if r.source in sources or (r.id in ids and r.action == "allow")]
+        for rid in removed:
+            gw.policy.remove_rule(rid)
+        if removed:
+            gw.save_policy()
+        return {"removed": removed, "errors": errors}
+
+    def mode_deny() -> dict:
+        old = gw.policy.default
+        gw.policy.default = "deny"
+        gw.save_policy()
+        return {"previous": old}
+
+    _step(steps, "suspend_auto_approval", lambda: gw.grants.suspend_auto(by))
+    _step(steps, "revoke_grants", revoke)
+    _step(steps, "deny_pending", deny_asks)
+    _step(steps, "deny_grant_requests", deny_grant_requests)
+    _step(steps, "remove_internet_presets", remove_internet)
+    _step(steps, "mode_deny", mode_deny)
+    ok = all(s["ok"] for s in steps)
+    counts = ", ".join(
+        f"{s['step']}: {len(v)}" for s in steps for k, v in s.items() if k in ("revoked", "denied", "removed")
+    )
+    failed = [s["step"] for s in steps if not s["ok"]]
+    with contextlib.suppress(Exception):  # the stop itself has happened; a log failure must not hide that
+        gw.record(
+            kind="admin",
+            action="emergency-stop",
+            reason=f"{reason} ({counts}; " + ("complete)" if ok else f"failed: {', '.join(failed)})"),
+        )
+    return {"ok": ok, "steps": steps}
 
 
 def _secret_names(template: str) -> set[str]:

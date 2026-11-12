@@ -73,8 +73,10 @@
         <button data-mode="allow" class="secondary small" aria-pressed="false">allow (log only)</button>
         <button id="qaStop" class="danger small">Emergency stop</button>
       </div>
-      <p class="hint">Emergency stop blocks everything unknown, undoes the internet shortcuts above and revokes all
-        active grants. Claude itself stays reachable through your allow rules.</p>
+      <p class="hint">Emergency stop revokes all active grants, denies everything still waiting for approval, undoes
+        the internet shortcuts above, blocks everything unknown and suspends automatic grant approval until you change
+        the mode again. Claude itself stays reachable through your allow rules.</p>
+      <div id="qaStopResult" class="hint hidden" role="status"></div>
       <div id="qaActive"></div>
       <h4>Local network</h4>
       <p class="hint">The local network, the Docker host and cloud metadata addresses are <b>always blocked</b> (hard deny):
@@ -138,12 +140,14 @@
         <code>203.0.113.7/32</code> or a provider range <code>198.51.100.0/24</code>. These can only add to the floor.</p>
       <textarea id="hardDeny" rows="5" aria-labelledby="hardDenyHint"></textarea><button id="saveHard">Save additional hard deny</button></details>
     <details class="card"><summary>Advanced: raw policy JSON</summary>
-      <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><button id="saveRaw">Replace policy</button></details>
+      <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><div class="row"><button id="saveRaw">Replace policy</button>
+        <button id="reloadRaw" class="secondary">Reload from the gateway</button></div></details>
   </section>
 
   <!-- GRANTS -->
   <section id="tab-grants" role="tabpanel" aria-labelledby="tabbtn-grants" class="hidden">
     <h2>Active grants</h2>
+    <p id="autoSuspended" class="meta warn hidden" role="status"></p>
     <div id="activeGrants"></div>
     <p id="activeEmpty" class="muted">No grant is active.</p>
 

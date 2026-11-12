@@ -437,7 +437,7 @@ class Gateway:
         g = self.grants.defs.get(name)
         if not g:
             raise KeyError(name)
-        if g.approval.get(level) == "auto":
+        if g.approval.get(level) == "auto" and not self.grants.auto_suspended:  # emergency stop suspends it
             r = self.grants.new_request(name, level, ttl, reason, client)
             self._approve(r, level, "auto")
             return r
