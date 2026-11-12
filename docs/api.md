@@ -22,10 +22,11 @@ Base URL: `http://172.31.11.2:8081` (control-net only). All endpoints except `/h
 | POST | `/pending/{id}/decide` | `{"scope": "once"\|"hour"\|"always"\|"domain"\|"deny"\|"deny_always", "by": "who"}` | `{"rule": {...}}`; `404` if already decided/timed out |
 | POST | `/test` | `{"host": "...", "port": 443}` | Dry run: `{"action", "reason", "rule_id", "ips"}` |
 | GET | `/events?limit=200&before=<id>&q=<text>` | – | Newest-first event log entries |
+| GET | `/events/summary?since=<ts>` | – | Connection events since `since` (default: one hour ago, at most 7 days back): `{"since", "counts": {"allow", "deny", "ask"}, "top": [{"host", "port", "count", "allow", "deny", "ask", "last"}] (10), "new": [{"host", "port", "first", "count"}] (20)}`. `new` = first seen within the kept log. Counts are log rows: identical events within a few seconds are coalesced |
 | GET | `/stream` | – | Server-sent events (see below) |
 | GET | `/secrets` | – | `{"names": [...]}` — values are never returned |
 | PUT | `/secrets/{name}` | `{"value": "..."}` (empty removes) | `{"names": [...]}` |
-| GET | `/info` | – | `inject_hosts`, `inject_secrets_needed`, `services`, `ca_pem`, `pending` |
+| GET | `/info` | – | `inject_hosts`, `inject_secrets_needed`, `services`, `ca_pem`, `pending`, `data_disk` (`{"total", "used", "free"}` of the file system holding the gateway state, or `null`), `events_db_bytes` (event log incl. WAL) |
 | GET | `/grants` | – | `defs` (with `source` config/ui), `active`, pending `requests`, `lan_allow_ui`, `missing_secrets`, `auto_suspended` (`null` or `{"since", "by"}` after an emergency stop) |
 | PUT | `/grants/{name}` | Grant definition ([grants](grants.md)) | Validated, stored as a UI grant; `400` for config grants or LAN targets outside `grants_lan_allow` |
 | DELETE | `/grants/{name}` | – | UI grants only; also ends an active instance |
@@ -103,7 +104,7 @@ Used by the bundled web UI; documented for scripting and review.
 | GET | `/` | session | Single-page UI |
 | GET | `/api/meta` | session | Current user, terminal names, notification status |
 | GET | `/api/stream` | session | Relayed gateway SSE stream |
-| * | `/api/gw/{path}` | session + CSRF | Relay to an **allowlisted** subset of the gateway API: `GET`/`PUT`/`PATCH /policy`, `POST /emergency-stop`, `POST /rules`, `DELETE /rules/{id}`, `GET /pending`, `POST /pending/{id}/decide`, `GET /events`, `POST /test`, `GET`/`POST`/`DELETE /presets…`, `GET /secrets`, `PUT /secrets/{name}`, `GET`/`PUT`/`DELETE /grants/{name}`, `POST /grants/{name}/activate`, `DELETE /active-grants/{id}`, `POST /grant-requests/{id}/decide`, `GET /info`. Everything else is refused (404). For decisions and the emergency stop, `by` is set to `web:<user>`. |
+| * | `/api/gw/{path}` | session + CSRF | Relay to an **allowlisted** subset of the gateway API: `GET`/`PUT`/`PATCH /policy`, `POST /emergency-stop`, `POST /rules`, `DELETE /rules/{id}`, `GET /pending`, `POST /pending/{id}/decide`, `GET /events`, `GET /events/summary`, `POST /test`, `GET`/`POST`/`DELETE /presets…`, `GET /secrets`, `PUT /secrets/{name}`, `GET`/`PUT`/`DELETE /grants/{name}`, `POST /grants/{name}/activate`, `DELETE /active-grants/{id}`, `POST /grant-requests/{id}/decide`, `GET /info`. Everything else is refused (404). For decisions and the emergency stop, `by` is set to `web:<user>`. |
 | POST | `/api/github/check` | session + CSRF | `{"token": "...", "store": true}` — validate a token against GitHub from the control plane and store it in the gateway |
 | GET | `/api/agent/status` | session | Agent status (Claude login, git identity, Remote Control running, versions) |
 | GET | `/api/agent/selftest` | session | Run the in-agent isolation self-test |
@@ -133,7 +134,7 @@ It runs as the agent user and only does what that user can do anyway; control re
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/status` | `claude_version`, `claude_logged_in`, `git_name`, `git_email`, `git_identity` (`ok` \| `empty`: set but empty \| `missing`), `remote_control_enabled` (`RC_ENABLE`), `remote_control_running`, `remote_control_consent` (`remoteDialogSeen` in `~/.claude.json`), `remote_control_prompt` (the question the *rc* console waits for, if any), `remote_control_name` (`RC_NAME`), `gateway_ca_trusted`, `time` |
+| GET | `/status` | `claude_version`, `claude_logged_in`, `git_name`, `git_email`, `git_identity` (`ok` \| `empty`: set but empty \| `missing`), `remote_control_enabled` (`RC_ENABLE`), `remote_control_running`, `remote_control_consent` (`remoteDialogSeen` in `~/.claude.json`), `remote_control_prompt` (the question the *rc* console waits for, if any), `remote_control_name` (`RC_NAME`), `gateway_ca_trusted`, `workspace_disk` and `home_disk` (`{"total", "used", "free"}` of their file systems, or `null`), `time` |
 | GET | `/selftest` | `{"results": [{"name", "pass", "detail"}]}` |
 | GET | `/setup/claude-login` | `{"state": "idle"\|"starting"\|"waiting_code"\|"done"\|"failed", "url", "message", "logged_in"}`, read from the tmux session `tg-login` |
 | POST | `/setup/claude-login` | (Re)starts `claude auth login` in `tg-login` and waits up to 20 s for the login URL; returns the state |

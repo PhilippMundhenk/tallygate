@@ -39,7 +39,7 @@ only then let through, turned back, or held for you to decide.
 - **Secrets stay out of the agent.** The GitHub token lives in the gateway and is injected in flight, only when
   the CONNECT target and Host match. The agent's own credentials for those hosts are stripped, and
   read-only hosts (e.g. the npm registry) refuse uploads.
-- **Operator UI.** Approvals, live log, rules editor with dry-run test, presets, browser consoles (Remote
+- **Operator UI.** An overview of what the agent is doing and what needs you, approvals, live log, rules editor with dry-run test, presets, browser consoles (Remote
   Control, bash, claude), and a guided first start that logs in to Claude, takes the git identity from GitHub
   and enables Remote Control without a console.
 - **Phone approvals** via Telegram buttons or Matrix reactions (outbound polling only, no webhooks).

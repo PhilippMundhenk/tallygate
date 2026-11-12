@@ -1,0 +1,8 @@
+/* overview tab (overview.js) */
+.ov-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:800px){.ov-grid{grid-template-columns:1fr}}
+.ov-grid>.card{margin-bottom:0}#tab-overview>.ov-grid{margin-bottom:14px}
+.ov-dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 12px;margin:0;font-size:13px}.ov-dl dt{color:var(--muted)}.ov-dl dd{margin:0;overflow-wrap:anywhere}
+.ov-list{list-style:none;padding:0;margin:0;font-size:13px}.ov-list li{padding:5px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.ov-list li:last-child{border-bottom:0}
+.ov-counts{font-size:15px;margin:4px 0 8px}
+.ov-table{min-width:0!important}.ov-table td code{overflow-wrap:anywhere}
+@media(max-width:600px){.ov-dl{grid-template-columns:1fr}.ov-dl dd{margin-bottom:6px}}

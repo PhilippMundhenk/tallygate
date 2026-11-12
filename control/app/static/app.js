@@ -597,6 +597,7 @@ function connectStream() {
   };
   es.onmessage = (m) => {
     const ev = JSON.parse(m.data);
+    window.dispatchEvent(new CustomEvent("tg:event", { detail: ev }));  // for feature scripts (overview.js, ...)
     if (ev.type === "event") addLogRow(ev.event);
     if (ev.type === "ask" || ev.type === "resolved") loadPending().catch(() => {});
     if (ev.type === "ask" && document.hidden && Notification?.permission === "granted") new Notification("tallygate: approval needed", { body: `${ev.pending.host}:${ev.pending.port}` });
@@ -616,5 +617,5 @@ function connectStream() {
   await loadPending().catch((e) => toast(e.message, true));
   await loadGrants().catch((e) => toast(e.message, true));
   connectStream();
-  showTab(location.hash.slice(1) || "approvals");
+  showTab(location.hash.slice(1) || "overview");
 })();

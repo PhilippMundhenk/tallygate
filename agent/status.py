@@ -12,6 +12,7 @@ Remote Control's one-time consent in ~/.claude.json. They give the agent nothing
 import json
 import os
 import re
+import shutil
 import socket
 import ssl
 import struct
@@ -129,6 +130,15 @@ def rc_prompt() -> str:
     return clean(last, 120) if PROMPT_RE.search(last) else ""
 
 
+def disk(path: Path) -> dict | None:
+    """Size and use of the file system that holds `path` (statvfs: cheap, unlike adding up a workspace)."""
+    try:
+        d = shutil.disk_usage(path)
+    except OSError:
+        return None
+    return {"total": d.total, "used": d.used, "free": d.free}
+
+
 def status() -> dict:
     if "v" not in _version_cache:
         _version_cache["v"] = sh("claude", "--version")
@@ -145,6 +155,8 @@ def status() -> dict:
         "remote_control_prompt": rc_prompt(),
         "remote_control_name": clean(os.environ.get("RC_NAME", "tallygate"), 100),
         "gateway_ca_trusted": bool(os.environ.get("NODE_EXTRA_CA_CERTS")),
+        "workspace_disk": disk(WORKSPACE),
+        "home_disk": disk(HOME),
         "time": time.time(),
     }
 

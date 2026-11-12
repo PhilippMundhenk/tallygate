@@ -78,6 +78,11 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   `claude auth login` in the agent and takes the code in the UI; *Use my GitHub identity* sets the git name
   and noreply address from `gh api user` after a preview (it explains a missing or refused token and never
   writes empty values); *Enable Remote Control* answers its one-time `(y/n)` question. No console needed (#75).
+- **Overview tab** as the start page: Claude and Remote Control status with the session name, gateway health,
+  Claude Code version and disk use; what needs attention (requests, rules and grants ending within the hour,
+  a missing, refused or expiring GitHub token); the last hour (allowed/denied/asked, top and new
+  destinations); emergency stop, *Allow web for 15 min* and the console as shortcuts. New gateway endpoint
+  `GET /events/summary`; `/info` and the agent status report disk use (#68).
 
 ### Changed
 - **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie

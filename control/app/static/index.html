@@ -1,10 +1,11 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>tallygate</title><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/wizard.css"></head>
+<title>tallygate</title><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/wizard.css"><link rel="stylesheet" href="/static/overview.css"></head>
 <body>
 <header>
   <span class="brand">🔐 tallygate</span>
   <nav id="tabs" role="tablist" aria-label="Sections">
+    <button data-tab="overview" id="tabbtn-overview" role="tab" aria-selected="false" aria-controls="tab-overview">Overview</button>
     <button data-tab="approvals" id="tabbtn-approvals" role="tab" aria-selected="false" aria-controls="tab-approvals">Approvals <span id="pendingCount" class="badge hidden">0</span></button>
     <button data-tab="log" id="tabbtn-log" role="tab" aria-selected="false" aria-controls="tab-log">Log</button>
     <button data-tab="rules" id="tabbtn-rules" role="tab" aria-selected="false" aria-controls="tab-rules">Rules</button>
@@ -20,6 +21,24 @@
   the network. For more than a quick test on a trusted LAN, put a TLS reverse proxy in front
   (<a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/operations.md#reverse-proxy" target="_blank" rel="noopener">how</a>).</p>
 <main>
+  <!-- OVERVIEW (overview.js) -->
+  <section id="tab-overview" role="tabpanel" aria-labelledby="tabbtn-overview" class="hidden">
+    <div class="ov-grid">
+      <div class="card"><h3>Status</h3><dl id="ovStatus" class="ov-dl"><dt>…</dt><dd></dd></dl></div>
+      <div class="card"><h3>Needs attention</h3><ul id="ovAttention" class="ov-list"><li class="muted">…</li></ul></div>
+    </div>
+    <div class="card"><div class="row-between"><h3>Last hour</h3><button id="ovLog" class="small secondary">Open the log</button></div>
+      <p id="ovCounts" class="ov-counts"></p>
+      <div class="ov-grid">
+        <div><h4>Top destinations</h4><div class="table-wrap"><table class="ov-table"><thead><tr><th>Destination</th><th>Connections</th><th>Allowed / denied</th></tr></thead><tbody id="ovTop"></tbody></table></div></div>
+        <div><h4>New destinations</h4><p class="hint">Seen for the first time in the kept log.</p><ul id="ovNew" class="ov-list"></ul></div>
+      </div></div>
+    <div class="card"><h3>Shortcuts</h3><div class="row wrap">
+      <button id="ovStop" class="danger">Emergency stop</button>
+      <button id="ovWeb">Allow web for 15 min</button>
+      <button id="ovConsole" class="secondary">Open the console</button></div></div>
+  </section>
+
   <!-- APPROVALS -->
   <section id="tab-approvals" role="tabpanel" aria-labelledby="tabbtn-approvals">
     <div id="grantReqBox" class="hidden">
@@ -284,4 +303,5 @@
 <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <script src="/static/app.js"></script>
 <script src="/static/wizard.js"></script>
+<script src="/static/overview.js"></script>
 </body></html>

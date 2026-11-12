@@ -357,3 +357,17 @@ def test_handler_refuses_a_bad_content_length(st, server):
     r = c.getresponse()
     assert r.status == 413
     c.close()
+
+
+# ---------------------------------------------------------------- disk use (Overview, #68)
+def test_disk_use_of_workspace_and_home(st, tmp_path, monkeypatch):
+    d = st.disk(tmp_path)
+    assert d["total"] > 0 and set(d) == {"total", "used", "free"}
+    assert st.disk(tmp_path / "missing") is None
+    monkeypatch.setattr(st, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(st, "sh", lambda *a: "2.0.0")
+    monkeypatch.setattr(st, "git_get", lambda k: None)
+    monkeypatch.setattr(st, "pane", lambda s: None)
+    monkeypatch.setattr(st, "rc_running", lambda: False)
+    s = st.status()
+    assert s["workspace_disk"]["total"] > 0 and s["home_disk"]["total"] > 0

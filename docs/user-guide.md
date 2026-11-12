@@ -4,6 +4,7 @@ The control UI is the operator's cockpit: approve connections, watch traffic, ed
 consoles into the agent, and run the setup wizard. Remote Control itself is used from the
 [Claude app](https://claude.ai/download) or [claude.ai/code](https://claude.ai/code) as usual.
 
+- [Overview](#overview)
 - [Approvals](#approvals)
 - [Log](#log)
 - [Rules](#rules)
@@ -13,6 +14,18 @@ consoles into the agent, and run the setup wizard. Remote Control itself is used
 - [Matrix approvals](#matrix-approvals)
 - [Rule cookbook](#rule-cookbook)
 - [Working with the agent](#working-with-the-agent)
+
+## Overview
+
+The start page: what the agent is doing and whether anything needs you soon. It refreshes every 30 seconds
+while it is open and at once when a request arrives or is decided.
+
+| Part | Shows |
+|---|---|
+| Status | Claude logged in; Remote Control running, with the session name (or the question it waits for); Claude Code version; disk use of the workspace's file system; gateway health and the disk use of its state, with the size of the event log. 90 % or more is marked. |
+| Needs attention | Waiting connection and grant requests; rules and grants that end within the hour; a missing GitHub token, one GitHub refuses, or one that expires within 7 days (checked once per page load through the agent, so it appears in the log). |
+| Last hour | Connections allowed, denied and asked; the 10 most frequent destinations; destinations seen for the first time in the kept log (`log_keep_days`). |
+| Shortcuts | *Emergency stop* (click twice), *Allow web for 15 min* (the `open` preset), *Open the console* (rc). |
 
 ## Approvals
 
