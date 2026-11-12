@@ -31,6 +31,9 @@ from mitmproxy.proxy import server_hooks
 
 from egressgw import api
 from egressgw.grants import READ_METHODS, GrantDef, Grants, Target, path_ok
+from egressgw.history import PolicyHistory
+from egressgw.learning import REASON as LEARNING
+from egressgw.learning import Learning, parse_ports
 from egressgw.policy import (
     DEFAULT_HARD_DENY,
     Decision,
@@ -199,24 +202,43 @@ class Gateway:
         configured = parse_cidrs(self.config.get("hard_deny_floor") or [], "hard_deny_floor")
         builtin = [] if FLOOR_REPLACE and configured else DEFAULT_HARD_DENY
         self.hard_deny_floor = parse_cidrs([*builtin, *configured], "hard_deny_floor")
+        self.history = PolicyHistory(DATA_DIR / "policy-history.db", int(self.config.get("policy_history_keep", 500)))
         if not self.policy_path.exists():
-            preset = PRESET_DIR / f"{self.config.get('initial_preset', 'baseline')}.yaml"
+            initial = self.config.get("initial_preset", "baseline")
+            preset = PRESET_DIR / f"{initial}.yaml"
             self.policy = load_preset(preset)[1] if preset.exists() else Policy()
             self.policy.save(self.policy_path)
+            what = f"initial policy (preset {initial})"
         else:
             self.policy = Policy.load(self.policy_path)
+            what = (
+                "policy.yaml changed while the gateway was stopped"
+                if self.history.latest
+                else "policy at gateway start"
+            )
         self.adopt(self.policy)
+        self._history("gateway", what)  # nothing is stored when it equals the latest version
         self.events = EventLog(
             DATA_DIR / "events.db",
             int(self.config.get("log_keep_days", 30)),
             int(self.config.get("log_max_events", 500_000)),
         )
         self.secrets = Secrets(DATA_DIR / "secrets.json")
+        self.learning = Learning(
+            self.events.db,
+            parse_ports(self.config.get("learning_ports", [80, 443])),
+            int(self.config.get("learning_max_minutes", 120)),
+        )
         self.inject = [dict(i) for i in self.config.get("inject") or []]
         self.inject_hosts = {i["host"].lower().rstrip(".") for i in self.inject}
         self.readonly = parse_readonly(self.config.get("readonly") or [])
         self.strip_headers = [str(h) for h in self.config.get("inject_strip_headers") or ["Authorization", "Cookie"]]
         self.max_pending = int(self.config.get("max_pending", 10))
+        # rule usage (#70): matches per rule id since the last flush to the event log, as [count, last ts]
+        self.hits: dict[str, list] = {}
+        self.stale_days = int(self.config.get("rule_stale_days", 30))
+        self.suggest_min = int(self.config.get("suggest_min_approvals", 3))
+        self.suggest_days = int(self.config.get("suggest_window_days", 7))
         self._dups: dict[tuple, list] = {}
         self.grants = Grants(self.config, DATA_DIR)
         # server connection id -> (active grant id, host the agent asked for, target)
@@ -289,10 +311,13 @@ class Gateway:
 
     def _housekeep(self) -> None:
         if self.policy.prune_expired():
-            self.save_policy()
+            self.save_policy("gateway", "expired rules removed")
         now = time.time()
         self.neg_cache = {k: v for k, v in self.neg_cache.items() if v > now}
         self._flush_dups(now)
+        self.flush_hits()
+        if self.learning.expired():
+            self.end_learning("gateway", "time is up")
         self.events.enforce_cap()
         expired, timed_out = self.grants.prune()
         for a in expired:
@@ -346,9 +371,48 @@ class Gateway:
         rep["reason"] = f"{ev.get('reason')} (repeated {count}x)"
         self.publish({"type": "event", "event": self.events.add(rep)})
 
-    def save_policy(self) -> None:
+    def _hit(self, dec: Decision) -> None:
+        """Count a match of a rule (hot path: one dict update, flushed to the event log by housekeeping)."""
+        if dec.rule_id and dec.rule_id != "hard_deny":
+            h = self.hits.get(dec.rule_id)
+            if h is None:
+                self.hits[dec.rule_id] = [1, time.time()]
+            else:
+                h[0] += 1
+                h[1] = time.time()
+
+    def flush_hits(self) -> None:
+        hits, self.hits = self.hits, {}
+        self.events.flush_hits(hits, [r.id for r in self.policy.rules])
+
+    def start_learning(self, minutes, ports, by: str) -> dict:
+        s = self.learning.start(minutes, ports, by)
+        until = time.strftime("%H:%M", time.localtime(s["until"]))
+        self.record(
+            kind="admin", action="learning", reason=f"learning mode on until {until}, ports {s['ports']}, by {by}"
+        )
+        self.publish({"type": "learning"})
+        return s
+
+    def end_learning(self, by: str, why: str) -> dict | None:
+        s = self.learning.end(by, why)
+        if s:
+            self.record(kind="admin", action="learning", reason=f"learning mode ended: {why} ({by})")
+            self.publish({"type": "learning"})
+        return s
+
+    def save_policy(self, by: str = "api", what: str = "policy changed") -> None:
         self.policy.save(self.policy_path)
+        self._history(by, what)
         self.publish({"type": "policy"})
+
+    def _history(self, by: str, what: str) -> None:
+        """Keep the saved policy as a version. Best effort: the policy itself is already saved, and a broken
+        history must not break approvals or the emergency stop."""
+        try:
+            self.history.record(self.policy.to_dict(), by, what)
+        except Exception:
+            log.exception("policy history: version not stored")
 
     # ------------------------------------------------------------------ decisions
     async def resolve(self, host: str, port: int) -> list[str]:
@@ -364,9 +428,14 @@ class Gateway:
                 ips.append(sockaddr[0])
         return ips
 
-    async def decide(self, host: str, port: int, ips: list[str], proto: str, client: str) -> Decision:
-        """Full decision with known IPs (hard deny, rules, default; asks if needed)."""
+    async def decide(
+        self, host: str, port: int, ips: list[str], proto: str, client: str, learning: bool = False
+    ) -> Decision:
+        """Full decision with known IPs (hard deny, rules, default; asks if needed). With `learning`, learning
+        mode replaces the default decision only: the hard deny and every rule still decide first."""
         dec = self.policy.evaluate(host, port, ips, proto)
+        if learning and dec.rule_id is None and self.learning.covers(port):
+            return Decision("allow", LEARNING)
         if dec.action != "ask":
             return dec
         return await self.ask(host, port, ips, proto, client)
@@ -414,12 +483,16 @@ class Gateway:
             if p.id == pending_id:
                 rule = rule_for_approval(p.host, p.port, scope)
                 self.policy.add_rule(rule, top=True)
-                self.save_policy()
+                self.save_policy(by, f"approval {scope} for {p.host}:{p.port}")
                 dec = Decision(rule.action, f"{scope} by {by}", rule.id)
                 del self.pending[key]
                 if not p.future.done():
                     p.future.set_result(dec)
                 self.publish({"type": "resolved", "id": p.id, "action": rule.action, "scope": scope, "by": by})
+                try:  # for rule suggestions; the decision itself is already made
+                    self.events.add_approval(p.host, p.port, scope, by)
+                except Exception:
+                    log.exception("approval not stored for rule suggestions")
                 return {"rule": rule.to_dict()}
         raise KeyError(pending_id)
 
@@ -567,6 +640,7 @@ class Gateway:
             if hint := self._grant_hint(host, port):
                 dec = self.policy.evaluate(host, port, ips, proto)
                 if dec.action != "allow":
+                    self._hit(dec)
                     return block(f"{dec.reason}; {hint}", ips)
             dec = await self.decide(host, port, ips, proto, client)
         else:
@@ -583,11 +657,16 @@ class Gateway:
             # 1) decide on the name alone: denied / not-yet-approved names are never resolved
             pre = self.policy.evaluate_name(host, port)
             hint = self._grant_hint(host, port)
+            if pre.rule_id is None and not hint and self.learning.covers(port):
+                # no rule matched and no grant is defined for it: learning mode decides instead of the mode
+                pre = Decision("allow", LEARNING)
             if hint and pre.action != "allow":
+                self._hit(pre)
                 return block(f"{pre.reason}; {hint}")
             if pre.action == "ask":
                 pre = await self.ask(host, port, [], proto, client)
             if pre.action != "allow":
+                self._hit(pre)
                 return block(f"{pre.reason} (not resolved)")
             # 2) resolve and re-check with IPs (hard deny, CIDR rules); pin to the checked IP
             try:
@@ -596,8 +675,9 @@ class Gateway:
                 return block(f"dns failure: {e}")
             if not ips:
                 return block("no address")
-            dec = await self.decide(host, port, ips, proto, client)
+            dec = await self.decide(host, port, ips, proto, client, learning=pre.reason == LEARNING)
         reason = dec.reason
+        self._hit(dec)
         if dec.action != "allow":
             data.server.error = f"egress policy: blocked ({dec.reason})"
             if hint := self._grant_hint(host, port):

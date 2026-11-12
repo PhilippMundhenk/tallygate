@@ -65,12 +65,29 @@ GW_ALLOW = [
     ("GET", r"/policy"),
     ("PUT", r"/policy"),
     ("PATCH", r"/policy"),
+    ("GET", r"/policy/history"),
+    ("GET", r"/policy/history/[0-9]+"),
+    ("POST", r"/policy/history/[0-9]+/restore"),
+    ("GET", r"/policy/diff"),
+    ("GET", r"/policy/export"),
+    ("POST", r"/policy/import"),
     ("POST", r"/emergency-stop"),
     ("POST", r"/rules"),
     ("DELETE", r"/rules/[A-Za-z0-9_:-]+"),  # template rules are <preset>:<id>
+    ("GET", r"/rules/stats"),
+    ("POST", r"/rules/cleanup"),
+    ("GET", r"/suggestions"),
+    ("GET", r"/learning"),
+    ("POST", r"/learning"),
+    ("DELETE", r"/learning"),
+    ("GET", r"/learning/[a-f0-9]+"),
+    ("POST", r"/learning/apply"),
+    ("POST", r"/suggestions/(accept|dismiss)"),
     ("GET", r"/pending"),
     ("POST", r"/pending/[a-f0-9]+/decide"),
     ("GET", r"/events"),
+    ("GET", r"/destinations"),
+    ("GET", r"/destinations/detail"),
     ("POST", r"/test"),
     ("GET", r"/presets"),
     ("POST", r"/presets/[A-Za-z_][A-Za-z0-9_]*"),
@@ -385,12 +402,16 @@ async def healthz(_request: web.Request):
 
 
 # ------------------------------------------------------------------ gateway relay
-async def gw(app: web.Application, method: str, path: str, body=None, timeout: float = 15):
+async def gw(app: web.Application, method: str, path: str, body=None, timeout: float = 15, by: str = ""):
+    headers = {"Authorization": f"Bearer {GW_TOKEN}"}
+    if by:
+        # attribution in the gateway's policy history: printable ASCII only (it travels in a header)
+        headers["X-Tallygate-By"] = "".join(c if " " <= c <= "~" else "?" for c in by)[:64]
     async with app["http"].request(
         method,
         GW_URL + path,
         json=body,
-        headers={"Authorization": f"Bearer {GW_TOKEN}"},
+        headers=headers,
         timeout=aiohttp.ClientTimeout(total=timeout),
     ) as r:
         data = await r.json(content_type=None)
@@ -423,7 +444,7 @@ async def api_gw(request: web.Request):
     if sub.startswith("/active-grants/"):
         qs = "?" + urllib.parse.urlencode({"by": by})
     try:
-        status, data = await gw(request.app, request.method, sub + qs, body)
+        status, data = await gw(request.app, request.method, sub + qs, body, by=by)
     except (TimeoutError, aiohttp.ClientError) as e:
         return web.json_response({"error": f"gateway unreachable: {e}"}, status=502)
     except ValueError:

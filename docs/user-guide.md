@@ -56,6 +56,25 @@ Live view of every decision: connections (`conn`), approval requests (`ask`), bl
 admin changes. Filter by text, hide DNS noise, or show only blocked entries. The **allow / deny** buttons
 create a rule for exactly that host:port.
 
+### Search, time ranges and export
+
+The live view filters only the rows it has loaded. **Search, time ranges and export** (above the table)
+searches the whole event log on the gateway, which keeps `log_keep_days` (30) days:
+
+- **Show** *events*, *destinations* (every host:port with its number of events, allowed, denied and asked,
+  first seen and last seen) or *new destinations* (first seen inside the time range).
+- **Host**: an exact name or IP, or `*.example.com` for the domain and all its subdomains. **Kind** and
+  **Action** narrow it further, **Text** searches host, action and reason.
+- **Time**: the last hour, 24 hours, today, 7 or 30 days, everything, or a custom range.
+- **Filters**: one click for *Denied today*, *New destinations (24 h)*, *Approvals asked (7 days)* and
+  *Admin changes (7 days)*. *Save filter* keeps the current one in this browser (under the text or host you
+  searched for); ✕ deletes it.
+- **A destination** (click it) shows what the policy decides for it now and which rule decides, its counts
+  and its latest events. The decision is made on the name, without resolving it: the hard deny on the
+  resolved address still applies when the agent connects.
+- **Export CSV / JSON** downloads every matching row (up to 50,000 events) for an audit. Cells that a
+  spreadsheet would run as a formula are prefixed with `'`.
+
 ## Rules
 
 ![Rules](images/rules.png)
@@ -63,11 +82,18 @@ create a rule for exactly that host:port.
 - **Mode**: what happens to unmatched destinations: `ask` (human in the loop), `deny` (strict allowlist) or
   `allow` (blocklist).
 - **Quick actions** (top of the tab), see below.
+- **Learning mode**: record what a new task needs for a limited time, then save the rules in one go. See
+  [Learning mode](#learning-mode).
 - **Test a destination**: dry run against the current policy, including DNS resolution and hard deny.
 - **Add rule**: host glob or CIDR, ports, note and optional TTL. New rules go to the top (first match wins).
 - **Hard deny**: CIDRs that are never reachable. The built-in floor is read-only here (change it only in the
   gateway config file); you can add more, e.g. your Docker host's public IP.
 - **Raw policy JSON**: edit everything at once (validated server-side).
+- **Rule usage and suggestions**: how often each rule matched and when it last did (sortable, filterable),
+  unused rules to clean up, and permanent rules for destinations you keep approving for a limited time. See
+  [Rule usage](#rule-usage).
+- **History, export and import**: every version of the policy, a diff between any two, *Restore*, and the
+  policy with your UI grants as one YAML file. See [History and rollback](#history-and-rollback).
 
 ### Quick actions and templates
 
@@ -108,6 +134,75 @@ no rule or shortcut can open it. This is deliberate: an agent with broad access 
 risk tallygate exists for. To let the agent reach one device, define a [grant](grants.md): exact host and port,
 read or write, a time limit, and your approval each time. Grants created in the UI may only reach addresses
 inside `grants_lan_allow` in the gateway config; the button explains what to add when that list is empty.
+
+### Learning mode
+
+Building an allowlist one prompt at a time is slow when you start a new kind of task. *Rules → Learning mode*
+lets the task run for a while and shows afterwards what it used:
+
+1. Pick a duration (up to `learning_max_minutes`, 120) and the ports (`443`, or `80 and 443`; the choice comes
+   from `learning_ports` in the gateway config) and click *Start learning mode* twice (it asks for
+   confirmation). The header shows **Learning mode · N min left** on every tab while it runs; click it to come
+   back here.
+2. While it runs, a connection to a host name on those ports that **no rule matches** is allowed instead of
+   asked or denied, and logged with the reason `learning mode`.
+3. When the time is up (or you click *Stop learning mode*), the card lists every destination used during the
+   session, grouped by registrable domain, with the number of connections. Destinations only learning mode
+   allowed are ticked, with a proposed rule: the exact host, or `*.domain` when several hosts of one domain
+   were used. Untick what you do not want and click *Save selected as allow rules*.
+
+What stays in force while learning mode runs:
+
+- the **hard deny**, also on the resolved addresses: the local network, the Docker host and metadata stay
+  unreachable;
+- your **deny and ask rules** and **grants** (a name that a grant is defined for is not learned);
+- **name-first decisions**: a name is resolved only after it was allowed; IP literals are not covered at all;
+- the **SNI/Host binding** and the read-only and credential checks.
+
+Learning mode is never stored in the policy. It ends when its time is up, when you stop it, on the
+**emergency stop**, and when the gateway restarts. Saved rules are added at the **bottom** of the list, so a
+deny or ask rule you already have keeps winning over a learned `*.domain` rule. The rules you save are tagged
+`[learning]` and are permanent; check them in the table like any other rule.
+
+### Rule usage
+
+*Rules → Rule usage and suggestions* shows, for every rule, how many connections it decided and when it last
+matched. The counts are kept in the gateway's memory and written to the event log every 15 seconds, so they
+cost nothing noticeable per connection. Click a column header to sort (again to reverse), type to filter, or
+show only unused or only matched rules.
+
+- **Make it permanent?** When you allowed the same destination for 2 minutes or 1 hour at least
+  `suggest_min_approvals` (3) times in `suggest_window_days` (7) days, and no permanent rule covers it, the card
+  offers a permanent allow rule. Several hosts of one domain on the same port become one `*.domain` rule (the
+  domain comes from the Public Suffix List, like *Always (*.domain)*). *Dismiss* hides a suggestion for
+  `log_keep_days`.
+- **Unused rules**: permanent rules that did not match anything for `rule_stale_days` (30) days, counted from
+  when the gateway first saw the rule. Rules with a time limit are never offered, they end by themselves. Tick
+  the ones to remove and click *Remove selected*; the gateway checks again that each one is still unused, and
+  the policy history keeps them in case you need one back.
+
+### History and rollback
+
+Every change to the policy is kept as a version, whoever made it: the UI (`web:<user>`), the API (`api`),
+an approval on Telegram or Matrix (`telegram:<user>`), a template, the emergency stop, or the gateway itself
+when temporary rules expire (`gateway`). *Rules → History, export and import* lists the versions with time,
+author and what changed.
+
+- **Changes** shows what changed from that version to the current policy: mode and timeout, additional
+  hard-deny ranges, and rules added, removed or changed (compared by rule id). Pick any two versions with
+  *From* and *To* to compare them.
+- **Restore** replaces the current policy with that version (it asks for confirmation). The restore is a new
+  version itself, so it can be undone the same way. Rules of an old version whose time limit has passed are
+  ignored and removed, as always.
+- **Export (YAML)** downloads the policy and the grants defined in the UI as one file, for a new host or as a
+  template to share. Secrets are not in it (they cannot be read back at all), and neither are grants from the
+  gateway config file.
+- **Import from file** checks the file like a normal policy change and every grant like the grant editor,
+  then shows what would change. *Import* replaces the policy and adds or replaces the UI grants in the file;
+  grants that are not in the file stay. A `hard_deny_floor` in the file is ignored: the floor comes only from
+  the gateway config file.
+
+The gateway keeps the last `policy_history_keep` (500) versions in `policy-history.db` in its data volume.
 
 ## Console
 

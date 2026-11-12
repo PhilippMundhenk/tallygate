@@ -67,3 +67,21 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 details.help{margin:6px 0 10px;font-size:13px;color:var(--muted)}details.help summary{cursor:pointer;color:var(--blue)}details.help ul{margin:6px 0;padding-left:18px}details.help li{margin:3px 0}details.help a{color:var(--blue)}.fieldhelp{display:grid;grid-template-columns:max-content 1fr;gap:3px 10px;font-size:12px;color:var(--muted);margin:8px 0}.fieldhelp dt{font-weight:600}.fieldhelp dd{margin:0}label small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
 button.armed{outline:2px solid var(--amber);outline-offset:2px}.confirm-q{color:var(--amber);font-size:12px;flex-basis:100%}
 .banner{margin:0;padding:8px 16px;font-size:13px;background:#2a2108;border-bottom:1px solid var(--amber)}.banner a{color:var(--amber)}
+/* policy history (#71) */
+.diff{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:10px 0}.diff ul{margin:4px 0;padding-left:18px}
+.diff li{margin:3px 0;overflow-wrap:anywhere}.diff .add{color:var(--green)}.diff .del{color:var(--red)}.diff .chg{color:var(--amber)}
+.cellbtns{display:flex;gap:4px;flex-wrap:wrap}#historyBox label.inline select{flex:1;min-width:0;margin:0}
+label.filebtn{display:inline-block;margin:0;background:#2c313c;color:var(--fg);border-radius:6px;padding:7px 12px;cursor:pointer}
+label.filebtn input{position:absolute;opacity:0;width:1px;height:1px}label.filebtn:focus-within{outline:2px solid #93c5fd;outline-offset:2px}
+/* rule usage (#70) */
+th button.sort{background:none;color:inherit;padding:0;font:inherit;font-size:12px}th[aria-sort=ascending] button.sort::after{content:" ▲"}th[aria-sort=descending] button.sort::after{content:" ▼"}
+.suggest{border:1px solid var(--blue);border-radius:8px;padding:8px 12px;margin:8px 0}.suggest p{margin:0 0 6px}
+ul.checklist{list-style:none;padding:0;margin:6px 0 10px}ul.checklist label{display:flex;gap:6px;align-items:baseline;margin:3px 0;color:var(--fg);overflow-wrap:anywhere}
+/* log search (#80) */
+.search-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px 12px;align-items:end}
+.search-grid label{margin:0}.search-grid input,.search-grid select{width:100%}.search-grid .btns{grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap}
+button.link{background:none;color:var(--fg);padding:0;font:12px ui-monospace,monospace;text-decoration:underline dotted;text-align:left;overflow-wrap:anywhere}
+#lsSaved{margin-bottom:8px}#lsDest h4{margin:0}
+/* learning mode (#69) */
+.learnbadge{background:var(--amber);color:#000;font-weight:600;border-radius:12px;padding:3px 10px;font-size:12px}
+.learn-on{border-left:3px solid var(--amber);padding-left:8px}#learnSessions{margin-top:10px}#learnBox label.inline select{flex:1;min-width:0;width:100%;margin:0}

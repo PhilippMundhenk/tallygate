@@ -6,11 +6,13 @@ import asyncio
 import contextlib
 import hmac
 import json
+import re
 import time
 from typing import TYPE_CHECKING
 
 from aiohttp import web
 
+from egressgw import history, learning, usage
 from egressgw.policy import ACTIONS, SCOPES, Decision, Policy, Rule, is_ip, load_preset, valid_hostname
 
 if TYPE_CHECKING:
@@ -48,7 +50,7 @@ def build_app(gw: Gateway) -> web.Application:
     async def put_policy(request):
         old = gw.policy.default
         gw.adopt(Policy.from_dict(await request.json()))  # floor + service exceptions stay as configured
-        gw.save_policy()
+        gw.save_policy(_by(request), "policy replaced")
         gw.record(kind="admin", action="policy", reason="policy replaced via API" + _mode_changed(gw, old))
         return _json(gw.policy.describe())
 
@@ -69,7 +71,7 @@ def build_app(gw: Gateway) -> web.Application:
             raise ValueError("ask_timeout must be a whole number of seconds, 5..3600")
         old = gw.policy.default
         gw.policy.default, gw.policy.ask_timeout = default, timeout
-        gw.save_policy()
+        gw.save_policy(_by(request), f"mode {default}, approval timeout {timeout} s")
         reason = f"mode {default}, approval timeout {timeout} s via API" + _mode_changed(gw, old)
         gw.record(kind="admin", action="policy", reason=reason)
         return _json(gw.policy.describe())
@@ -85,7 +87,7 @@ def build_app(gw: Gateway) -> web.Application:
         body = await request.json()
         top = bool(body.pop("top", True))
         rule = gw.policy.add_rule(Rule.from_dict(body), top=top)
-        gw.save_policy()
+        gw.save_policy(_by(request), f"rule {rule.id} added ({rule.action} {rule.host or rule.cidr})")
         gw.record(kind="admin", action="rule+", host=rule.host or rule.cidr, reason=json.dumps(rule.to_dict()))
         return _json(rule.to_dict(), 201)
 
@@ -94,7 +96,7 @@ def build_app(gw: Gateway) -> web.Application:
         rid = request.match_info["rid"]
         if not gw.policy.remove_rule(rid):
             return _json({"error": "not found"}, 404)
-        gw.save_policy()
+        gw.save_policy(_by(request), f"rule {rid} removed")
         gw.record(kind="admin", action="rule-", reason=f"rule {rid} removed")
         return _json({"ok": True})
 
@@ -131,7 +133,7 @@ def build_app(gw: Gateway) -> web.Application:
         gw.policy.rules = [r for r in gw.policy.rules if r.source != source]  # its own earlier rules
         for r in reversed(preset.rules):
             gw.policy.add_rule(r, top=True)
-        gw.save_policy()
+        gw.save_policy(_by(request), f"template {name} applied")
         gw.record(kind="admin", action="preset", reason=f"preset {name} applied ({len(ids)} rules, ttl={ttl})")
         return _json({"added": [r.id for r in preset.rules], "expires": expires})
 
@@ -145,7 +147,7 @@ def build_app(gw: Gateway) -> web.Application:
         for rid in removed:
             gw.policy.remove_rule(rid)
         if removed:
-            gw.save_policy()
+            gw.save_policy(_by(request), f"template {name} undone")
         gw.record(kind="admin", action="preset", reason=f"preset {name} undone ({len(removed)} rules)")
         return _json({"removed": removed})
 
@@ -201,8 +203,38 @@ def build_app(gw: Gateway) -> web.Application:
     @routes.get("/events")
     async def events(request):
         q = request.query
+        before = int(q["before"]) if q.get("before") else None
+        return _json(gw.events.recent(int(q.get("limit", 200)), before, q.get("q"), **_search(q)))
+
+    @routes.get("/destinations")
+    async def destinations(request):
+        """Destinations (host:port) seen in a time range, with counts; `new=1` only those first seen in it."""
+        q = request.query
+        f = _search(q)
+        for k in ("host", "port", "kind", "action"):  # a destination list is filtered by time and text only
+            f.pop(k, None)
+        rows = gw.events.destinations(int(q.get("limit", 200)), q.get("new") == "1", q.get("q"), **f)
+        return _json(rows)
+
+    @routes.get("/destinations/detail")
+    async def destination(request):
+        """One destination: counts, what the policy decides for it now (on the name, without resolving it),
+        and its latest events."""
+        q = request.query
+        host, port = str(q.get("host", "")).lower().rstrip("."), int(q.get("port", 443))
+        if not (is_ip(host) or valid_hostname(host)):
+            raise ValueError("host must be a host name or an IP address")
+        stats = gw.events.destinations(1, host=host, port=port)
+        d = gw.policy.evaluate(host, port, [host]) if is_ip(host) else gw.policy.evaluate_name(host, port)
+        rule = next((r.to_dict() for r in gw.policy.rules if r.id == d.rule_id), None)
         return _json(
-            gw.events.recent(int(q.get("limit", 200)), int(q["before"]) if q.get("before") else None, q.get("q"))
+            {
+                "host": host,
+                "port": port,
+                "stats": stats[0] if stats else None,
+                "decision": {"action": d.action, "reason": d.reason, "rule_id": d.rule_id, "rule": rule},
+                "events": gw.events.recent(int(q.get("limit", 100)), host=host, port=port),
+            }
         )
 
     @routes.get("/stream")
@@ -236,6 +268,195 @@ def build_app(gw: Gateway) -> web.Application:
         gw.secrets.set(name, body.get("value") or None)
         gw.record(kind="admin", action="secret", reason=f"secret {name} {'set' if body.get('value') else 'removed'}")
         return _json({"names": gw.secrets.names()})
+
+    # ---------------------------------------------------------------- learning mode (#69)
+    def _learning_state() -> dict:
+        lm = gw.learning
+        return {
+            "active": lm.current(),
+            "ports_allowed": lm.ports,
+            "max_minutes": lm.max_minutes,
+            "sessions": lm.sessions(),
+        }
+
+    @routes.get("/learning")
+    async def learning_get(_):
+        return _json(_learning_state())
+
+    @routes.post("/learning")
+    async def learning_start(request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("expected {minutes, ports}")
+        gw.start_learning(body.get("minutes"), body.get("ports"), _by(request))
+        return _json(_learning_state(), 201)
+
+    @routes.delete("/learning")
+    async def learning_stop(request):
+        gw.end_learning(_by(request), "stopped")
+        return _json(_learning_state())
+
+    @routes.get("/learning/{sid:[a-f0-9]+}")
+    async def learning_summary(request):
+        s = gw.learning.session(request.match_info["sid"])
+        if s is None:
+            return _json({"error": "no such learning session"}, 404)
+        return _json({"session": s, "groups": learning.summary(gw.events.db, s, gw.policy)})
+
+    @routes.post("/learning/apply")
+    async def learning_apply(request):
+        """Save proposed rules from a learning session: exact hosts or *.<registrable domain> only."""
+        body = await request.json()
+        rules = body.get("rules") if isinstance(body, dict) else None
+        if not isinstance(rules, list) or not rules:
+            raise ValueError("expected {rules: [{host, port}]}")
+        checked = list(dict.fromkeys(learning.check_rule(r) for r in rules))
+        note = "learned " + time.strftime("%Y-%m-%d")
+        added = [Rule(action="allow", host=h, port=p, note=note, source="learning") for h, p in checked]
+        for r in added:  # at the bottom: an existing deny or ask rule keeps winning over a learned wildcard
+            gw.policy.add_rule(r, top=False)
+        gw.save_policy(_by(request), f"{len(added)} rules from learning mode")
+        gw.record(
+            kind="admin", action="rule+", reason=f"from learning mode: {', '.join(f'{h}:{p}' for h, p in checked)}"
+        )
+        return _json({"added": [r.to_dict() for r in added]}, 201)
+
+    # ---------------------------------------------------------------- rule usage and suggestions (#70)
+    @routes.get("/rules/stats")
+    async def rule_stats(_):
+        rules = usage.rule_usage(gw.policy, gw.events.hit_stats(), gw.hits, time.time(), gw.stale_days)
+        return _json({"rules": rules, "stale_days": gw.stale_days})
+
+    @routes.post("/rules/cleanup")
+    async def rule_cleanup(request):
+        """Remove the given rules, but only those that are still unused (checked again here)."""
+        body = await request.json()
+        ids = body.get("ids") if isinstance(body, dict) else None
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            raise ValueError("expected {ids: [rule ids]}")
+        rules = usage.rule_usage(gw.policy, gw.events.hit_stats(), gw.hits, time.time(), gw.stale_days)
+        stale = {r["id"] for r in rules if r["stale"]}
+        removed = [i for i in dict.fromkeys(ids) if i in stale]
+        for rid in removed:
+            gw.policy.remove_rule(rid)
+        if removed:
+            gw.save_policy(_by(request), f"unused rules removed: {', '.join(removed)}")
+            gw.record(kind="admin", action="rule-", reason=f"unused rules removed: {', '.join(removed)}")
+        return _json({"removed": removed, "kept": [i for i in ids if i not in removed]})
+
+    def _suggestions() -> list[dict]:
+        since = time.time() - gw.suggest_days * 86400
+        return usage.suggestions(gw.events.approvals_since(since), gw.policy, gw.events.dismissed(), gw.suggest_min)
+
+    @routes.get("/suggestions")
+    async def suggestions(_):
+        return _json({"suggestions": _suggestions(), "min_approvals": gw.suggest_min, "window_days": gw.suggest_days})
+
+    @routes.post("/suggestions/accept")
+    async def accept_suggestion(request):
+        """Add the permanent rule of a current suggestion (built here, not taken from the request)."""
+        key = str((await request.json()).get("key", ""))
+        s = next((s for s in _suggestions() if s["key"] == key), None)
+        if s is None:
+            return _json({"error": "no such suggestion (already accepted or dismissed?)"}, 404)
+        note = f"suggested: approved {s['count']}x in {gw.suggest_days} days"
+        rule = gw.policy.add_rule(Rule(**s["rule"], note=note, source="suggestion"))
+        gw.save_policy(_by(request), f"suggestion accepted: rule {rule.id} (allow {rule.host})")
+        gw.record(kind="admin", action="rule+", host=rule.host, reason=json.dumps(rule.to_dict()))
+        return _json(rule.to_dict(), 201)
+
+    @routes.post("/suggestions/dismiss")
+    async def dismiss_suggestion(request):
+        key = str((await request.json()).get("key", ""))
+        if not key:
+            raise ValueError("expected {key}")
+        gw.events.dismiss(key)
+        return _json({"dismissed": key})
+
+    # ---------------------------------------------------------------- policy history, export, import
+    @routes.get("/policy/history")
+    async def policy_history(request):
+        q = request.query
+        before = int(q["before"]) if q.get("before") else None
+        return _json({"versions": gw.history.versions(int(q.get("limit", 100)), before), "keep": gw.history.keep})
+
+    def _version(vid: str) -> dict:
+        v = gw.history.get(int(vid))
+        if v is None:
+            raise KeyError(f"no policy version {vid}")
+        return v
+
+    @routes.get("/policy/history/{vid:[0-9]+}")
+    async def policy_version(request):
+        try:
+            return _json(_version(request.match_info["vid"]))
+        except KeyError as e:
+            return _json({"error": e.args[0]}, 404)
+
+    @routes.get("/policy/diff")
+    async def policy_diff(request):
+        """Changes from version `from` to version `to` (default: the policy in force now)."""
+        q = request.query
+        if not q.get("from"):
+            raise ValueError("from (a version id) is required")
+        try:
+            old = _version(q["from"])["policy"]
+            new = gw.policy.to_dict() if q.get("to", "current") == "current" else _version(q["to"])["policy"]
+        except KeyError as e:
+            return _json({"error": e.args[0]}, 404)
+        return _json(history.diff(old, new))
+
+    @routes.post("/policy/history/{vid:[0-9]+}/restore")
+    async def policy_restore(request):
+        vid = request.match_info["vid"]
+        try:
+            v = _version(vid)
+        except KeyError as e:
+            return _json({"error": e.args[0]}, 404)
+        old = gw.policy.default
+        gw.adopt(Policy.from_dict(v["policy"]))  # validated like PUT /policy; the floor stays as configured
+        gw.save_policy(_by(request), f"version {vid} restored")
+        gw.record(kind="admin", action="policy", reason=f"policy version {vid} restored" + _mode_changed(gw, old))
+        return _json(gw.policy.describe())
+
+    @routes.get("/policy/export")
+    async def policy_export(_):
+        name = time.strftime("tallygate-policy-%Y%m%d-%H%M.yaml", time.gmtime())
+        return _json({"filename": name, "yaml": history.export_doc(gw.policy.to_dict(), gw.grants.ui_defs())})
+
+    @routes.post("/policy/import")
+    async def policy_import(request):
+        """Validate an export (like PUT /policy and PUT /grants) and show what it would change; with
+        `apply: true` replace the policy and add or replace the UI grants it contains. All or nothing."""
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("expected {yaml, apply}")
+        pol_d, grants_d, warnings = history.parse_import(body.get("yaml"))
+        new = Policy.from_dict(pol_d)
+        checked = {n: gw.grants.check_ui(n, d) for n, d in grants_d.items()}
+        result = {
+            "diff": history.diff(gw.policy.to_dict(), new.to_dict()),
+            "grants": {
+                "added": sorted(n for n in checked if n not in gw.grants.defs),
+                "changed": sorted(
+                    n for n, g in checked.items() if n in gw.grants.defs and gw.grants.defs[n].to_dict() != g.to_dict()
+                ),
+            },
+            "warnings": warnings,
+            "applied": False,
+        }
+        if body.get("apply") is True:
+            old = gw.policy.default
+            gw.adopt(new)
+            gw.save_policy(_by(request), "policy imported")
+            for n, d in grants_d.items():
+                gw.grants.upsert_ui(n, d)
+            note = _mode_changed(gw, old)
+            gw.record(kind="admin", action="policy", reason=f"policy imported ({len(checked)} UI grants)" + note)
+            if checked:
+                gw.publish({"type": "grants"})
+            result["applied"] = True
+        return _json(result)
 
     # ---------------------------------------------------------------- grants (admin)
     @routes.get("/grants")
@@ -320,6 +541,39 @@ def build_app(gw: Gateway) -> web.Application:
     return app
 
 
+def _search(q) -> dict:
+    """Validated log search filters from a query string (#80)."""
+    from egressgw.store import EVENT_KINDS
+
+    f: dict = {}
+    if q.get("host"):
+        host = q["host"].strip().lower()
+        if len(host) > 255 or not re.fullmatch(r"(\*\.)?[a-z0-9_.:\[\]-]+", host):
+            raise ValueError("host: an exact name or IP, or *.domain")
+        f["host"] = host
+    if q.get("port"):
+        f["port"] = int(q["port"])
+    if q.get("kind"):
+        kinds = q["kind"].split(",")
+        if not set(kinds) <= set(EVENT_KINDS):
+            raise ValueError(f"kind must be one of {list(EVENT_KINDS)}")
+        f["kind"] = kinds
+    if q.get("action"):
+        actions = q["action"].split(",")
+        if not all(re.fullmatch(r"[a-z+-]{1,32}", a) for a in actions):
+            raise ValueError("action: e.g. allow, deny, ask")
+        f["action"] = actions
+    for k in ("since", "until"):
+        if q.get(k):
+            f[k] = float(q[k])
+    return f
+
+
+def _by(request: web.Request) -> str:
+    """Who made a change, for the policy history: the control plane sets it to the session user."""
+    return request.headers.get("X-Tallygate-By", "")[:64] or "api"
+
+
 def _mode_changed(gw: Gateway, old: str) -> str:
     """A mode change ends an auto-approval suspension left by the emergency stop. Returns a note for the log."""
     if gw.policy.default != old and gw.grants.resume_auto():
@@ -392,13 +646,13 @@ def emergency_stop(gw: Gateway, by: str) -> dict:
         for rid in removed:
             gw.policy.remove_rule(rid)
         if removed:
-            gw.save_policy()
+            gw.save_policy(by, "emergency stop: internet shortcuts removed")
         return {"removed": removed, "errors": errors}
 
     def mode_deny() -> dict:
         old = gw.policy.default
         gw.policy.default = "deny"
-        gw.save_policy()
+        gw.save_policy(by, "emergency stop: mode deny")
         return {"previous": old}
 
     _step(steps, "suspend_auto_approval", lambda: gw.grants.suspend_auto(by))
@@ -406,6 +660,7 @@ def emergency_stop(gw: Gateway, by: str) -> dict:
     _step(steps, "deny_pending", deny_asks)
     _step(steps, "deny_grant_requests", deny_grant_requests)
     _step(steps, "remove_internet_presets", remove_internet)
+    _step(steps, "end_learning", lambda: {"ended": [s["id"]] if (s := gw.end_learning(by, "emergency stop")) else []})
     _step(steps, "mode_deny", mode_deny)
     ok = all(s["ok"] for s in steps)
     counts = ", ".join(
