@@ -1,0 +1,8 @@
+/* workspace files (files.js) */
+.crumbs{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:0 0 10px}.crumbs span{color:var(--muted)}
+button.link{background:none;border:0;padding:0;color:#93c5fd;text-align:left;font:inherit;cursor:pointer;overflow-wrap:anywhere}
+button.link:hover{text-decoration:underline}
+table.files td{overflow-wrap:anywhere}table.files a.dl{color:#93c5fd}
+label.check-inline{display:flex;gap:5px;align-items:center;margin:0}label.check-inline input{flex:none!important;min-width:0!important}
+#fileInput{max-width:100%}
+table.files{min-width:0!important}@media(max-width:600px){table.files th:nth-child(3),table.files td:nth-child(3){display:none}}

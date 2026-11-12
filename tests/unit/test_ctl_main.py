@@ -5,6 +5,7 @@ decisions the e2e tests cannot provoke with the real gateway and ttyd."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import importlib
 import json
@@ -71,6 +72,7 @@ def load(monkeypatch, tmp_path):
 class World:
     def __init__(self) -> None:
         self.seen: list[tuple[str, str, dict, object]] = []
+        self.by: list[str | None] = []  # X-Tallygate-By of every relayed gateway call
         self.agent: dict[str, tuple[int, bytes]] = {"status": (200, b'{"claude_version": "2.0.0"}')}
         self.stream: tuple[int, bytes] = (200, b"")
         self.ttyd_frames: list = []  # sent to the browser (via control) right after the handshake
@@ -83,12 +85,14 @@ class World:
         a.router.add_route("*", "/gw/{tail:.*}", self.gw)
         a.router.add_get("/gh/user", self.github)
         a.router.add_get("/term/bash/ws", self.ttyd)
+        a.router.add_route("*", "/setup/{what}", self.agent_setup)
         a.router.add_get("/{what}", self.agent_status)
         return a
 
     async def gw(self, request):
         body = await request.json() if request.can_read_body else None
         self.seen.append((request.method, request.path, dict(request.query), body))
+        self.by.append(request.headers.get("X-Tallygate-By"))
         return web.json_response({"ok": True})
 
     async def gw_stream(self, _request):
@@ -108,6 +112,12 @@ class World:
 
     async def agent_status(self, request):
         status, raw = self.agent.get(request.match_info["what"], (404, b"{}"))
+        return web.Response(status=status, body=raw)
+
+    async def agent_setup(self, request):
+        body = await request.json() if request.can_read_body else None
+        self.seen.append((request.method, request.path, {}, body))
+        status, raw = self.agent.get("setup/" + request.match_info["what"], (404, b"{}"))
         return web.Response(status=status, body=raw)
 
     async def ttyd(self, request):
@@ -265,7 +275,8 @@ def test_the_fingerprint_follows_the_password_source(load, monkeypatch):
 
 
 def test_failure_tracking_stays_bounded_under_address_spraying(load):
-    main = load()
+    # the per-IP lockout (and thus its memory) only applies with trusted per-client addresses (#101)
+    main = load(TRUST_FORWARDED_FOR="1", TRUSTED_PROXIES="127.0.0.1/32")
 
     async def body():
         async with started(main, login=False) as c:
@@ -336,6 +347,48 @@ def test_mode_patch_and_emergency_stop_are_relayed_and_attributed(load):
         ("POST", "/gw/emergency-stop", {}, {"by": "web:admin"}),
         ("POST", "/gw/emergency-stop", {}, {"by": "web:admin"}),
     ]
+
+
+def test_policy_history_routes_are_relayed_with_the_session_user(load):
+    main = load()
+    world = World()
+
+    async def body():
+        async with started(main, world) as c:
+            for method, path in [
+                ("GET", "/api/gw/policy/history?limit=5"),
+                ("GET", "/api/gw/policy/history/3"),
+                ("GET", "/api/gw/policy/diff?from=1&to=current"),
+                ("POST", "/api/gw/policy/history/3/restore"),
+                ("GET", "/api/gw/policy/export"),
+                ("POST", "/api/gw/policy/import"),
+            ]:
+                assert (await c.request(method, path, headers=CSRF)).status == 200, path
+            assert (await c.post("/api/gw/policy/history/x/restore", headers=CSRF)).status == 404
+
+    run(body())
+    assert [s[1] for s in world.seen] == [
+        "/gw/policy/history",
+        "/gw/policy/history/3",
+        "/gw/policy/diff",
+        "/gw/policy/history/3/restore",
+        "/gw/policy/export",
+        "/gw/policy/import",
+    ]
+    assert world.seen[2][2] == {"from": "1", "to": "current"} and set(world.by) == {"web:admin"}
+
+
+def test_attribution_header_is_printable_ascii(load):
+    main = load()
+    world = World()
+
+    async def body():
+        async with started(main, world) as c:
+            assert (await c.get("/api/gw/policy")).status == 200
+            await main.gw(c.server.app, "GET", "/policy", by="web:josé\nx")
+
+    run(body())
+    assert world.by == ["web:admin", "web:jos??x"]
 
 
 def test_gateway_down(load):
@@ -465,8 +518,9 @@ def test_console_filters_both_directions_and_adds_the_credential(load):
 
     assert run(body()) == [b"0hello", b"0world"]  # output only: title/preferences dropped
     hello = json.loads(world.ttyd_got[0])
-    assert hello == {"AuthToken": "YWdlbnQ6dHR5ZC1zZWNyZXQ=", "columns": 80, "rows": 24}
-    assert world.ttyd_auth == "Basic YWdlbnQ6dHR5ZC1zZWNyZXQ="
+    token = base64.b64encode(b"agent:ttyd-secret").decode()  # the test credential, as ttyd expects it
+    assert hello == {"AuthToken": token, "columns": 80, "rows": 24}
+    assert world.ttyd_auth == f"Basic {token}"
     assert b"2evil" not in world.ttyd_got and b"9x" not in world.ttyd_got
     assert b"0ls\r" in world.ttyd_got and b"1{}" in world.ttyd_got
 

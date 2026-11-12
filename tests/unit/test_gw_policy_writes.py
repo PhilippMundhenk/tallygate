@@ -127,6 +127,7 @@ def test_emergency_stop_runs_every_step_and_suspends_auto_approval(gw):
         "deny_pending",
         "deny_grant_requests",
         "remove_internet_presets",
+        "end_learning",
         "mode_deny",
     ]
     assert steps["revoke_grants"]["revoked"] == ["auto"] and not gw.grants.active
@@ -135,6 +136,7 @@ def test_emergency_stop_runs_every_step_and_suspends_auto_approval(gw):
     assert steps["deny_grant_requests"]["denied"] == ["nas"] and req.status == "denied"
     assert sorted(steps["remove_internet_presets"]["removed"]) == ["internet:all", "open:web"]
     assert [r.id for r in gw.policy.rules] == ["ok"]
+    assert steps["end_learning"]["ended"] == []  # no session was running
     assert steps["mode_deny"]["previous"] == "ask" and gw.policy.default == "deny"
     assert gw.grants.auto_suspended["by"] == "web:admin"
     ev = gw.events.recent(1)[0]

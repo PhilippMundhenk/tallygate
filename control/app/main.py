@@ -75,12 +75,30 @@ GW_ALLOW = [
     ("GET", r"/policy"),
     ("PUT", r"/policy"),
     ("PATCH", r"/policy"),
+    ("GET", r"/policy/history"),
+    ("GET", r"/policy/history/[0-9]+"),
+    ("POST", r"/policy/history/[0-9]+/restore"),
+    ("GET", r"/policy/diff"),
+    ("GET", r"/policy/export"),
+    ("POST", r"/policy/import"),
     ("POST", r"/emergency-stop"),
     ("POST", r"/rules"),
     ("DELETE", r"/rules/[A-Za-z0-9_:-]+"),  # template rules are <preset>:<id>
+    ("GET", r"/rules/stats"),
+    ("POST", r"/rules/cleanup"),
+    ("GET", r"/suggestions"),
+    ("GET", r"/learning"),
+    ("POST", r"/learning"),
+    ("DELETE", r"/learning"),
+    ("GET", r"/learning/[a-f0-9]+"),
+    ("POST", r"/learning/apply"),
+    ("POST", r"/suggestions/(accept|dismiss)"),
     ("GET", r"/pending"),
     ("POST", r"/pending/[a-f0-9]+/decide"),
     ("GET", r"/events"),
+    ("GET", r"/events/summary"),
+    ("GET", r"/destinations"),
+    ("GET", r"/destinations/detail"),
     ("POST", r"/test"),
     ("GET", r"/presets"),
     ("POST", r"/presets/[A-Za-z_][A-Za-z0-9_]*"),
@@ -231,10 +249,22 @@ def _recent_failures(ip: str, now: float) -> list[float]:
     return [t for t in _login_failures.get(ip, []) if now - t < LOGIN_WINDOW]
 
 
+def _per_ip_lockout() -> bool:
+    # The per-address failure lockout only protects when we actually see per-client addresses. Behind a reverse
+    # proxy without trusted forwarding, every client shares the proxy's address, so the lockout would let one
+    # attacker lock the operator out (#101). Without it, brute force is still capped at ~1 guess/s by the global
+    # lock, plus LOGIN_MAX_WAITING for floods.
+    return TRUST_FORWARDED and bool(TRUSTED_PROXIES)
+
+
 @web.middleware
 async def security(request: web.Request, handler):
     path = request.path
-    if path in ("/login", "/healthz") or path.startswith("/static/login") or path in PUBLIC_FILES:
+    if (
+        path in ("/login", "/healthz", "/static/logo.svg", "/static/favicon.svg")
+        or path.startswith("/static/login")
+        or path in PUBLIC_FILES
+    ):
         resp = await handler(request)
     elif path == PUSH_ACT:
         # No session (a phone's session may have expired), but the same CSRF rule as every other API call;
@@ -332,7 +362,7 @@ async def login_page(request: web.Request) -> web.StreamResponse:
         return web.Response(status=413, text="Request too large.")  # also refuses chunked bodies, unread
     ip = client_ip(request)
     too_many = web.Response(status=429, text="Too many attempts, try again later.")
-    if len(_recent_failures(ip, time.time())) >= LOGIN_MAX_FAILURES:
+    if _per_ip_lockout() and len(_recent_failures(ip, time.time())) >= LOGIN_MAX_FAILURES:
         return too_many
     if _login_waiting >= LOGIN_MAX_WAITING:
         return web.Response(status=429, text="Too many login attempts in progress, try again shortly.")
@@ -344,14 +374,15 @@ async def login_page(request: web.Request) -> web.StreamResponse:
             # re-check inside the lock: requests that queued together must not exceed the limit
             now = time.time()
             fails = _recent_failures(ip, now)
-            if len(fails) >= LOGIN_MAX_FAILURES:
+            if _per_ip_lockout() and len(fails) >= LOGIN_MAX_FAILURES:
                 return too_many
             # taken before the check: a password change during the check can only end the new session
             fingerprint = password_fingerprint()
             ok = await asyncio.get_running_loop().run_in_executor(None, check_password, pw)
             if not ok:
-                fails.append(now)
-                _login_failures[ip] = fails
+                if _per_ip_lockout():  # meaningless and unbounded when every client shares one address
+                    fails.append(now)
+                    _login_failures[ip] = fails
                 await asyncio.sleep(1)
     finally:
         _login_waiting -= 1
@@ -483,12 +514,16 @@ async def api_push_act(request: web.Request):
 
 
 # ------------------------------------------------------------------ gateway relay
-async def gw(app: web.Application, method: str, path: str, body=None, timeout: float = 15):
+async def gw(app: web.Application, method: str, path: str, body=None, timeout: float = 15, by: str = ""):
+    headers = {"Authorization": f"Bearer {GW_TOKEN}"}
+    if by:
+        # attribution in the gateway's policy history: printable ASCII only (it travels in a header)
+        headers["X-Tallygate-By"] = "".join(c if " " <= c <= "~" else "?" for c in by)[:64]
     async with app["http"].request(
         method,
         GW_URL + path,
         json=body,
-        headers={"Authorization": f"Bearer {GW_TOKEN}"},
+        headers=headers,
         timeout=aiohttp.ClientTimeout(total=timeout),
     ) as r:
         data = await r.json(content_type=None)
@@ -522,7 +557,7 @@ async def api_gw(request: web.Request):
     if sub.startswith("/active-grants/"):
         qs = "?" + urllib.parse.urlencode({"by": by})
     try:
-        status, data = await gw(request.app, request.method, sub + qs, body)
+        status, data = await gw(request.app, request.method, sub + qs, body, by=by)
     except (TimeoutError, aiohttp.ClientError) as e:
         return web.json_response({"error": f"gateway unreachable: {e}"}, status=502)
     except ValueError:
@@ -592,26 +627,420 @@ async def api_github_check(request: web.Request):
     return web.json_response(info)
 
 
+# Endpoints of the agent's status server (agent/status.py) the UI may use. The setup actions only do what
+# the agent user can do in its own container anyway (start `claude auth login`, set the git identity, give
+# Remote Control's consent); control adds the session and CSRF checks and treats every answer as untrusted.
+AGENT_ROUTES = {
+    ("GET", "status"),
+    ("GET", "selftest"),
+    ("GET", "setup/claude-login"),
+    ("POST", "setup/claude-login"),
+    ("POST", "setup/claude-code"),
+    ("GET", "setup/git-identity"),
+    ("POST", "setup/git-identity"),
+    ("POST", "setup/remote-control"),
+}
+AGENT_SETUP_MAX_BODY = 4096
+# The agent reports the login URL it read from `claude auth login`. It is shown as a link, so only Anthropic's
+# login pages pass: a compromised agent must not be able to send the operator to a page of its choosing.
+LOGIN_URL_HOSTS = {"claude.com", "claude.ai", "platform.claude.com", "console.anthropic.com"}
+
+
+def safe_login_url(url: object) -> str:
+    if not isinstance(url, str) or len(url) > 2048 or any(c in url for c in " \"'<>\\\r\n\t"):
+        return ""
+    u = urllib.parse.urlsplit(url)
+    if u.scheme != "https" or u.hostname not in LOGIN_URL_HOSTS or u.port or u.username or u.password:
+        return ""
+    return url if u.path.endswith("/oauth/authorize") else ""
+
+
+async def agent_call(app: web.Application, method: str, what: str, body: dict | None = None) -> tuple[int, dict]:
+    """Call the agent's status server; the answer is size-limited and must be a JSON object."""
+    async with app["http"].request(
+        method, f"http://{AGENT_HOST}:{AGENT_STATUS_PORT}/{what}", json=body, timeout=aiohttp.ClientTimeout(total=90)
+    ) as r:
+        raw = b""  # read() returns what has arrived so far: read until the end or the cap
+        while len(raw) <= AGENT_MAX_BYTES and (chunk := await r.content.read(AGENT_MAX_BYTES + 1 - len(raw))):
+            raw += chunk
+        if len(raw) > AGENT_MAX_BYTES:
+            raise ValueError("agent response too large")
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("not an object")
+        return r.status, data
+
+
 async def api_agent(request: web.Request):
-    """Read-only agent status + self-test (served by agent/status.py on the agent network)."""
+    """Agent status, self-test and setup actions (served by agent/status.py on the agent network)."""
     what = request.match_info["what"]
-    if what not in ("status", "selftest"):
+    if (request.method, what) not in AGENT_ROUTES:
         raise web.HTTPNotFound()
+    body = None
+    if request.method == "POST":
+        if (request.content_length or 0) > AGENT_SETUP_MAX_BODY:
+            return web.json_response({"error": "request too large"}, status=413)
+        body = await json_body(request)
+        if body is None:
+            body = {}
+        if not isinstance(body, dict):
+            return web.json_response({"error": "expected a JSON object"}, status=400)
     try:
-        async with request.app["http"].get(
-            f"http://{AGENT_HOST}:{AGENT_STATUS_PORT}/{what}", timeout=aiohttp.ClientTimeout(total=90)
-        ) as r:
-            raw = b""  # read() returns what has arrived so far: read until the end or the cap
-            while len(raw) <= AGENT_MAX_BYTES and (chunk := await r.content.read(AGENT_MAX_BYTES + 1 - len(raw))):
-                raw += chunk
-            if len(raw) > AGENT_MAX_BYTES:
-                return web.json_response({"error": "agent response too large"}, status=502)
-            data = json.loads(raw)
-            if not isinstance(data, dict):
-                raise ValueError("not an object")
-            return web.json_response(data, status=200 if r.status == 200 else 502)
+        status, data = await agent_call(request.app, request.method, what, body)
+    except ValueError as e:
+        msg = "agent response too large" if "too large" in str(e) else f"agent unreachable or invalid response: {e}"
+        return web.json_response({"error": msg}, status=502)
+    except (TimeoutError, aiohttp.ClientError) as e:
+        return web.json_response({"error": f"agent unreachable or invalid response: {e}"}, status=502)
+    if what.startswith("setup/claude-"):
+        data["url"] = safe_login_url(data.get("url"))
+    if status != 200:  # the agent's own refusals (400/409) are passed on; anything else is a failure
+        status = status if status in (400, 409) else 502
+    return web.json_response(data, status=status)
+
+
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]", "::1")
+
+
+def password_state() -> str:
+    if PROXY_AUTH_HEADER:
+        return "proxy"
+    if os.environ.get("CONTROL_PASSWORD_HASH"):
+        return "env-hash"
+    if os.environ.get("CONTROL_PASSWORD"):
+        return "env-plain"
+    return "generated" if bootstrap.password_generated() else "changed"
+
+
+async def api_setup_checks(request: web.Request):
+    """How this browser reaches the UI: HTTPS, cookie flag, forwarded headers, reverse proxy, PUBLIC_URL.
+    The page passes its own origin (`?origin=`), which is compared, never trusted for anything."""
+    origin = request.query.get("origin", "")[:300].lower()
+    u = urllib.parse.urlsplit(origin)
+    browser_scheme, browser_host = u.scheme, (u.hostname or "")
+    scheme = _request_scheme(request)
+    local = browser_host in LOCAL_HOSTS
+    checks = []
+
+    def add(cid: str, state: str, title: str, detail: str) -> None:
+        checks.append({"id": cid, "state": state, "title": title, "detail": detail})
+
+    if scheme == "https":
+        add("https", "ok", "Encrypted", "The browser reaches the UI over HTTPS.")
+    elif local:
+        add("https", "ok", "Local connection", "Plain HTTP on this machine (or through an SSH tunnel) is fine.")
+    else:
+        add(
+            "https",
+            "warn",
+            "Not encrypted",
+            "Plain HTTP from another machine: the password and the session travel unencrypted. "
+            "Fine for a trusted home network; otherwise put a TLS reverse proxy in front.",
+        )
+    secure, mode = cookie_secure(request), os.environ.get("COOKIE_SECURE", "auto").strip().lower() or "auto"
+    if scheme == "https" and not secure:
+        add("cookie", "bad", "Session cookie", f"COOKIE_SECURE={mode}: the cookie is not marked Secure over HTTPS.")
+    elif scheme != "https" and secure and not local:
+        add("cookie", "bad", "Session cookie", f"COOKIE_SECURE={mode}: a Secure cookie is not kept over plain HTTP.")
+    else:
+        add(
+            "cookie",
+            "ok",
+            "Session cookie",
+            f"{'Secure' if secure else 'Not Secure (plain HTTP)'}, COOKIE_SECURE={mode}.",
+        )
+    fwd = [h for h in ("X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host") if h in request.headers]
+    trusted = TRUST_FORWARDED and _peer_trusted(request)
+    if fwd and trusted:
+        add("proxy", "ok", "Reverse proxy", f"Detected and trusted ({request.remote} is in TRUSTED_PROXIES).")
+    elif fwd:
+        add(
+            "proxy",
+            "warn",
+            "Reverse proxy",
+            f"A proxy at {request.remote} sends {', '.join(fwd)}, which is ignored. To use it, set "
+            f"TRUST_FORWARDED_FOR=1 and TRUSTED_PROXIES={request.remote}/32.",
+        )
+    elif TRUST_FORWARDED:
+        add("proxy", "warn", "Reverse proxy", "TRUST_FORWARDED_FOR=1, but this request came without forwarded headers.")
+    else:
+        add("proxy", "ok", "Direct connection", "No reverse proxy in between; forwarded headers are not trusted.")
+    browser_origin = f"{browser_scheme}://{u.netloc}" if browser_scheme and u.netloc else ""
+    if PUBLIC_URL:
+        p = urllib.parse.urlsplit(PUBLIC_URL)
+        want = f"{p.scheme}://{p.netloc}".lower()
+        if browser_origin and browser_origin != want:
+            add(
+                "public_url",
+                "bad",
+                "PUBLIC_URL",
+                f"PUBLIC_URL is {want}, but this browser uses {browser_origin}: changes are refused (origin check). "
+                "Open the UI at PUBLIC_URL or correct it.",
+            )
+        else:
+            add("public_url", "ok", "PUBLIC_URL", f"Matches this browser ({want}).")
+    else:
+        add(
+            "public_url",
+            "info",
+            "PUBLIC_URL",
+            "Not set. Set it to the address you use, so links in Telegram and Matrix messages open the UI.",
+        )
+    add(
+        "reach",
+        "info",
+        "From another machine",
+        (f"Other devices use the same address: {browser_origin}. " if browser_origin and not local else "")
+        + "By default the UI is published on port 8080 of the Docker host (CONTROL_PUBLISH=0.0.0.0:8080): "
+        "http://<host's LAN address>:8080. With CONTROL_PUBLISH=127.0.0.1:8080 only this host, an SSH tunnel "
+        "or a reverse proxy reaches it.",
+    )
+    return web.json_response({"checks": checks, "password": password_state()})
+
+
+# ------------------------------------------------------------------ versions and update notice (#81)
+# Control asks GitHub's releases API itself (it has egress on mgmt), never through the agent. UPDATE_CHECK=0
+# switches it off. Results are cached: a release for 6 h, a failure for 30 min.
+UPDATE_REPO = "PhilippMundhenk/tallygate"
+UPDATE_TTL, UPDATE_RETRY = 6 * 3600, 30 * 60
+UPDATE_MAX_BYTES = 256 * 1024
+RELEASE_TAG = re.compile(r"v?(\d{1,4})\.(\d{1,4})\.(\d{1,6})")
+_release: dict = {}  # {"at": ts, "data": {...}}
+_release_lock = asyncio.Lock()
+
+
+def update_check_enabled() -> bool:
+    return os.environ.get("UPDATE_CHECK", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def parse_version(v: object) -> tuple[int, int, int] | None:
+    m = RELEASE_TAG.fullmatch(str(v or "").strip())
+    return tuple(int(x) for x in m.groups()) if m else None  # type: ignore[return-value]
+
+
+async def latest_release(app: web.Application) -> dict:
+    """{"version", "url", "published"} of the latest release, or {"error"}; cached."""
+    async with _release_lock:
+        now = time.time()
+        if _release and now - _release["at"] < (UPDATE_RETRY if "error" in _release["data"] else UPDATE_TTL):
+            return _release["data"]
+        try:
+            async with app["http"].get(
+                f"{GITHUB_API}/repos/{UPDATE_REPO}/releases/latest",
+                headers={"Accept": "application/vnd.github+json", "User-Agent": "tallygate-update-check"},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as r:
+                raw = b""  # read() returns what has arrived so far: read until the end or the cap
+                while len(raw) <= UPDATE_MAX_BYTES and (chunk := await r.content.read(UPDATE_MAX_BYTES + 1 - len(raw))):
+                    raw += chunk
+                if r.status != 200:
+                    raise ValueError(f"GitHub answered {r.status}")
+                if len(raw) > UPDATE_MAX_BYTES:
+                    raise ValueError("answer too large")
+                rel = json.loads(raw)
+                tag = rel.get("tag_name") if isinstance(rel, dict) else None
+                v = parse_version(tag)
+                if not v:
+                    raise ValueError("no release version in the answer")
+                published = str(rel.get("published_at") or "")[:40]
+                data = {
+                    "version": ".".join(map(str, v)),
+                    # built here, not taken from the answer
+                    "url": f"https://github.com/{UPDATE_REPO}/releases/tag/{urllib.parse.quote(str(tag))}",
+                    "published": published if re.fullmatch(r"[0-9TZ:.+-]*", published) else "",
+                }
+        except (TimeoutError, aiohttp.ClientError, ValueError) as e:
+            data = {"error": f"update check failed: {e}"[:200]}
+        _release.update(at=now, data=data)
+        return data
+
+
+async def api_version(request: web.Request):
+    """The running versions in one place and whether a newer tallygate release exists."""
+    app = request.app
+    out: dict = {
+        "tallygate": None,
+        "claude_code": None,
+        "changelog": f"https://github.com/{UPDATE_REPO}/blob/main/CHANGELOG.md",
+        "upgrade": "docker compose pull && docker compose up -d",
+        "check": "off",
+        "latest": None,
+        "update_available": None,
+    }
+    try:
+        _, info = await gw(app, "GET", "/info")
+        if isinstance(info, dict) and parse_version(info.get("version")):
+            out["tallygate"] = str(info["version"])
+    except (TimeoutError, aiohttp.ClientError, ValueError):
+        pass
+    try:
+        _, st = await agent_call(app, "GET", "status")
+        v = re.match(r"\d{1,4}\.\d{1,4}\.\d{1,6}", str(st.get("claude_version", "")))
+        out["claude_code"] = v.group(0) if v else None
+    except (TimeoutError, aiohttp.ClientError, ValueError):
+        pass
+    if update_check_enabled():
+        rel = await latest_release(app)
+        if "error" in rel:
+            out.update(check="error", error=rel["error"])
+        else:
+            out.update(check="ok", latest=rel)
+            cur = parse_version(out["tallygate"])
+            out["update_available"] = parse_version(rel["version"]) > cur if cur else None
+    return web.json_response(out)
+
+
+# ------------------------------------------------------------------ workspace files (#76)
+# Through the agent's status server only (no new network path). Paths are checked here and again in the agent
+# (which also refuses symlink escapes). Downloads are attachments of type application/octet-stream with a
+# sandboxing CSP: nothing from the workspace is ever rendered on the UI origin.
+FILES_MAX_UPLOAD = int(os.environ.get("FILES_MAX_UPLOAD", str(50 * 1024 * 1024)))
+FILES_MAX_DOWNLOAD = int(os.environ.get("FILES_MAX_DOWNLOAD", str(200 * 1024 * 1024)))
+FILE_TYPES = {"file", "dir", "link", "other"}
+FILE_CHUNK = 64 * 1024
+
+
+def files_path(request: web.Request, file: bool = False) -> str:
+    """The normalised relative path of ?path= (400 if it is absolute, has . / .. or control characters)."""
+    p = request.query.get("path", "")
+    parts = [x for x in p.split("/") if x]
+    bad = len(p) > 1024 or p.startswith("/") or "\\" in p or re.search(r"[\x00-\x1f\x7f]", p)
+    if bad or any(x in (".", "..") for x in parts) or (file and not parts):
+        raise web.HTTPBadRequest(text=json.dumps({"error": "invalid path"}), content_type="application/json")
+    return "/".join(parts)
+
+
+def _agent_files_url(what: str, **query) -> str:
+    return f"http://{AGENT_HOST}:{AGENT_STATUS_PORT}/{what}?" + urllib.parse.urlencode(query)
+
+
+def _agent_status(status: int) -> int:
+    return status if status in (400, 403, 404, 409, 411, 413) else 502
+
+
+async def api_files_list(request: web.Request):
+    path = files_path(request)
+    try:
+        status, data = await agent_call(request.app, "GET", "files?" + urllib.parse.urlencode({"path": path}))
     except (TimeoutError, aiohttp.ClientError, ValueError) as e:
         return web.json_response({"error": f"agent unreachable or invalid response: {e}"}, status=502)
+    if status != 200:
+        return web.json_response({"error": str(data.get("error", "failed"))[:200]}, status=_agent_status(status))
+    entries = []
+    raw = data.get("entries")
+    for e in raw if isinstance(raw, list) else []:
+        if not isinstance(e, dict):
+            continue
+        name, kind, size, mtime = e.get("name"), e.get("type"), e.get("size"), e.get("mtime")
+        if (
+            not isinstance(name, str)
+            or not 0 < len(name) <= 255
+            or "/" in name
+            or name in (".", "..")
+            or re.search(r"[\x00-\x1f\x7f]", name)
+            or kind not in FILE_TYPES
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
+            or not isinstance(mtime, (int, float))
+        ):
+            continue  # the agent's answer is untrusted: odd entries are dropped
+        entries.append({"name": name, "type": kind, "size": size, "mtime": mtime})
+    return web.json_response(
+        {
+            "path": path,
+            "entries": entries[:2000],
+            "truncated": data.get("truncated") is True,
+            "max_upload": FILES_MAX_UPLOAD,
+            "max_download": FILES_MAX_DOWNLOAD,
+        }
+    )
+
+
+def content_disposition(name: str) -> str:
+    ascii_name = re.sub(r"[^A-Za-z0-9._-]", "_", name)[:100] or "download"
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{urllib.parse.quote(name, safe='')}"
+
+
+async def api_files_download(request: web.Request):
+    path = files_path(request, file=True)
+    resp = None
+    try:
+        async with request.app["http"].get(
+            _agent_files_url("files/download", path=path),
+            timeout=aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=60),
+        ) as r:
+            if r.status != 200:
+                try:
+                    err = json.loads(await r.content.read(4096)).get("error")
+                except (ValueError, AttributeError):
+                    err = None
+                return web.json_response({"error": str(err or "download failed")[:200]}, status=_agent_status(r.status))
+            size = r.content_length
+            if size is None:
+                return web.json_response({"error": "the agent sent no length"}, status=502)
+            if size > FILES_MAX_DOWNLOAD:
+                return web.json_response(
+                    {"error": f"file larger than FILES_MAX_DOWNLOAD ({FILES_MAX_DOWNLOAD} bytes)"}, status=413
+                )
+            resp = web.StreamResponse(
+                headers={
+                    "Content-Type": "application/octet-stream",
+                    "Content-Disposition": content_disposition(path.rsplit("/", 1)[-1]),
+                    "Content-Security-Policy": "sandbox; default-src 'none'",
+                    "Cache-Control": "no-store",
+                }
+            )
+            resp.content_length = size
+            _security_headers(resp, request.path)
+            await resp.prepare(request)
+            async for chunk in r.content.iter_chunked(FILE_CHUNK):
+                await resp.write(chunk)
+            await resp.write_eof()
+            return resp
+    except (TimeoutError, aiohttp.ClientError) as e:
+        if resp is None:
+            return web.json_response({"error": f"agent unreachable: {e}"}, status=502)
+        log.warning("download of %s from the agent broke off: %s", path, e)
+        resp.force_close()  # the browser sees an incomplete download (fewer bytes than Content-Length)
+        return resp
+
+
+async def api_files_upload(request: web.Request):
+    path = files_path(request, file=True)
+    length = request.content_length
+    if length is None:
+        return web.json_response({"error": "Content-Length required"}, status=411)
+    if length > FILES_MAX_UPLOAD:
+        return web.json_response({"error": f"file larger than FILES_MAX_UPLOAD ({FILES_MAX_UPLOAD} bytes)"}, status=413)
+
+    async def body():
+        left = length
+        while left > 0:
+            chunk = await request.content.read(min(FILE_CHUNK, left))
+            if not chunk:
+                raise ConnectionResetError("upload ended early")
+            left -= len(chunk)
+            yield chunk
+
+    overwrite = "1" if request.query.get("overwrite") == "1" else "0"
+    try:
+        async with request.app["http"].put(
+            _agent_files_url("files", path=path, overwrite=overwrite),
+            data=body(),
+            headers={"Content-Length": str(length), "Content-Type": "application/octet-stream"},
+            timeout=aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=120),
+        ) as r:
+            data = json.loads(await r.content.read(64 * 1024))
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+            status = r.status
+    except (TimeoutError, aiohttp.ClientError, ConnectionResetError, ValueError) as e:
+        return web.json_response({"error": f"upload failed: {e}"}, status=502)
+    if status != 200:
+        return web.json_response({"error": str(data.get("error", "failed"))[:200]}, status=_agent_status(status))
+    log.info("workspace upload: %s (%d bytes) by %s", path, length, request["user"])
+    return web.json_response({"path": path, "size": length})
 
 
 async def api_meta(request: web.Request):
@@ -752,6 +1181,11 @@ def build_app() -> web.Application:
         raise SystemExit("TRUST_PROXY_SECRET must be at least 16 characters")
     if TRUST_FORWARDED and not TRUSTED_PROXIES:
         log.warning("TRUST_FORWARDED_FOR=1 but TRUSTED_PROXIES is empty: X-Forwarded-* headers are ignored")
+    if not _per_ip_lockout():
+        log.info(
+            "per-IP login lockout off (set TRUST_FORWARDED_FOR=1 + TRUSTED_PROXIES behind a proxy to enable it); "
+            "brute force stays capped at ~1 guess/s by the global lock"
+        )
     if os.environ.get("CONTROL_PASSWORD") and not os.environ.get("CONTROL_PASSWORD_HASH"):
         log.warning("CONTROL_PASSWORD (plain text) is in use - prefer CONTROL_PASSWORD_HASH")
     app = web.Application(middlewares=[security], client_max_size=2 * 1024 * 1024)
@@ -772,8 +1206,13 @@ def build_app() -> web.Application:
     app.router.add_get("/", index)
     app.router.add_get("/api/stream", api_stream)
     app.router.add_get("/api/meta", api_meta)
+    app.router.add_get("/api/version", api_version)
+    app.router.add_get("/api/files", api_files_list)
+    app.router.add_put("/api/files", api_files_upload)
+    app.router.add_get("/api/files/download", api_files_download)
     app.router.add_post("/api/github/check", api_github_check)
-    app.router.add_get("/api/agent/{what}", api_agent)
+    app.router.add_route("*", "/api/agent/{what:.*}", api_agent)
+    app.router.add_get("/api/setup/checks", api_setup_checks)
     app.router.add_get("/api/push", api_push)
     app.router.add_post("/api/push/subscribe", api_push_subscribe)
     app.router.add_post("/api/push/test", api_push_test)

@@ -56,9 +56,12 @@ def test_status_reports_setup_state(st, monkeypatch, tmp_path):
 
     def sh(*cmd):
         calls.append(cmd)
-        return {"claude": "2.0.0", "git": "dev"}[cmd[0]]
+        return "2.0.0"
 
+    git = {"user.name": "dev", "user.email": "dev@example.org"}
     monkeypatch.setattr(st, "sh", sh)
+    monkeypatch.setattr(st, "git_get", git.get)
+    monkeypatch.setattr(st, "pane", lambda s: None)
     monkeypatch.setattr(st, "HOME", tmp_path / "home")
     monkeypatch.setattr(
         st,
@@ -74,19 +77,85 @@ def test_status_reports_setup_state(st, monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setenv("NODE_EXTRA_CA_CERTS", "/etc/ca.pem")
+    monkeypatch.setenv("RC_NAME", "my\x1b[31msession")
     s = st.status()
-    assert s["claude_version"] == "2.0.0" and s["git_name"] == "dev" and s["git_email"] == "dev"
+    assert s["claude_version"] == "2.0.0" and s["git_name"] == "dev" and s["git_email"] == "dev@example.org"
+    assert s["git_identity"] == "ok" and s["remote_control_name"] == "my[31msession"  # no terminal escapes
     assert s["remote_control_running"] is True and s["gateway_ca_trusted"] is True
-    assert s["claude_logged_in"] is False
+    assert s["claude_logged_in"] is False and s["remote_control_consent"] is False
+    assert s["remote_control_enabled"] is True and s["remote_control_prompt"] == ""
     (tmp_path / "home" / ".claude").mkdir(parents=True)
     (tmp_path / "home" / ".claude" / ".credentials.json").write_text("{}")
+    (tmp_path / "home" / ".claude.json").write_text('{"remoteDialogSeen": true}')
     (tmp_path / "proc" / "9" / "cmdline").write_bytes(b"claude\0--version\0")
     monkeypatch.delenv("NODE_EXTRA_CA_CERTS")
+    monkeypatch.setenv("RC_ENABLE", "0")
+    git["user.email"] = ""
     s = st.status()
-    assert s["claude_logged_in"] is True
+    assert s["claude_logged_in"] is True and s["remote_control_consent"] is True
     assert s["remote_control_running"] is False and s["gateway_ca_trusted"] is False
-    assert [c for c in calls if c[0] == "claude"] == [("claude", "--version")]  # version is cached
+    assert s["remote_control_enabled"] is False and s["git_identity"] == "empty"
+    del git["user.name"]
+    assert st.status()["git_identity"] == "missing"
+    assert calls == [("claude", "--version")]  # version is cached
     json.dumps(s)  # served as JSON
+
+
+def test_git_get_tells_unset_from_empty(st, monkeypatch):
+    replies = {"user.name": (0, " Dev \n"), "user.email": (0, "\n"), "x": (1, "")}
+
+    def run(*cmd, timeout=10):
+        assert cmd[:4] == ("git", "config", "--global", "--get")
+        code, out = replies[cmd[4]]
+        return subprocess.CompletedProcess(cmd, code, out, "")
+
+    monkeypatch.setattr(st, "run", run)
+    assert st.git_get("user.name") == "Dev" and st.git_get("user.email") == "" and st.git_get("x") is None
+    monkeypatch.setattr(st, "run", lambda *a, **k: None)  # git missing or hanging
+    assert st.git_get("user.name") is None
+
+
+def test_run_returns_none_when_the_command_cannot_run(st, monkeypatch):
+    assert st.run(sys.executable, "-c", "print('hi')").stdout == "hi\n"
+    assert st.run("/nonexistent/tmux") is None
+
+    def hang(*a, **k):
+        raise subprocess.TimeoutExpired(a[0], 10)
+
+    monkeypatch.setattr(st.subprocess, "run", hang)
+    assert st.run("tmux") is None
+
+
+def test_claude_config_is_size_limited_and_must_be_an_object(st, monkeypatch, tmp_path):
+    monkeypatch.setattr(st, "HOME", tmp_path)
+    assert st.claude_config() == {}  # missing
+    p = tmp_path / ".claude.json"
+    for raw, expected in ((b"", {}), (b"[1]", {}), (b"{bad", {}), (b'{"a": 1}', {"a": 1})):
+        p.write_bytes(raw)
+        assert st.claude_config() == expected
+    monkeypatch.setattr(st, "CLAUDE_JSON_MAX", 3)
+    assert st.claude_config() == {}
+
+
+def test_pane_and_rc_prompt(st, monkeypatch):
+    panes = {"rc": "Take this session with you\n\nEnable Remote Control? (y/n) \n\n\n"}
+
+    def tmux(*args):
+        assert args[:2] == ("capture-pane", "-p")
+        text = panes.get(args[args.index("-t") + 1])
+        return subprocess.CompletedProcess(args, 0 if text is not None else 1, text or "", "")
+
+    monkeypatch.setattr(st, "tmux", tmux)
+    assert st.pane("nope") is None and st.pane("rc").startswith("Take this")
+    assert st.rc_prompt() == "Enable Remote Control? (y/n)"
+    panes["rc"] = "Trust /workspace? [y/N]"
+    assert st.rc_prompt() == "Trust /workspace? [y/N]"
+    panes["rc"] = "Enable Remote Control? (y/n) y\nConnected. Session tallygate\n"
+    assert st.rc_prompt() == ""  # answered: the last line is no question
+    del panes["rc"]
+    assert st.rc_prompt() == ""
+    monkeypatch.setattr(st, "tmux", lambda *a: None)
+    assert st.pane("rc") is None
 
 
 # ---------------------------------------------------------------- probes
@@ -258,6 +327,106 @@ def test_https_via_proxy_checks_the_certificate(st, proxy, tmp_path, monkeypatch
     assert set(p.requests) == {"CONNECT api.anthropic.com:443 HTTP/1.1"}
 
 
+# ---------------------------------------------------------------- new probe helpers
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({}, ("egress-gw", 1080)),  # no ALL_PROXY: host from the HTTPS proxy default, SOCKS port 1080
+        ({"ALL_PROXY": "socks5h://gw:1080"}, ("gw", 1080)),
+        ({"all_proxy": "socks5://s.local:9050"}, ("s.local", 9050)),
+        ({"ALL_PROXY": "socks5h://noport"}, ("noport", 1080)),
+    ],
+)
+def test_socks_from_environment(st, monkeypatch, env, expected):
+    for v in ("ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy"):
+        monkeypatch.delenv(v, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    assert st._socks() == expected
+
+
+def test_raw_socket_opens_or_is_denied(st, monkeypatch):
+    class Fake:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(st.socket, "socket", lambda *a, **k: Fake())
+    assert st.raw_socket() == "raw ICMP socket opened (CAP_NET_RAW present)"
+
+    def deny(*a, **k):
+        raise PermissionError("Operation not permitted")
+
+    monkeypatch.setattr(st.socket, "socket", deny)
+    with pytest.raises(PermissionError):
+        st.raw_socket()
+
+
+def test_http_get_via_proxy_blocked_then_reached(st, proxy):
+    proxy(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+    with pytest.raises(ConnectionRefusedError):
+        st.http_get_via_proxy("169.254.169.254", 80, "/latest/")
+    p = proxy(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+    assert st.http_get_via_proxy("169.254.169.254").startswith("reached 169.254.169.254")
+    assert any("GET http://169.254.169.254:80/" in r for r in p.requests)
+
+
+class FakeSocks:
+    """Minimal SOCKS5 endpoint: greets with `greet`, then answers one CONNECT with reply code `rep`."""
+
+    def __init__(self, greet: bytes = b"\x05\x00", rep: int = 0x00) -> None:
+        self.greet, self.rep, self.atyp = greet, rep, None
+        self.sock = socket.create_server(("127.0.0.1", 0))
+        self.port = self.sock.getsockname()[1]
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self):
+        try:
+            conn, _ = self.sock.accept()
+        except OSError:
+            return
+        with conn:
+            conn.recv(3)  # version + methods
+            conn.sendall(self.greet)
+            if self.greet != b"\x05\x00":
+                return
+            hdr = conn.recv(4)  # VER CMD RSV ATYP
+            self.atyp = hdr[3]
+            n = {1: 4, 4: 16}.get(self.atyp)
+            if n is None:  # domain name: one length byte, then that many bytes
+                n = conn.recv(1)[0]
+            conn.recv(n)  # address
+            conn.recv(2)  # port
+            conn.sendall(bytes([0x05, self.rep, 0x00, 0x01]) + b"\x00" * 6)
+
+    def close(self):
+        self.sock.close()
+
+
+def _socks_env(monkeypatch, srv):
+    monkeypatch.setenv("ALL_PROXY", f"socks5h://127.0.0.1:{srv.port}")
+
+
+def test_socks5_connect_success_v4_v6_and_domain(st, monkeypatch):
+    for host in ("169.254.169.254", "[::1]", "example.test"):
+        srv = FakeSocks()
+        _socks_env(monkeypatch, srv)
+        assert st.socks5_connect(host, 80) == f"SOCKS5 connected to {host}:80"
+        srv.close()
+
+
+def test_socks5_connect_refused_and_no_auth(st, monkeypatch):
+    srv = FakeSocks(rep=0x02)  # connection not allowed
+    _socks_env(monkeypatch, srv)
+    with pytest.raises(ConnectionRefusedError, match="reply code 2"):
+        st.socks5_connect("192.168.1.1", 80)
+    srv.close()
+    noauth = FakeSocks(greet=b"\x05\xff")  # no acceptable methods
+    _socks_env(monkeypatch, noauth)
+    with pytest.raises(ConnectionRefusedError, match="no-auth refused"):
+        st.socks5_connect("192.168.1.1", 80)
+    noauth.close()
+
+
 # ---------------------------------------------------------------- selftest
 def isolated(st, monkeypatch, leak: str = ""):
     """Patch the probes: everything blocked (as in a correct setup), except `leak`."""
@@ -283,6 +452,18 @@ def isolated(st, monkeypatch, leak: str = ""):
             raise ConnectionRefusedError("HTTP/1.1 502 Bad Gateway")
         return "HTTP/1.1 200 / TLS ok, HTTP/1.1 404 Not Found"
 
+    def raw_socket():
+        calls.append(("raw",))
+        raise PermissionError("Operation not permitted")
+
+    def http_get(host, port=80, path="/"):
+        calls.append(("http", host, port))
+        raise ConnectionRefusedError("HTTP/1.1 502 Bad Gateway")
+
+    def socks(host, port):
+        calls.append(("socks", host, port))
+        raise ConnectionRefusedError("SOCKS5 reply code 2")
+
     real = socket.getaddrinfo
 
     def getaddrinfo(host, *a, **k):
@@ -294,6 +475,9 @@ def isolated(st, monkeypatch, leak: str = ""):
     monkeypatch.setattr(st, "udp_dns", udp)
     monkeypatch.setattr(st, "connect_via_proxy", connect)
     monkeypatch.setattr(st, "https_via_proxy", https)
+    monkeypatch.setattr(st, "raw_socket", raw_socket)
+    monkeypatch.setattr(st, "http_get_via_proxy", http_get)
+    monkeypatch.setattr(st, "socks5_connect", socks)
     monkeypatch.setattr(st.socket, "getaddrinfo", getaddrinfo)
     return calls
 
@@ -315,7 +499,7 @@ def test_selftest_all_blocked_passes(st, monkeypatch):
     ("leak", "failing"),
     [
         ("tcp", "Direct TCP to the internet (1.1.1.1:443)"),
-        ("lan", "LAN via proxy (192.168.1.1:80, hard-deny)"),
+        ("lan", "LAN via proxy (CONNECT 192.168.1.1:80)"),
         ("no-api", "Allowed path: api.anthropic.com via proxy"),
     ],
 )
@@ -332,7 +516,7 @@ def test_main_selftest_prints_and_sets_the_exit_code(st, monkeypatch, capsys):
     assert out[0].startswith("PASS Direct TCP to the internet") and all(line.startswith("PASS ") for line in out)
     isolated(st, monkeypatch, "lan")
     assert st.main(["--selftest"]) == 1
-    assert "FAIL LAN via proxy (192.168.1.1:80, hard-deny)  -- UNEXPECTEDLY SUCCEEDED" in capsys.readouterr().out
+    assert "FAIL LAN via proxy (CONNECT 192.168.1.1:80)  -- UNEXPECTEDLY SUCCEEDED" in capsys.readouterr().out
 
 
 def test_main_serves_on_all_interfaces_of_the_agent_network(st, monkeypatch):
@@ -366,7 +550,7 @@ def test_handler_serves_status_and_selftest_read_only(st, monkeypatch):
             assert json.loads(r.read()) == {"claude_version": "2.0.0"}
         with NO_PROXY.open(base + "/selftest", timeout=5) as r:
             assert json.loads(r.read()) == {"results": [{"name": "n", "pass": True, "detail": "d"}]}
-        for path, method, code in (("/", "GET", 404), ("/status/../x", "GET", 404), ("/status", "POST", 501)):
+        for path, method, code in (("/", "GET", 404), ("/status/../x", "GET", 404), ("/status", "POST", 404)):
             with pytest.raises(urllib.error.HTTPError) as e:
                 NO_PROXY.open(
                     urllib.request.Request(base + path, method=method, data=b"" if method == "POST" else None)

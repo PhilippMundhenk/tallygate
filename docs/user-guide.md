@@ -4,17 +4,32 @@ The control UI is the operator's cockpit: approve connections, watch traffic, ed
 consoles into the agent, and run the setup wizard. Remote Control itself is used from the
 [Claude app](https://claude.ai/download) or [claude.ai/code](https://claude.ai/code) as usual.
 
+- [Overview](#overview)
 - [Approvals](#approvals)
 - [Away mode and quiet hours](#away-mode-and-quiet-hours)
 - [Log](#log)
 - [Rules](#rules)
 - [Console](#console)
+- [Files](#files)
 - [Setup wizard](#setup-wizard)
 - [Telegram approvals](#telegram-approvals)
 - [Matrix approvals](#matrix-approvals)
 - [Phone approvals without a chat bot](#phone-approvals-without-a-chat-bot)
 - [Rule cookbook](#rule-cookbook)
 - [Working with the agent](#working-with-the-agent)
+
+## Overview
+
+The start page: what the agent is doing and whether anything needs you soon. It refreshes every 30 seconds
+while it is open and at once when a request arrives or is decided.
+
+| Part | Shows |
+|---|---|
+| Status | Claude logged in; Remote Control running, with the session name (or the question it waits for); Claude Code version; disk use of the workspace's file system; gateway health and the disk use of its state, with the size of the event log. 90 % or more is marked. |
+| Needs attention | Waiting connection and grant requests; rules and grants that end within the hour; a missing GitHub token, one GitHub refuses, or one that expires within 7 days (checked once per page load through the agent, so it appears in the log). |
+| Last hour | Connections allowed, denied and asked; the 10 most frequent destinations; destinations seen for the first time in the kept log (`log_keep_days`). |
+| Versions | tallygate (the release the gateway runs) and Claude Code, and the latest tallygate release. When a newer one exists, the header shows **Update: X.Y.Z**; the card links to the changelog and the release and shows the upgrade command (click to copy). Claude Code has no auto-updater in the agent: new versions come with tallygate releases. Control asks GitHub itself, at most every 6 hours; `UPDATE_CHECK=0` switches it off ([configuration](configuration.md)). |
+| Shortcuts | *Emergency stop* (click twice), *Allow web for 15 min* (the `open` preset), *Open the console* (rc). |
 
 ## Approvals
 
@@ -71,6 +86,26 @@ as one **digest** to Telegram/Matrix: when quiet hours end, when you are back, a
 Quiet hours use the gateway's time zone: set `TZ` (e.g. `TZ=Europe/Berlin` in `.env`) or `tz` in
 `quiet_hours`. They can be preset in the gateway config (`quiet_hours`, see
 [configuration](configuration.md#availability)); a change in the UI is stored and wins over the file.
+### Keyboard shortcuts, compact list and sound
+
+For approving a lot. The switches above the list are kept in this browser.
+
+| Key | Effect (Approvals tab, outside text fields) |
+|---|---|
+| `j` / `k` | Select the next / previous request |
+| `a` | Allow 2 min; approve a grant request |
+| `h` | Allow 1 h |
+| `d` | Deny |
+| `?` | List the keys (anywhere; `Esc` closes) |
+
+`a`, `h` and `d` act on the selected request; without a selection the first press selects the first request,
+so a stray key never decides anything. After a decision the next request is selected. Single-key shortcuts
+can be switched off with **Keyboard shortcuts** (for screen readers and voice control).
+
+**Compact list** shows one line per connection request: destination, the registrable domain when it differs,
+the punycode warning and the buttons (the countdown and IPs are hidden). Grant requests keep their full card,
+because the agent's reason matters. **Sound** plays a short tone when a request arrives while the tab is in
+the background; turn it on with a click, as browsers allow sound only after one.
 
 ## Grants
 
@@ -89,6 +124,25 @@ Live view of every decision: connections (`conn`), approval requests (`ask`), bl
 admin changes. Filter by text, hide DNS noise, or show only blocked entries. The **allow / deny** buttons
 create a rule for exactly that host:port.
 
+### Search, time ranges and export
+
+The live view filters only the rows it has loaded. **Search, time ranges and export** (above the table)
+searches the whole event log on the gateway, which keeps `log_keep_days` (30) days:
+
+- **Show** *events*, *destinations* (every host:port with its number of events, allowed, denied and asked,
+  first seen and last seen) or *new destinations* (first seen inside the time range).
+- **Host**: an exact name or IP, or `*.example.com` for the domain and all its subdomains. **Kind** and
+  **Action** narrow it further, **Text** searches host, action and reason.
+- **Time**: the last hour, 24 hours, today, 7 or 30 days, everything, or a custom range.
+- **Filters**: one click for *Denied today*, *New destinations (24 h)*, *Approvals asked (7 days)* and
+  *Admin changes (7 days)*. *Save filter* keeps the current one in this browser (under the text or host you
+  searched for); ✕ deletes it.
+- **A destination** (click it) shows what the policy decides for it now and which rule decides, its counts
+  and its latest events. The decision is made on the name, without resolving it: the hard deny on the
+  resolved address still applies when the agent connects.
+- **Export CSV / JSON** downloads every matching row (up to 50,000 events) for an audit. Cells that a
+  spreadsheet would run as a formula are prefixed with `'`.
+
 ## Rules
 
 ![Rules](images/rules.png)
@@ -96,11 +150,18 @@ create a rule for exactly that host:port.
 - **Mode**: what happens to unmatched destinations: `ask` (human in the loop), `deny` (strict allowlist) or
   `allow` (blocklist).
 - **Quick actions** (top of the tab), see below.
+- **Learning mode**: record what a new task needs for a limited time, then save the rules in one go. See
+  [Learning mode](#learning-mode).
 - **Test a destination**: dry run against the current policy, including DNS resolution and hard deny.
 - **Add rule**: host glob or CIDR, ports, note and optional TTL. New rules go to the top (first match wins).
 - **Hard deny**: CIDRs that are never reachable. The built-in floor is read-only here (change it only in the
   gateway config file); you can add more, e.g. your Docker host's public IP.
 - **Raw policy JSON**: edit everything at once (validated server-side).
+- **Rule usage and suggestions**: how often each rule matched and when it last did (sortable, filterable),
+  unused rules to clean up, and permanent rules for destinations you keep approving for a limited time. See
+  [Rule usage](#rule-usage).
+- **History, export and import**: every version of the policy, a diff between any two, *Restore*, and the
+  policy with your UI grants as one YAML file. See [History and rollback](#history-and-rollback).
 
 ### Quick actions and templates
 
@@ -142,6 +203,75 @@ risk tallygate exists for. To let the agent reach one device, define a [grant](g
 read or write, a time limit, and your approval each time. Grants created in the UI may only reach addresses
 inside `grants_lan_allow` in the gateway config; the button explains what to add when that list is empty.
 
+### Learning mode
+
+Building an allowlist one prompt at a time is slow when you start a new kind of task. *Rules → Learning mode*
+lets the task run for a while and shows afterwards what it used:
+
+1. Pick a duration (up to `learning_max_minutes`, 120) and the ports (`443`, or `80 and 443`; the choice comes
+   from `learning_ports` in the gateway config) and click *Start learning mode* twice (it asks for
+   confirmation). The header shows **Learning mode · N min left** on every tab while it runs; click it to come
+   back here.
+2. While it runs, a connection to a host name on those ports that **no rule matches** is allowed instead of
+   asked or denied, and logged with the reason `learning mode`.
+3. When the time is up (or you click *Stop learning mode*), the card lists every destination used during the
+   session, grouped by registrable domain, with the number of connections. Destinations only learning mode
+   allowed are ticked, with a proposed rule: the exact host, or `*.domain` when several hosts of one domain
+   were used. Untick what you do not want and click *Save selected as allow rules*.
+
+What stays in force while learning mode runs:
+
+- the **hard deny**, also on the resolved addresses: the local network, the Docker host and metadata stay
+  unreachable;
+- your **deny and ask rules** and **grants** (a name that a grant is defined for is not learned);
+- **name-first decisions**: a name is resolved only after it was allowed; IP literals are not covered at all;
+- the **SNI/Host binding** and the read-only and credential checks.
+
+Learning mode is never stored in the policy. It ends when its time is up, when you stop it, on the
+**emergency stop**, and when the gateway restarts. Saved rules are added at the **bottom** of the list, so a
+deny or ask rule you already have keeps winning over a learned `*.domain` rule. The rules you save are tagged
+`[learning]` and are permanent; check them in the table like any other rule.
+
+### Rule usage
+
+*Rules → Rule usage and suggestions* shows, for every rule, how many connections it decided and when it last
+matched. The counts are kept in the gateway's memory and written to the event log every 15 seconds, so they
+cost nothing noticeable per connection. Click a column header to sort (again to reverse), type to filter, or
+show only unused or only matched rules.
+
+- **Make it permanent?** When you allowed the same destination for 2 minutes or 1 hour at least
+  `suggest_min_approvals` (3) times in `suggest_window_days` (7) days, and no permanent rule covers it, the card
+  offers a permanent allow rule. Several hosts of one domain on the same port become one `*.domain` rule (the
+  domain comes from the Public Suffix List, like *Always (*.domain)*). *Dismiss* hides a suggestion for
+  `log_keep_days`.
+- **Unused rules**: permanent rules that did not match anything for `rule_stale_days` (30) days, counted from
+  when the gateway first saw the rule. Rules with a time limit are never offered, they end by themselves. Tick
+  the ones to remove and click *Remove selected*; the gateway checks again that each one is still unused, and
+  the policy history keeps them in case you need one back.
+
+### History and rollback
+
+Every change to the policy is kept as a version, whoever made it: the UI (`web:<user>`), the API (`api`),
+an approval on Telegram or Matrix (`telegram:<user>`), a template, the emergency stop, or the gateway itself
+when temporary rules expire (`gateway`). *Rules → History, export and import* lists the versions with time,
+author and what changed.
+
+- **Changes** shows what changed from that version to the current policy: mode and timeout, additional
+  hard-deny ranges, and rules added, removed or changed (compared by rule id). Pick any two versions with
+  *From* and *To* to compare them.
+- **Restore** replaces the current policy with that version (it asks for confirmation). The restore is a new
+  version itself, so it can be undone the same way. Rules of an old version whose time limit has passed are
+  ignored and removed, as always.
+- **Export (YAML)** downloads the policy and the grants defined in the UI as one file, for a new host or as a
+  template to share. Secrets are not in it (they cannot be read back at all), and neither are grants from the
+  gateway config file.
+- **Import from file** checks the file like a normal policy change and every grant like the grant editor,
+  then shows what would change. *Import* replaces the policy and adds or replaces the UI grants in the file;
+  grants that are not in the file stay. A `hard_deny_floor` in the file is ignored: the floor comes only from
+  the gateway config file.
+
+The gateway keeps the last `policy_history_keep` (500) versions in `policy-history.db` in its data volume.
+
 ## Console
 
 ![Console](images/console.png)
@@ -154,12 +284,40 @@ inside `grants_lan_allow` in the gateway config; the button explains what to add
 
 Sessions persist when you close the tab. tmux basics: `Ctrl-b d` detaches, scroll with `Ctrl-b [`.
 
+## Files
+
+The agent's `/workspace` in the browser: open folders, upload files into the open folder (a spec, a dataset,
+a patch) and download results, without `docker cp` or a shell.
+
+- Uploads go into the folder you are in. An existing file is only replaced with **replace existing files**;
+  folders and links are never replaced. Up to `FILES_MAX_UPLOAD` (default 50 MiB) per file.
+- **Download** saves the file (up to `FILES_MAX_DOWNLOAD`, default 200 MiB). Files are always sent as
+  downloads (`application/octet-stream`, `Content-Disposition: attachment`), never shown in the UI, so a
+  file the agent wrote (HTML, SVG, a script) cannot run on the UI's address.
+- Everything stays inside `/workspace`: no `..`, no absolute paths, and links that point outside are refused
+  (they are listed as *link*, but cannot be opened or written through).
+- Uploads are logged by control (`workspace upload: <path> (<bytes>) by <user>`).
+
 ## Setup wizard
 
 ![Setup](images/setup.png)
 
-Walks through gateway status, GitHub token (stored in the gateway only), Claude login, git identity,
-Remote Control, and the isolation self-test. The status lines refresh whenever you open the tab.
+The **Setup** tab is the first start in one flow. Every step shows *done*, *to do*, *check* or *optional*; the
+summary at the top counts the steps and its *Next* button jumps to the first one still to do. The states are
+checked again whenever you open the tab or finish a step. No step needs a console.
+
+| Step | What it does |
+|---|---|
+| Access to this UI | Checks how your browser reaches the UI: HTTPS (or localhost), the session cookie's `Secure` flag, whether a reverse proxy sends forwarded headers and whether they are trusted, whether `PUBLIC_URL` matches the address you use, and how other machines reach the UI. Each line says what to change. |
+| UI password | *To do* while it is still the password generated on first start; change it with `docker compose exec control python -m app.passwd`. |
+| Gateway | The gateway's CA is exported and which hosts get credentials injected. |
+| GitHub token | *Validate & store* checks a token against GitHub (from control) and stores it in the gateway only. |
+| Log in to Claude | *Start login* runs `claude auth login` in the agent (tmux session `tg-login`) and shows the link to Anthropic's login page. Sign in there and paste the code it shows. Only links to Anthropic's login pages are shown. |
+| Git identity | *Use my GitHub identity* asks GitHub, through the gateway with the stored token, who you are (`gh api user`) and shows the name and the noreply address `<id>+<login>@users.noreply.github.com`; *Apply* sets them. Without a stored token, or when GitHub refuses it or cannot be reached, it says so and links to the token step. *Enter it yourself* is the fallback. Empty values are never written; a name or address that is set but empty (for example from a `git config` whose `$(…)` failed) is reported as such. |
+| Remote Control | *Enable Remote Control* answers Claude Code's one-time question `Enable Remote Control? (y/n)` with yes, trusts `/workspace` and restarts Remote Control. The step is done when it runs; it also tells you when Remote Control waits for an answer in the *rc* console. Switched off with `RC_ENABLE=0`. |
+| Starting policy | *Ask me* or *Strict* sets what happens with unknown destinations; *Templates* opens them in the Rules tab. |
+| Phone notifications | Telegram and Matrix status; browser notifications. |
+| Isolation self-test | Runs the in-agent self-test. |
 
 ## Telegram approvals
 

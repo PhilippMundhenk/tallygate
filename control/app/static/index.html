@@ -1,19 +1,22 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>tallygate</title><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/availability.css"><link rel="stylesheet" href="/static/push.css"><link rel="stylesheet" href="/static/context.css">
-<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/static/icon.svg" type="image/svg+xml"><meta name="theme-color" content="#181b22"></head>
+<title>tallygate</title><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/wizard.css"><link rel="stylesheet" href="/static/overview.css"><link rel="stylesheet" href="/static/keys.css"><link rel="stylesheet" href="/static/update.css"><link rel="stylesheet" href="/static/files.css"><link rel="stylesheet" href="/static/availability.css"><link rel="stylesheet" href="/static/push.css"><link rel="stylesheet" href="/static/context.css"><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#181b22"></head>
 <body>
 <header>
-  <span class="brand">🔐 tallygate</span>
+  <a class="brand" href="/" aria-label="tallygate home"><img src="/static/logo.svg" alt="tallygate" height="26"></a>
   <nav id="tabs" role="tablist" aria-label="Sections">
+    <button data-tab="overview" id="tabbtn-overview" role="tab" aria-selected="false" aria-controls="tab-overview">Overview</button>
     <button data-tab="approvals" id="tabbtn-approvals" role="tab" aria-selected="false" aria-controls="tab-approvals">Approvals <span id="pendingCount" class="badge hidden">0</span></button>
     <button data-tab="log" id="tabbtn-log" role="tab" aria-selected="false" aria-controls="tab-log">Log</button>
     <button data-tab="rules" id="tabbtn-rules" role="tab" aria-selected="false" aria-controls="tab-rules">Rules</button>
     <button data-tab="grants" id="tabbtn-grants" role="tab" aria-selected="false" aria-controls="tab-grants">Grants <span id="grantActiveCount" class="badge ok hidden">0</span></button>
     <button data-tab="console" id="tabbtn-console" role="tab" aria-selected="false" aria-controls="tab-console">Console</button>
+    <button data-tab="files" id="tabbtn-files" role="tab" aria-selected="false" aria-controls="tab-files">Files</button>
     <button data-tab="setup" id="tabbtn-setup" role="tab" aria-selected="false" aria-controls="tab-setup">Setup</button>
   </nav>
+  <button id="learnBadge" type="button" class="learnbadge hidden" aria-live="polite"></button>
   <span class="conn" role="status"><span id="conn" class="dot" aria-hidden="true"></span><span id="connText">connecting</span></span>
+  <button id="updateNotice" class="small update-notice" hidden></button>
   <form method="post" action="/logout" class="logout"><button>Log out</button></form>
 </header>
 
@@ -21,9 +24,29 @@
   the network. For more than a quick test on a trusted LAN, put a TLS reverse proxy in front
   (<a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/operations.md#reverse-proxy" target="_blank" rel="noopener">how</a>).</p>
 <main>
+  <!-- OVERVIEW (overview.js) -->
+  <section id="tab-overview" role="tabpanel" aria-labelledby="tabbtn-overview" class="hidden">
+    <div class="ov-grid">
+      <div class="card"><h3>Status</h3><dl id="ovStatus" class="ov-dl"><dt>…</dt><dd></dd></dl></div>
+      <div class="card"><h3>Needs attention</h3><ul id="ovAttention" class="ov-list"><li class="muted">…</li></ul></div>
+    </div>
+    <div class="card"><div class="row-between"><h3>Last hour</h3><button id="ovLog" class="small secondary">Open the log</button></div>
+      <p id="ovCounts" class="ov-counts"></p>
+      <div class="ov-grid">
+        <div><h4>Top destinations</h4><div class="table-wrap"><table class="ov-table"><thead><tr><th>Destination</th><th>Connections</th><th>Allowed / denied</th></tr></thead><tbody id="ovTop"></tbody></table></div></div>
+        <div><h4>New destinations</h4><p class="hint">Seen for the first time in the kept log.</p><ul id="ovNew" class="ov-list"></ul></div>
+      </div></div>
+    <div class="card" id="ovVersionsCard"><h3>Versions</h3><div id="ovVersions" class="muted">…</div></div>
+    <div class="card"><h3>Shortcuts</h3><div class="row wrap">
+      <button id="ovStop" class="danger">Emergency stop</button>
+      <button id="ovWeb">Allow web for 15 min</button>
+      <button id="ovConsole" class="secondary">Open the console</button></div></div>
+  </section>
+
   <!-- APPROVALS -->
   <section id="tab-approvals" role="tabpanel" aria-labelledby="tabbtn-approvals">
     <div id="availability" class="card"></div>
+    <div id="approvalOpts" class="toolbar" role="group" aria-label="Approval options"></div>
     <div id="grantReqBox" class="hidden">
       <h2>Grant requests</h2>
       <p class="hint">The agent asks for a predefined bundle of access. The reason is written by the agent – treat it as a claim, not a fact.</p>
@@ -49,6 +72,7 @@
 
   <!-- LOG -->
   <section id="tab-log" role="tabpanel" aria-labelledby="tabbtn-log" class="hidden">
+    <details class="card" id="searchCard"><summary>Search, time ranges and export</summary><div id="searchBox"></div></details>
     <div class="toolbar">
       <input id="logFilter" type="search" aria-label="Filter log" placeholder="filter host / action / reason">
       <label><input type="checkbox" id="logHideDns"> hide DNS</label>
@@ -94,6 +118,7 @@
         template's rules.</p>
       <div id="qaTemplates" class="templates"></div>
     </div>
+    <div class="card" id="learnCard" tabindex="-1"><h3>Learning mode</h3><div id="learnBox"></div></div>
     <div class="grid2">
       <div class="card">
         <h3>Mode</h3>
@@ -137,6 +162,7 @@
           <a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/rules.md" target="_blank" rel="noopener">Rules by example</a></p>
       </details>
     </div>
+    <details class="card" id="usageCard"><summary>Rule usage and suggestions <span id="usageBadge" class="badge hidden"></span></summary><div id="usageBox"></div></details>
     <div class="table-wrap"><table class="rules"><thead><tr><th>#</th><th>Action</th><th>Match</th><th>Port</th><th>Note</th><th>Expires</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="rulesBody"></tbody></table></div>
     <details class="card"><summary>Hard deny (never reachable, never asked)</summary>
       <p class="hint">Floor (read-only): the built-in list plus <code>hard_deny_floor</code> from the gateway config file:</p>
@@ -147,6 +173,7 @@
     <details class="card"><summary>Advanced: raw policy JSON</summary>
       <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><div class="row"><button id="saveRaw">Replace policy</button>
         <button id="reloadRaw" class="secondary">Reload from the gateway</button></div></details>
+    <details class="card" id="historyCard"><summary>History, export and import</summary><div id="historyBox"></div></details>
   </section>
 
   <!-- GRANTS -->
@@ -225,26 +252,74 @@
     <iframe id="termFrame" title="terminal"></iframe>
   </section>
 
-  <!-- SETUP -->
+  <!-- FILES (files.js) -->
+  <section id="tab-files" role="tabpanel" aria-labelledby="tabbtn-files" class="hidden">
+    <h2>Workspace files</h2>
+    <p class="hint">Files in the agent's <code>/workspace</code>: upload a spec, a dataset or a patch, download results.
+      Downloads are saved, never opened here.</p>
+    <nav id="fileCrumbs" class="crumbs" aria-label="Folder"></nav>
+    <div class="card"><h3>Upload to this folder</h3>
+      <form id="fileForm" class="row wrap"><input type="file" id="fileInput" multiple aria-describedby="fileHint" aria-label="Files to upload">
+        <label class="check-inline"><input type="checkbox" id="fileOverwrite"> replace existing files</label><button id="fileUpload">Upload</button></form>
+      <p class="hint" id="fileHint"></p><div id="fileStatus" class="status" role="status" aria-live="polite"></div></div>
+    <div class="table-wrap"><table class="files"><thead><tr><th>Name</th><th>Size</th><th>Modified</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody id="fileBody"></tbody></table></div>
+    <p id="fileTruncated" class="hint hidden">Only the first 2000 entries are shown.</p>
+  </section>
+
+  <!-- SETUP (wizard.js) -->
   <section id="tab-setup" role="tabpanel" aria-labelledby="tabbtn-setup" class="hidden">
-    <h2>Setup wizard</h2>
+    <h2>First start</h2>
+    <p class="hint">One step after the other: each step says whether it is done. Nothing here needs a console.</p>
+    <div id="wzSummary" class="card" role="status" aria-live="polite">…</div>
     <ol class="wizard">
-      <li id="st-gw"><h3>1 · Gateway</h3><div class="status">…</div></li>
-      <li id="st-gh"><h3>2 · GitHub token (stored in the gateway only)</h3>
+      <li id="st-access" data-required="1"><h3 tabindex="-1">Access to this UI <span class="step-state"></span></h3>
+        <ul id="accessChecks" class="checks"></ul><div class="status"></div></li>
+      <li id="st-password" data-required="1"><h3 tabindex="-1">UI password <span class="step-state"></span></h3>
+        <div class="status"></div></li>
+      <li id="st-gw" data-required="1"><h3 tabindex="-1">Gateway <span class="step-state"></span></h3><div class="status">…</div></li>
+      <li id="st-gh" data-required="1"><h3 tabindex="-1">GitHub token (stored in the gateway only) <span class="step-state"></span></h3>
         <p class="hint">Use a <b>fine-grained PAT</b> limited to the repos the agent may touch (Contents, Pull requests, Issues: read/write). The agent only ever sees a placeholder; the gateway injects the real token for github.com / api.github.com.</p>
         <div class="row"><input id="ghToken" type="password" aria-label="GitHub token" placeholder="github_pat_…" autocomplete="off"><button id="ghSave">Validate &amp; store</button><button id="ghRemove" class="secondary">Remove</button></div>
         <div class="status"></div></li>
-      <li id="st-claude"><h3>3 · Claude login</h3>
-        <p class="hint">Open the <b>bash</b> console and run <code>claude auth login</code>, open the shown URL, paste the code back. Needs a claude.ai subscription login (Remote Control does not work with API keys).</p>
-        <button data-term="bash">Open bash console</button><div class="status"></div></li>
-      <li id="st-git"><h3>4 · Git identity</h3>
-        <pre class="copy">git config --global user.name  "Your Name"
-git config --global user.email "id+user@users.noreply.github.com"</pre>
-        <button data-term="bash">Open bash console</button><div class="status"></div></li>
-      <li id="st-rc"><h3>5 · Remote Control</h3>
-        <p class="hint">Open the <b>rc</b> console. On first start Claude asks <code>Enable Remote Control? (y/n)</code> (and possibly to trust the workspace) — answer <b>y</b>. Afterwards the session appears in the Claude app under <i>Code</i>.</p>
-        <button data-term="rc">Open rc console</button><div class="status"></div></li>
-      <li id="st-test"><h3>6 · Isolation self-test</h3>
+      <li id="st-claude" data-required="1"><h3 tabindex="-1">Log in to Claude <span class="step-state"></span></h3>
+        <p class="hint">Needs a claude.ai subscription (Remote Control does not work with API keys). The login runs in the
+          agent; you sign in on Anthropic's page and paste the code it shows here.</p>
+        <button id="clStart">Start login</button>
+        <form id="clFlow" class="hidden">
+          <p>1. Open the <a id="clUrl" href="#" target="_blank" rel="noopener noreferrer">Claude login page</a> and sign in.</p>
+          <p>2. Paste the code the page shows:</p>
+          <div class="row"><input id="clCode" aria-label="Code from the login page" autocomplete="off" spellcheck="false"><button id="clSend">Log in</button></div>
+        </form>
+        <div class="status"></div></li>
+      <li id="st-git" data-required="1"><h3 tabindex="-1">Git identity <span class="step-state"></span></h3>
+        <p class="hint">The name and address on the agent's commits. Taken from the GitHub account of the token, with
+          its private <code>noreply</code> address.</p>
+        <button id="gitPreview">Use my GitHub identity</button>
+        <div id="gitBox" class="hidden preview"><dl class="fieldhelp"><dt>Name</dt><dd id="gitName"></dd><dt>Email</dt><dd id="gitEmail"></dd></dl>
+          <button id="gitApply">Apply</button></div>
+        <details class="help"><summary>Enter it yourself</summary>
+          <form id="gitManual" class="row"><input id="gitManName" aria-label="Name" placeholder="Your Name" autocomplete="off">
+            <input id="gitManEmail" aria-label="Email" placeholder="id+user@users.noreply.github.com" autocomplete="off"><button>Save</button></form></details>
+        <div class="status"></div></li>
+      <li id="st-rc" data-required="1"><h3 tabindex="-1">Remote Control <span class="step-state"></span></h3>
+        <p class="hint">Makes the agent's sessions reachable in the Claude app (<i>Code</i>) and on claude.ai/code with your
+          account. <i>Enable</i> answers Claude Code's one-time question <code>Enable Remote Control? (y/n)</code> with yes,
+          trusts <code>/workspace</code>, and restarts Remote Control.</p>
+        <div class="row"><button id="rcEnable">Enable Remote Control</button><button data-term="rc" class="secondary">Watch the rc console</button></div>
+        <div class="status"></div></li>
+      <li id="st-policy"><h3 tabindex="-1">Starting policy <span class="step-state"></span></h3>
+        <p class="hint">What happens with destinations no rule covers. You can change it any time under <i>Rules</i>.</p>
+        <div class="row" role="group" aria-label="Starting policy"><button data-policy="ask" class="secondary">Ask me (recommended)</button>
+          <button data-policy="deny" class="secondary">Strict: block unknown</button><button id="wzTemplates" class="secondary">Templates&hellip;</button></div>
+        <div class="status"></div></li>
+      <li id="st-notify"><h3 tabindex="-1">Phone notifications <span class="step-state"></span></h3>
+        <div id="notifyStatus" class="muted"></div>
+        <p class="hint">Telegram and Matrix are set up in the environment (<a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#telegram-approvals" target="_blank" rel="noopener">how</a>).
+          Browser notifications appear for new requests while this tab is in the background.</p>
+        <button id="notifyBtn" class="secondary">Enable browser notifications</button> <span id="notifyPerm" class="muted"></span>
+        <div class="status"></div></li>
+      <li id="st-test" data-required="1"><h3 tabindex="-1">Isolation self-test <span class="step-state"></span></h3>
         <p class="hint">Runs inside the agent: direct internet, raw TCP, UDP DNS, LAN via proxy, gateway API and control UI must all be <b>blocked</b>; the proxy path to Anthropic must work.</p>
         <button id="selftestBtn">Run self-test</button><div class="status"></div></li>
     </ol>
@@ -259,4 +334,13 @@ git config --global user.email "id+user@users.noreply.github.com"</pre>
 <script src="/static/availability.js"></script>
 <script src="/static/push.js"></script>
 <script src="/static/context.js"></script>
+<script src="/static/wizard.js"></script>
+<script src="/static/overview.js"></script>
+<script src="/static/keys.js"></script>
+<script src="/static/update.js"></script>
+<script src="/static/files.js"></script>
+<script src="/static/history.js"></script>
+<script src="/static/usage.js"></script>
+<script src="/static/logsearch.js"></script>
+<script src="/static/learning.js"></script>
 </body></html>

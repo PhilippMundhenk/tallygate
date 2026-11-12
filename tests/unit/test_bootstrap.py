@@ -58,6 +58,7 @@ def test_generated_password_is_logged_once_and_checks(boot, caplog, monkeypatch)
     pw = re.search(r"web UI password: (\S+)", caplog.text).group(1)
     assert "stays readable in this log until the log is rotated" in caplog.text  # not "shown only once"
     assert boot.password_hash().startswith("scrypt:16:")
+    assert boot.password_generated()  # the setup wizard asks to change it
     caplog.clear()
     boot.ensure_password()  # second start: nothing new, nothing logged
     assert "web UI password" not in caplog.text

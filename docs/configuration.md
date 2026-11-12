@@ -25,6 +25,9 @@ All variables are optional. Secrets are created on first start when they are not
 | `COOKIE_SECURE` | `auto` | `auto`: the session cookie is `Secure` exactly when the browser uses HTTPS (directly, or `X-Forwarded-Proto` from a trusted proxy). `1` / `0` force it on or off. |
 | `TRUST_FORWARDED_FOR` | `0` | `1` when the UI sits behind your reverse proxy: trust `X-Forwarded-For`/`-Host`/`-Proto` for rate limiting and origin checks — **only** from peers in `TRUSTED_PROXIES`. |
 | `TRUSTED_PROXIES` | – | Comma-separated CIDRs of your reverse/auth proxy as seen by control. Forwarded and auth headers from any other peer are ignored. With a published port this is the `mgmt` bridge gateway `172.31.12.1/32`, which every local process shares: see [reverse proxy](operations.md#reverse-proxy). |
+| `FILES_MAX_UPLOAD` | `52428800` (50 MiB) | Largest file the *Files* tab uploads into the workspace (bytes). |
+| `FILES_MAX_DOWNLOAD` | `209715200` (200 MiB) | Largest workspace file the *Files* tab downloads (bytes). |
+| `UPDATE_CHECK` | `1` | Control asks GitHub's releases API (`api.github.com`, from control's own network, never through the agent) whether a newer tallygate release exists, at most every 6 h (30 min after a failure), and shows it in the UI. `0` switches it off. |
 | `SESSION_IDLE` | `7200` | UI session idle timeout in seconds (absolute lifetime: `SESSION_TTL`, 12 h). Sessions are server-side: logout and restarts end them, and open event streams and consoles are closed within 10 s. |
 | `GW_API_TOKEN` | *(created in the `gw-token` volume)* | Bearer token between control and gateway (≥ 24 chars). |
 | `SESSION_SECRET` | *(created in `control-data`)* | HMAC key that signs session ids in the cookie. |
@@ -112,6 +115,12 @@ Every key with an example. The file in the repository lists them all, commented 
 | `log_keep_days` | `30` | `7` | Event log retention. |
 | `log_max_events` | `500000` | `100000` | Hard cap on stored events. |
 | `max_pending` | `10` | `5` | Open approvals at once; more unknown destinations are denied immediately. |
+| `learning_ports` | `[80, 443]` | `[443]` | Ports learning mode may open. Only this file can change the list; an invalid entry stops the gateway. |
+| `learning_max_minutes` | `120` | `30` | Longest learning-mode session. |
+| `rule_stale_days` | `30` | `90` | A permanent rule that did not match for this many days is offered for removal. |
+| `suggest_min_approvals` | `3` | `5` | Temporary approvals of one destination that lead to a "make it permanent?" suggestion. |
+| `suggest_window_days` | `7` | `14` | The time window for those approvals. |
+| `policy_history_keep` | `500` | `100` | Policy versions kept for diff and rollback (at least 10); older ones are removed. |
 | `hard_deny_floor` | built-in list | `[203.0.113.7/32]` | **Added** to the built-in hard deny (your VPS's public IP). |
 | `readonly` | npm, Yarn, crates.io, Docker Hub, GHCR, Quay, Hugging Face | `[registry.npmjs.org, {host: ghcr.io, post_is_write: true}]` | Hosts where writes are refused: PUT/PATCH/DELETE, and with `post_is_write` also POST (except `read_posts`). See [Read-only hosts](#read-only-hosts). |
 | `inject` | GitHub entries | see below | Credential injection per host. |
@@ -156,6 +165,12 @@ initial_preset: baseline   # preset used to create policy.yaml on first start
 log_keep_days: 30          # event log retention
 log_max_events: 500000     # hard cap on stored events; identical events within 2 s are counted, not stored
 max_pending: 10            # open approvals at once; further unknown destinations are denied immediately
+policy_history_keep: 500   # policy versions kept for diff and rollback (at least 10)
+rule_stale_days: 30        # permanent rules unused this long are offered for removal
+learning_ports: [80, 443]  # ports learning mode may open (the UI offers 443, or 80 and 443)
+learning_max_minutes: 120  # longest learning-mode session
+suggest_min_approvals: 3   # temporary approvals of one destination before a permanent rule is suggested ...
+suggest_window_days: 7     # ... within this many days
 # hard_deny_floor: [...]   # ADDED to the built-in hard deny below (cannot remove from it). Only this file can change it.
 readonly:                  # TLS intercepted, PUT/PATCH/DELETE refused (e.g. blocks `npm publish`)
   - registry.npmjs.org

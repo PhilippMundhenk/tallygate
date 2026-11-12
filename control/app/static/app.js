@@ -59,6 +59,8 @@ if (location.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]"].includ
 }
 
 /* ---------------- tabs ---------------- */
+// Feature scripts loaded after this one (wizard.js, ...) register what to load when their tab opens.
+const tabHooks = {};
 function showTab(name) {
   $$("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "tab-" + name));
   $$("#tabs button").forEach((b) => {
@@ -68,8 +70,9 @@ function showTab(name) {
   history.replaceState(null, "", "#" + name);
   if (name === "rules") guard(loadPolicy)();
   if (name === "grants") { guard(loadGrants)(); guard(loadSecrets)(); }
-  if (name === "setup") guard(loadSetup)();
+  if (tabHooks[name]) guard(tabHooks[name])();
   if (name === "log" && !logLoaded) guard(loadLog)();
+  document.dispatchEvent(new CustomEvent("tg:tab", { detail: name }));  // hook for the feature scripts
 }
 $$("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 $("#tabs").addEventListener("keydown", (e) => {  // arrow keys move between tabs (WAI-ARIA tabs pattern)
@@ -127,13 +130,13 @@ function pendingCard(p) {
   // Host names are chosen by the agent: show the registrable domain separately (look-alikes such as
   // github.com.evil.example) and warn about punycode names.
   el.innerHTML = `<div class="dest">${esc(p.host)}:${esc(p.port)}</div>
-    ${p.domain && p.domain !== p.host ? `<div class="meta">domain <b>${esc(p.domain)}</b></div>` : ""}
+    ${p.domain && p.domain !== p.host ? `<div class="meta domain">domain <b>${esc(p.domain)}</b></div>` : ""}
     ${p.idn ? `<div class="meta warn">⚠ internationalised (punycode) name – check for look-alikes</div>` : ""}
     <div class="meta">${esc(p.proto)} · IPs ${esc((p.ips || []).join(", ") || "not resolved yet")} · attempts ${esc(p.attempts)} ·
     <span class="countdown" data-exp="${Number(p.expires)}"></span></div><div class="btns"></div>`;
   for (const [scope, label, cls] of SCOPES) {
     if (scope === "domain" && !p.domain) continue;  // no registrable domain (IP, public suffix)
-    const b = document.createElement("button"); if (cls) b.className = cls;
+    const b = document.createElement("button"); if (cls) b.className = cls; b.dataset.scope = scope;
     b.textContent = scope === "domain" ? `Always (*.${p.domain})` : label;
     b.onclick = decide(el, async () => { await gw("POST", `/pending/${p.id}/decide`, { scope }); await loadPending(); });
     $(".btns", el).appendChild(b);
@@ -386,7 +389,7 @@ $$("#quick [data-mode]").forEach((b) => {
 const STOP_STEPS = {
   suspend_auto_approval: "Automatic grant approval suspended", revoke_grants: "Active grants revoked",
   deny_pending: "Waiting connections denied", deny_grant_requests: "Grant requests denied",
-  remove_internet_presets: "Internet shortcuts removed", mode_deny: "Unknown destinations blocked",
+  remove_internet_presets: "Internet shortcuts removed", end_learning: "Learning mode ended", mode_deny: "Unknown destinations blocked",
 };
 function showStopResult(r) {
   const box = $("#qaStopResult"); box.classList.remove("hidden");
@@ -443,7 +446,7 @@ function grantRequestCard(r) {
     <div class="meta">Agent's reason: <i>${esc(r.reason || "(none given)")}</i></div>
     <div class="meta"><span class="countdown" data-exp="${Number(r.expires)}"></span></div><div class="btns"></div>`;
   const btn = (label, decision, cls = "") => {
-    const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls;
+    const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.dataset.decision = decision;
     b.onclick = decide(el, async () => { await gw("POST", `/grant-requests/${r.id}/decide`, { decision }); await loadGrants(); });
     $(".btns", el).appendChild(b);
   };
@@ -571,55 +574,6 @@ function openTerm(name) {
   $$("#termButtons button").forEach((b) => b.classList.toggle("secondary", b.dataset.name !== name));
 }
 
-/* ---------------- setup ---------------- */
-function setStatus(id, html, cls = "") { const s = $(`#${id} .status`); s.className = "status " + cls; s.innerHTML = html; }
-async function loadSetup() {
-  try {
-    const info = await gw("GET", "/info"); const sec = await gw("GET", "/secrets");
-    const repos = (info.github_repos || []).length ? ` · GitHub only for <code>${esc(info.github_repos.join(", "))}</code>` : "";
-    setStatus("st-gw", `${info.ca_pem ? "✔ CA exported" : "✖ CA missing"} · injection for <code>${esc(info.inject_hosts.join(", ") || "none")}</code>${repos} · pending ${info.pending}`, info.ca_pem ? "ok" : "bad");
-    const needed = info.inject_secrets_needed.filter((n) => !sec.names.includes(n));
-    setStatus("st-gh", sec.names.includes("github_token") ? "✔ github_token stored in gateway" : "✖ no token stored", sec.names.includes("github_token") ? "ok" : "warn");
-    if (needed.length && !needed.includes("github_token")) toast(`Missing secrets: ${needed.join(", ")}`, true);
-  } catch (e) { setStatus("st-gw", esc(e.message), "bad"); }
-  try {
-    const st = await api("GET", "/api/agent/status");
-    setStatus("st-claude", st.claude_logged_in ? "✔ credentials present" : "✖ not logged in", st.claude_logged_in ? "ok" : "warn");
-    setStatus("st-git", st.git_name ? `✔ ${esc(st.git_name)} &lt;${esc(st.git_email)}&gt;` : "✖ not set", st.git_name ? "ok" : "warn");
-    setStatus("st-rc", st.remote_control_running ? `✔ running (${esc(st.claude_version || "")})` : "✖ not running", st.remote_control_running ? "ok" : "warn");
-  } catch (e) { ["st-claude", "st-git", "st-rc"].forEach((id) => setStatus(id, esc(e.message), "bad")); }
-  const meta = await api("GET", "/api/meta");
-  const CHANNELS = { telegram: "Telegram", matrix: "Matrix", webpush: "Web Push", ntfy: "ntfy", gotify: "Gotify", pushover: "Pushover" };
-  $("#notifyStatus").textContent = Object.entries(CHANNELS).filter(([k]) => k in meta.notify)
-    .map(([k, n]) => `${n}: ${meta.notify[k] ? "on" : "off"}`).join(" · ") + " (chat and push services: configured via environment)";
-}
-$("#ghSave").onclick = guard(async () => {
-  const token = $("#ghToken").value.trim(); if (!token) return;
-  const r = await api("POST", "/api/github/check", { token, store: true });
-  $("#ghToken").value = "";
-  if (!r.ok) return setStatus("st-gh", `✖ GitHub says ${esc(r.status)}: ${esc(r.message)}`, "bad");
-  setStatus("st-gh", `✔ valid for <b>${esc(r.login)}</b>${r.expires ? ` · expires ${esc(r.expires)}` : ""}${r.scopes ? ` · scopes ${esc(r.scopes)}` : " · fine-grained"} · ${r.stored ? "stored in gateway" : "NOT stored"}`, r.stored ? "ok" : "bad");
-});
-$("#ghRemove").onclick = guard(async () => { await gw("PUT", "/secrets/github_token", { value: "" }); loadSetup(); });
-$("#selftestBtn").onclick = guard(async () => {
-  setStatus("st-test", "running… (up to a minute)");
-  const r = await api("GET", "/api/agent/selftest");
-  const rows = r.results.map((t) => `<tr><td class="${t.pass ? "ok" : "bad"}">${t.pass ? "PASS" : "FAIL"}</td><td>${esc(t.name)}</td><td class="muted">${esc(t.detail)}</td></tr>`).join("");
-  setStatus("st-test", `<table class="results">${rows}</table>`, r.results.every((t) => t.pass) ? "ok" : "bad");
-});
-// Browsers only show the permission prompt after a user gesture, so it is asked from a button.
-function showNotifyPerm() {
-  const supported = "Notification" in window;
-  $("#notifyBtn").classList.toggle("hidden", !supported || Notification.permission !== "default");
-  $("#notifyPerm").textContent = !supported ? "not supported by this browser"
-    : Notification.permission === "granted" ? "browser notifications are on"
-    : Notification.permission === "denied" ? "blocked in the browser's site settings" : "";
-}
-$("#notifyBtn").onclick = guard(async () => { await Notification.requestPermission(); showNotifyPerm(); });
-showNotifyPerm();
-$$(".wizard [data-term]").forEach((b) => (b.onclick = () => openTerm(b.dataset.term)));
-$$("pre.copy").forEach((p) => (p.onclick = () => navigator.clipboard.writeText(p.textContent).then(() => toast("Copied"))));
-
 /* ---------------- live stream ---------------- */
 let streamOpened = false;
 // Connection state in words as well as colour.
@@ -646,7 +600,8 @@ function connectStream() {
   };
   es.onmessage = (m) => {
     const ev = JSON.parse(m.data);
-    document.dispatchEvent(new CustomEvent("tg:event", { detail: ev }));  // for the feature scripts
+    window.dispatchEvent(new CustomEvent("tg:event", { detail: ev }));  // for feature scripts (overview.js, ...)
+    document.dispatchEvent(new CustomEvent("tg:event", { detail: ev }));  // hook for the feature scripts
     if (ev.type === "event") addLogRow(ev.event);
     if (ev.type === "ask" || ev.type === "resolved") loadPending().catch(() => {});
     if (ev.type === "ask" && document.hidden && Notification?.permission === "granted") new Notification("tallygate: approval needed", { body: `${ev.pending.host}:${ev.pending.port}` });
@@ -666,5 +621,5 @@ function connectStream() {
   await loadPending().catch((e) => toast(e.message, true));
   await loadGrants().catch((e) => toast(e.message, true));
   connectStream();
-  showTab(location.hash.slice(1) || "approvals");
+  showTab(location.hash.slice(1) || "overview");
 })();

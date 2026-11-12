@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
+    <img alt="tallygate" src="docs/images/logo-light.svg" width="300">
+  </picture>
+</p>
+
 # tallygate
 
 **Run Claude Code unattended behind a policy-enforcing egress gateway, with you in the loop.**
@@ -42,8 +49,18 @@ only then let through, turned back, or held for you to decide.
   the CONNECT target and Host match, optionally only for the repositories you list. The agent's own
   credentials for those hosts are stripped, and
   read-only hosts (e.g. the npm registry) refuse uploads.
-- **Operator UI.** Approvals, live log, rules editor with dry-run test, presets, browser consoles (Remote
-  Control, bash, claude), and a setup wizard for GitHub, Claude login, git and Remote Control.
+- **Operator UI.** An overview of what the agent is doing and what needs you, approvals (with keyboard
+  shortcuts), live log, rules editor with dry-run test, presets, workspace files, browser consoles (Remote
+  Control, bash, claude), and a guided first start that logs in to Claude, takes the git identity from GitHub
+  and enables Remote Control without a console. It tells you when a new release is out.
+- **Learning mode.** Let a new task run for 30 minutes with public HTTPS allowed and recorded, then save the
+  destinations it used as rules in one go. The LAN stays blocked; it ends by itself.
+- **Rule usage.** Hit counters per rule, unused rules offered for removal, and a permanent rule suggested when
+  you keep approving the same destination for an hour.
+- **Log search and audit export.** Search the whole log by host, kind, action and time range, see new
+  destinations and what decides each one, and export CSV or JSON.
+- **Policy history.** Every change is a version with author and time: see what changed since yesterday,
+  restore an earlier version, or export the policy and UI grants as one YAML file for another host.
 - **Phone approvals** via Telegram buttons or Matrix reactions (outbound polling only, no webhooks), or
   without any bot: install the UI as an app and tap *Allow 2 min* / *Deny* right in the push notification.
   ntfy, Gotify and Pushover can notify too.

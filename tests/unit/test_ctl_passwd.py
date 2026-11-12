@@ -84,8 +84,11 @@ def test_passwd_refuses_mismatch_and_keeps_the_old_hash(passwd, monkeypatch):
 
 def test_passwd_stores_a_hash_the_login_accepts(passwd, monkeypatch, capsys):
     prompts = answers(monkeypatch, "correct horse battery", "correct horse battery")
+    passwd.GENERATED_MARK.parent.mkdir(parents=True, exist_ok=True)
+    passwd.GENERATED_MARK.write_text("")  # the password generated on first start
     passwd.main()
     assert prompts == ["New password: ", "Repeat: "]
+    assert not passwd.GENERATED_MARK.exists()  # no longer the generated one
     stored = passwd.PASSWORD_FILE.read_text()
     assert stored.startswith("scrypt:16:") and "correct horse" not in stored
     out = capsys.readouterr().out

@@ -84,6 +84,44 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - **GitHub access per repository:** `github_repos: [owner/repo, owner/*]` in the gateway config refuses
   requests to other repositories (API, git, uploads) before they reach GitHub; GraphQL is refused unless
   `github_graphql: true`. Empty keeps the current behaviour (#78).
+- **Guided first start:** the Setup tab is one flow in which every step says whether it is done and the next
+  missing one is highlighted. It checks how the browser reaches the UI (HTTPS or localhost, cookie flag,
+  forwarded headers, reverse proxy, `PUBLIC_URL`, how to reach it from another machine), whether the UI
+  password is still the generated one, and offers the starting policy. *Log in to Claude* runs
+  `claude auth login` in the agent and takes the code in the UI; *Use my GitHub identity* sets the git name
+  and noreply address from `gh api user` after a preview (it explains a missing or refused token and never
+  writes empty values); *Enable Remote Control* answers its one-time `(y/n)` question. No console needed (#75).
+- **Overview tab** as the start page: Claude and Remote Control status with the session name, gateway health,
+  Claude Code version and disk use; what needs attention (requests, rules and grants ending within the hour,
+  a missing, refused or expiring GitHub token); the last hour (allowed/denied/asked, top and new
+  destinations); emergency stop, *Allow web for 15 min* and the console as shortcuts. New gateway endpoint
+  `GET /events/summary`; `/info` and the agent status report disk use (#68).
+- **Keyboard shortcuts** on the Approvals tab (`j`/`k` select, `a` allow 2 min, `h` allow 1 h, `d` deny,
+  `?` lists them; can be switched off), a **compact list** with one line per connection request, and an
+  optional **sound** when a request arrives while the tab is in the background (#79).
+- **Versions and update notice:** the Overview shows the running tallygate and Claude Code versions and the
+  latest release; the header says **Update: X.Y.Z** when a newer one exists, with links to the changelog and
+  the release and the upgrade command. Control asks GitHub's releases API from its own network (never through
+  the agent), caches the answer for 6 h, and `UPDATE_CHECK=0` switches it off. The gateway image carries
+  `VERSION` and reports it in `/info` (#81).
+- **Workspace files** in a new *Files* tab: browse `/workspace`, upload into the open folder and download
+  results, through the agent's status server (no new network path). Paths stay inside the workspace (no
+  `..`, symlinks that leave it are refused), uploads are size-limited (`FILES_MAX_UPLOAD`, 50 MiB) and never
+  replace a file unasked or write through a link, downloads are attachments that are never rendered in the
+  UI (`FILES_MAX_DOWNLOAD`, 200 MiB) (#76).
+- **Policy history:** every change to the policy is a version with time, author and what changed. The Rules
+  tab shows a diff between any two versions and restores one; the policy and the UI grants can be exported
+  as one YAML file and imported again, validated like any policy change (#71).
+- **Rule usage:** hit counters and the last match per rule, sortable and filterable in the Rules tab; permanent
+  rules that did not match for `rule_stale_days` are offered for removal, and destinations you keep approving
+  for a limited time are offered as a permanent rule (#70).
+- **Log search:** server-side search of the event log by host (`*.domain` too), kind, action and time range,
+  saved filters, a destinations view with new destinations, a page per destination with the rule that decides
+  it, and CSV or JSON export (#80).
+- **Learning mode:** for a limited time, destinations no rule covers are allowed on the chosen ports and
+  recorded; afterwards they are proposed as rules, grouped by domain, to save in one go. The hard deny, deny
+  and ask rules, grants and name-first decisions stay in force; it is shown in the header and ends by itself,
+  on the emergency stop and on restart (#69).
 
 ### Changed
 - **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie

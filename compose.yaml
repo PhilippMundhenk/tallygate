@@ -101,6 +101,9 @@ services:
       PUSHOVER_USER: ${PUSHOVER_USER:-}
       PUSH_ALLOWED_HOSTS: ${PUSH_ALLOWED_HOSTS:-}     # Web Push: extra push services (self-hosted)
       VAPID_SUBJECT: ${VAPID_SUBJECT:-}               # Web Push contact (mailto: or https:), default PUBLIC_URL
+      UPDATE_CHECK: ${UPDATE_CHECK:-1}                 # 0: never ask GitHub for new releases
+      FILES_MAX_UPLOAD: ${FILES_MAX_UPLOAD:-52428800}       # Files tab: largest upload into the workspace (bytes)
+      FILES_MAX_DOWNLOAD: ${FILES_MAX_DOWNLOAD:-209715200}  # Files tab: largest download (bytes)
     volumes:
       - ${CONTROL_DATA:-control-data}:/data                         # session secret, UI password hash
       - gw-token:/run/tallygate/gw:ro

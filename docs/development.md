@@ -37,6 +37,8 @@
 │   ├── status.py             #   status + isolation self-test endpoint
 │   ├── tallygate-cli.py      #   `tallygate` CLI: list and request grants, notes
 │   ├── tallygate-hook.py     #   PreToolUse hook: reports the running command to the gateway
+│   ├── status.py             #   status, isolation self-test and setup actions (agent network)
+│   ├── tallygate-cli.py      #   `tallygate` CLI: list and request grants
 │   ├── CLAUDE.md             #   managed memory: explains the gateway and grants to Claude
 │   └── managed-settings.json #   managed Claude Code settings (incl. the PreToolUse hook)
 ├── tests/
