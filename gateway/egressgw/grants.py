@@ -24,7 +24,7 @@ from pathlib import Path
 
 import yaml
 
-from egressgw.policy import is_ip, valid_hostname
+from egressgw.policy import ip_addr, is_ip, valid_hostname
 
 log = logging.getLogger("egressgw")
 
@@ -77,7 +77,7 @@ def host_match(pattern: str, host: str) -> bool:
     if pattern.startswith("*."):
         return host.endswith(pattern[1:]) and host != pattern[2:]
     if is_ip(pattern) and is_ip(host):
-        return ipaddress.ip_address(pattern.strip("[]")) == ipaddress.ip_address(host.strip("[]"))
+        return ip_addr(pattern) == ip_addr(host)
     return pattern == host
 
 
@@ -359,9 +359,7 @@ class Grants:
     # ---------------------------------------------------------------- matching
     @staticmethod
     def _in(ip: str, nets) -> bool:
-        a = ipaddress.ip_address(ip.strip("[]"))
-        if a.version == 6 and a.ipv4_mapped:
-            a = a.ipv4_mapped
+        a = ip_addr(ip)
         return any(a in n for n in nets)
 
     def match(self, host: str, port: int) -> tuple[Active, GrantDef, Target] | None:

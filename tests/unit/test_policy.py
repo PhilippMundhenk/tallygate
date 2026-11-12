@@ -94,6 +94,29 @@ def test_validation_rejects_garbage():
             Policy.from_dict(bad)
 
 
+@pytest.mark.parametrize("port", [None, [443, None], [], "https", "443;8443", "44 3", "9-1", 0, 65536, 44.3, True])
+def test_rule_ports_are_validated_strictly(port):
+    # #13: null used to mean "all ports" - and the UI sent null for typos
+    with pytest.raises(ValueError, match="invalid port"):
+        Rule.from_dict({"action": "allow", "host": "x.example", "port": port})
+
+
+def test_rule_ports_accepted_forms():
+    for port in (443, "443", [80, 443], "8000-8100", [80, "8000-8100"], "*", "any"):
+        Rule.from_dict({"action": "allow", "host": "x.example", "port": port})
+    assert Rule.from_dict({"action": "allow", "host": "x.example"}).port == "*"  # omitted = all ports
+
+
+def test_ipv4_mapped_ipv6_is_matched_like_ipv4():
+    # #13: a CIDR deny on 127.0.0.1/32 did not match [::ffff:127.0.0.1]
+    p = Policy.from_dict({"default": "allow", "rules": [{"id": "d", "action": "deny", "cidr": "8.8.8.8/32"}]})
+    assert p.evaluate("::ffff:8.8.8.8", 443, ["::ffff:8.8.8.8"]).action == "deny"
+    assert p.evaluate("x.example", 443, ["::ffff:8.8.8.8"]).action == "deny"
+    r = rule_for_approval("[::ffff:8.8.4.4]", 443, "always")
+    assert r.cidr == "8.8.4.4"
+    assert r.matches("8.8.4.4", 443, ["8.8.4.4"]) and r.matches("::ffff:8.8.4.4", 443, ["::ffff:8.8.4.4"])
+
+
 def test_presets_load():
     for f in PRESETS.glob("*.yaml"):
         Policy.load(f)
