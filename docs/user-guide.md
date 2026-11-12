@@ -230,6 +230,8 @@ destinations in plain text, like Telegram does.
 ## Working with the agent
 
 - **Repositories**: `gh repo clone owner/repo /workspace/repo`. git uses HTTPS; the gateway injects your token.
+  To limit the agent to some repositories, list them in `github_repos` in the gateway config
+  ([configuration](configuration.md#github-per-repository)); the Setup tab shows the list.
 - **Parallel sessions**: start more sessions on the same environment from the Claude app; set
   `RC_ARGS=--spawn worktree` to give each session its own git worktree.
 - **Skills**: put them in `/home/agent/.claude/skills/<name>/SKILL.md` in the agent (the `agent-home` volume, owner uid 1000), e.g. with `docker compose cp`.

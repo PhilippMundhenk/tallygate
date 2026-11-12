@@ -25,7 +25,7 @@ Base URL: `http://172.31.11.2:8081` (control-net only). All endpoints except `/h
 | GET | `/stream` | – | Server-sent events (see below) |
 | GET | `/secrets` | – | `{"names": [...]}` — values are never returned |
 | PUT | `/secrets/{name}` | `{"value": "..."}` (empty removes) | `{"names": [...]}` |
-| GET | `/info` | – | `inject_hosts`, `inject_secrets_needed`, `services`, `ca_pem`, `pending` |
+| GET | `/info` | – | `inject_hosts`, `inject_secrets_needed`, `services`, `github_repos`, `ca_pem`, `pending` |
 | GET | `/availability` | – | `mode` (`available` \| `away` \| `quiet`), `until`, `message` (what the agent is told), `away` (`{since, by, until}`), `quiet_hours`, `quiet_source` (`config` \| `ui`), `quiet_zone`, `digest_minutes`, `missed` (`[{kind: conn\|grant, host, port, first, last, count}]`), `missed_dropped` |
 | PATCH | `/availability` | `{"away": bool, "away_until": ts, "quiet_hours": {start, end, days?, tz?} \| null, "by": "who"}` (any of them) | Away on/off (optionally until a time, at most 30 days), quiet hours set or off. Going away denies everything waiting for a human. Returns the state; any other key is a `400` |
 | DELETE | `/availability/missed` | – | Clears the list of refused requests |

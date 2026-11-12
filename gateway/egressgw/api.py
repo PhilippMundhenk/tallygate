@@ -356,6 +356,7 @@ def build_app(gw: Gateway) -> web.Application:
                 "inject_hosts": sorted(gw.inject_hosts),
                 "inject_secrets_needed": sorted({s for i in gw.inject for s in _secret_names(i["value"])}),
                 "services": gw.config.get("services") or [],
+                "github_repos": [f"{o}/{r}" for o, r in gw.github.patterns],
                 "ca_pem": ca.read_text() if ca.exists() else None,
                 "pending": len(gw.pending),
             }

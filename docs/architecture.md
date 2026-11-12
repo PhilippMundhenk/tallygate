@@ -173,6 +173,9 @@ sequenceDiagram
     S-->>A: response
 ```
 
+With `github_repos` set, the request is also refused with `403` unless its path names an allowed repository
+(`/repos/<owner>/<repo>/…` on the API, `/<owner>/<repo>[.git]/…` for git), before the token is added (#78).
+
 The double check (CONNECT target **and** Host header must both match the configured host) means an agent
 cannot obtain the token by connecting to another server while claiming to be GitHub
 ([ADR-0005](adr/0005-credential-injection-by-tls-interception.md)). TLS to injection and read-only hosts is

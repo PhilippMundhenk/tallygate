@@ -18,6 +18,7 @@
 │       ├── grants.py         #   grant definitions, requests, active grants
 │       ├── availability.py   #   away mode, quiet hours, digest of refused requests
 │       ├── activity.py       #   what the agent says it is doing (context for approvals)
+│       ├── github.py         #   github_repos: GitHub access per repository
 │       ├── store.py          #   SQLite event log, secrets store, header templating
 │       ├── api.py            #   management API (aiohttp, bearer token)
 │       └── agentapi.py       #   grant request API for the agent (agent network)

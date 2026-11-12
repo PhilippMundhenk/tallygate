@@ -115,6 +115,9 @@ Every key with an example. The file in the repository lists them all, commented 
 | `hard_deny_floor` | built-in list | `[203.0.113.7/32]` | **Added** to the built-in hard deny (your VPS's public IP). |
 | `readonly` | npm, Yarn, crates.io, Docker Hub, GHCR, Quay, Hugging Face | `[registry.npmjs.org, {host: ghcr.io, post_is_write: true}]` | Hosts where writes are refused: PUT/PATCH/DELETE, and with `post_is_write` also POST (except `read_posts`). See [Read-only hosts](#read-only-hosts). |
 | `inject` | GitHub entries | see below | Credential injection per host. |
+| `github_repos` | `[]` (every repository) | `[acme/app, acme-tools/*]` | Limit GitHub to these repositories; others are refused before they reach GitHub. See [GitHub per repository](#github-per-repository). |
+| `github_graphql` | `false` | `true` | With `github_repos`: allow `/graphql` anyway (it can reach any repository the token can). |
+| `github_hosts` | `github.com`, `api.github.com`, `uploads.github.com` | `[github.example.org]` | Hosts `github_repos` applies to (GitHub Enterprise Server: your host). |
 | `inject_strip_headers` | `[Authorization, Cookie]` | `[Authorization, Cookie, X-Api-Key]` | Agent headers always removed on inject hosts. |
 | `services` | `[]` | `[{name: pg, listen: 15432, target: db.example.org:5432}]` | TCP service ports. |
 | `quiet_hours` | – | `{start: "22:00", end: "07:00", days: [mon, tue, wed, thu, fri], tz: Europe/Berlin}` | Daily period in which requests that need you are refused at once. See [Availability](#availability). |
@@ -183,6 +186,40 @@ the rendered inner text. The agent's own `Authorization`/`Cookie` headers are **
 hosts; if a referenced secret is missing the request goes out without credentials (fail closed).
 
 Every `inject` host must also be **allowed** by the policy (the baseline preset allows GitHub).
+
+### GitHub per repository
+
+The injected token works for every repository it can reach. A fine-grained token limited to a few
+repositories is the first line; `github_repos` is a second one in the gateway, independent of how the
+token was made:
+
+```yaml
+github_repos:
+  - acme/app            # exactly this repository (case-insensitive)
+  - acme-tools/*        # every repository of this owner
+```
+
+With a list, TLS to the `github_hosts` is always intercepted and every request must name an allowed
+repository, or it is refused with `403` before it reaches GitHub (no token is added):
+
+| Host | Allowed paths |
+|---|---|
+| `github.com` (git, archives, raw files) | `/<owner>/<repo>[.git][/...]` |
+| `api.github.com`, `uploads.github.com`, GitHub Enterprise `/api/v3`, `/api/uploads` | `/repos/<owner>/<repo>/...`; `GET`/`HEAD` of `/`, `/user`, `/rate_limit`, `/meta`, `/versions` |
+| `/graphql` | refused, unless `github_graphql: true` |
+
+Paths must be canonical (no `..`, `//`, encoded slashes). Everything else is refused: other repositories,
+`/repositories/<id>` (repositories by number, which GitHub also uses to redirect renamed ones), search,
+gists, organisations, creating repositories. **GraphQL** can address any repository by name or node id, so
+it is refused while `github_repos` is set. `gh` uses it for pull requests (`gh pr create`, `gh pr view`)
+and some other commands: `gh api repos/<owner>/<repo>/pulls` and git work; set `github_graphql: true` if
+you need the GraphQL commands and accept that the limit then does not cover them. Raw downloads from
+`*.githubusercontent.com` carry no token and are not covered by the list.
+
+An empty list keeps the earlier behaviour. An invalid entry stops the gateway.
+
+*Follow-up:* a GitHub App installation token (short-lived, repository-scoped, rotated by the gateway) instead
+of a personal access token is not implemented yet.
 
 ### Availability
 

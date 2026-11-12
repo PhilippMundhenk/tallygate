@@ -576,7 +576,8 @@ function setStatus(id, html, cls = "") { const s = $(`#${id} .status`); s.classN
 async function loadSetup() {
   try {
     const info = await gw("GET", "/info"); const sec = await gw("GET", "/secrets");
-    setStatus("st-gw", `${info.ca_pem ? "✔ CA exported" : "✖ CA missing"} · injection for <code>${esc(info.inject_hosts.join(", ") || "none")}</code> · pending ${info.pending}`, info.ca_pem ? "ok" : "bad");
+    const repos = (info.github_repos || []).length ? ` · GitHub only for <code>${esc(info.github_repos.join(", "))}</code>` : "";
+    setStatus("st-gw", `${info.ca_pem ? "✔ CA exported" : "✖ CA missing"} · injection for <code>${esc(info.inject_hosts.join(", ") || "none")}</code>${repos} · pending ${info.pending}`, info.ca_pem ? "ok" : "bad");
     const needed = info.inject_secrets_needed.filter((n) => !sec.names.includes(n));
     setStatus("st-gh", sec.names.includes("github_token") ? "✔ github_token stored in gateway" : "✖ no token stored", sec.names.includes("github_token") ? "ok" : "warn");
     if (needed.length && !needed.includes("github_token")) toast(`Missing secrets: ${needed.join(", ")}`, true);

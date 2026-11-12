@@ -33,6 +33,13 @@ inject:
     header: Authorization
     value: "Basic ${b64:x-access-token:${github_token}}"
 
+# GitHub access per repository: with a list, requests to GitHub must name one of these repositories
+# (/repos/<owner>/<repo>/... on the API, /<owner>/<repo>[.git]/... for git) or they are refused before they
+# reach GitHub. Empty (default): the token works for every repository it can reach. See docs/configuration.md.
+# github_repos: [your-user/your-repo, your-org/*]
+# github_graphql: false      # GraphQL can address any repository: refused while github_repos is set
+# github_hosts: [github.com, api.github.com, uploads.github.com]   # e.g. add your GitHub Enterprise host
+
 # Agent credentials (Authorization, Cookie) are always stripped on injection hosts, so the agent can
 # never act as an account of its own choosing there - even before a secret is configured.
 # inject_strip_headers: [Authorization, Cookie]

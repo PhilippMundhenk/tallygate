@@ -32,6 +32,7 @@ from mitmproxy.proxy import server_hooks
 from egressgw import api
 from egressgw.activity import Activity
 from egressgw.availability import Availability, Unavailable
+from egressgw.github import RepoScope
 from egressgw.grants import READ_METHODS, GrantDef, Grants, Target, path_ok
 from egressgw.policy import (
     DEFAULT_HARD_DENY,
@@ -219,6 +220,7 @@ class Gateway:
         self.inject = [dict(i) for i in self.config.get("inject") or []]
         self.inject_hosts = {i["host"].lower().rstrip(".") for i in self.inject}
         self.readonly = parse_readonly(self.config.get("readonly") or [])
+        self.github = RepoScope(self.config)  # github_repos (#78); an invalid entry stops the gateway
         self.strip_headers = [str(h) for h in self.config.get("inject_strip_headers") or ["Authorization", "Cookie"]]
         self.max_pending = int(self.config.get("max_pending", 10))
         self._dups: dict[tuple, list] = {}
@@ -683,8 +685,9 @@ class Gateway:
         return next((r for r in self.readonly if host_matches(r.host, host)), None)
 
     def _intercepted(self, host: str) -> bool:
-        """TLS to injection and read-only hosts is always intercepted (whatever the SNI says)."""
-        return host in self.inject_hosts or self._readonly(host) is not None
+        """TLS to injection, read-only and repository-limited GitHub hosts is always intercepted (whatever the
+        SNI says): their requests are checked one by one."""
+        return host in self.inject_hosts or self._readonly(host) is not None or self.github.applies(host)
 
     def _grant_match(self, host: str, port: int):
         """Active grant for host:port - unless the policy already allows the name: grants only ADD
@@ -872,6 +875,8 @@ class Gateway:
         ro = self._readonly(target)
         if ro and ro.refuses(flow.request.method.upper(), flow.request.path):
             return "read-only host"
+        if self.github.applies(target) and (why := self.github.check(target, flow.request.method, flow.request.path)):
+            return why  # another repository: refused before it reaches GitHub, before any token is added
         if target not in self.inject_hosts:
             return None
         # Never forward the agent's own credentials to an injection host: otherwise it could act as
@@ -897,6 +902,8 @@ class Gateway:
         b = self._grant_binding(flow)
         if b is not None:
             why = self._grant_checks(flow, b)
+            if not why and self.github.applies(b[1]):  # a grant to a GitHub host does not widen github_repos
+                why = self.github.check(b[1], flow.request.method, flow.request.path)
             return (b[1], b[2].port, why) if why else None
         # The real destination: the connection's checked target (TLS) or the absolute-form URL host
         # (plain HTTP proxy requests, whose server connection is opened after these hooks).

@@ -24,6 +24,7 @@ can exfiltrate it. Docker Sandboxes and similar products inject credentials in a
 - ✅ The token cannot be read, logged or exfiltrated by the agent.
 - ✅ SNI/Host spoofing to obtain the token is prevented (covered by e2e tests).
 - ⚠️ The agent can still *use* the token for anything it permits — use fine-grained PATs scoped to the
-  needed repositories.
+  needed repositories. Since #78, `github_repos` additionally limits the GitHub hosts to listed repositories
+  by path (GraphQL refused unless `github_graphql`), checked before the token is added.
 - ⚠️ Claude's own OAuth login cannot be injected this way (Remote Control requires a full-scope login in the
   agent).
