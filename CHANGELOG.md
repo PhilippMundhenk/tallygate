@@ -26,6 +26,9 @@ All notable changes to this project are documented here. The format follows
 - `hard_deny_floor` now extends the built-in hard-deny list instead of replacing it; adding a VPS address
   silently dropped RFC 1918, loopback and metadata ranges. Extras from the API are compared with the floor
   in force ([#11](https://github.com/PhilippMundhenk/tallygate/issues/11)).
+- Grants defined in the UI or API can no longer use `inject` or `tls_verify: false` (config-file grants
+  only): a UI session could send stored secrets to any host. Such UI grants saved earlier are ignored at
+  startup ([#12](https://github.com/PhilippMundhenk/tallygate/issues/12)).
 ### Added
 - **Docker Compose with prebuilt images is the recommended installation.** Multi-arch images
   (`linux/amd64`, `linux/arm64`) `ghcr.io/philippmundhenk/tallygate-{gateway,control,agent}` are published

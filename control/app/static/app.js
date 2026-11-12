@@ -244,20 +244,11 @@ function targetRow(t = { scheme: "https", host: "", port: 443, paths: ["/*"] }) 
     <input class="t-host" placeholder="ha.lan or 192.168.1.5"><input class="t-port" type="number" min="1" max="65535">
     <input class="t-paths" placeholder="paths, e.g. /api/*"><label><input type="checkbox" class="t-lan"> LAN</label>
     <input class="t-address" placeholder="fixed IP (optional)"><input class="t-fp" placeholder="SHA-256 cert fingerprint (optional)">
-    <label title="only for https without fingerprint"><input type="checkbox" class="t-verify" checked> verify TLS</label>
     <button class="small secondary t-del">✕</button>`;
   $(".t-scheme", row).value = t.scheme; $(".t-host", row).value = t.host; $(".t-port", row).value = t.port;
   $(".t-paths", row).value = (t.paths || ["/*"]).join(", "); $(".t-lan", row).checked = !!t.lan;
-  $(".t-address", row).value = t.address || ""; $(".t-fp", row).value = t.tls_fingerprint || ""; $(".t-verify", row).checked = t.tls_verify !== false;
+  $(".t-address", row).value = t.address || ""; $(".t-fp", row).value = t.tls_fingerprint || "";
   $(".t-del", row).onclick = () => row.remove();
-  return row;
-}
-function injectRow(i = { host: "", header: "Authorization", value: "Bearer ${token_name}" }) {
-  const row = document.createElement("div"); row.className = "inject-row";
-  row.innerHTML = `<input class="i-host" placeholder="host (an https target)"><input class="i-header" placeholder="header">
-    <input class="i-value" placeholder="value template, e.g. Bearer \${ha_token}"><button class="small secondary i-del">✕</button>`;
-  $(".i-host", row).value = i.host; $(".i-header", row).value = i.header; $(".i-value", row).value = i.value;
-  $(".i-del", row).onclick = () => row.remove();
   return row;
 }
 function openGrantEditor(d) {
@@ -269,12 +260,10 @@ function openGrantEditor(d) {
   $("#geApprRead").value = d?.approval?.read || "ask"; $("#geApprWrite").value = d?.approval?.write || "ask";
   $("#geTtl").value = d ? d.default_ttl : "1h"; $("#geMaxTtl").value = d ? d.max_ttl : "4h";
   $("#geTargets").innerHTML = ""; (d ? d.targets : [undefined]).forEach((t) => $("#geTargets").appendChild(targetRow(t)));
-  $("#geInject").innerHTML = ""; (d ? d.inject : []).forEach((i) => $("#geInject").appendChild(injectRow(i)));
   ed.scrollIntoView({ behavior: "smooth" });
 }
 $("#grantNew").onclick = () => openGrantEditor(null);
 $("#geAddTarget").onclick = () => $("#geTargets").appendChild(targetRow());
-$("#geAddInject").onclick = () => $("#geInject").appendChild(injectRow());
 $("#geCancel").onclick = () => $("#grantEditor").classList.add("hidden");
 $("#geSave").onclick = guard(async () => {
   const name = $("#geName").value.trim();
@@ -286,12 +275,9 @@ $("#geSave").onclick = guard(async () => {
     if ($(".t-lan", r).checked) t.lan = true;
     if ($(".t-address", r).value.trim()) t.address = $(".t-address", r).value.trim();
     if ($(".t-fp", r).value.trim()) t.tls_fingerprint = $(".t-fp", r).value.trim();
-    if (t.scheme === "https" && !$(".t-verify", r).checked && !t.tls_fingerprint) t.tls_verify = false;
     return t;
   });
-  const inject = $$("#geInject .inject-row").map((r) => ({ host: $(".i-host", r).value.trim(), header: $(".i-header", r).value.trim(), value: $(".i-value", r).value }));
-  const body = { description: $("#geDesc").value.trim(), levels, approval, default_ttl: $("#geTtl").value.trim(), max_ttl: $("#geMaxTtl").value.trim(), targets, inject };
-  if (targets.some((t) => t.tls_verify === false) && !confirm("TLS verification is disabled for a target. Anyone on that network path could impersonate it. Prefer pinning the certificate fingerprint. Save anyway?")) return;
+  const body = { description: $("#geDesc").value.trim(), levels, approval, default_ttl: $("#geTtl").value.trim(), max_ttl: $("#geMaxTtl").value.trim(), targets };
   await gw("PUT", `/grants/${encodeURIComponent(name)}`, body);
   $("#grantEditor").classList.add("hidden"); toast(`Grant ${name} saved`); await loadGrants();
 });

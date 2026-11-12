@@ -92,6 +92,7 @@ service, **E**levation of privilege.
 | T31 | Self-signed LAN service impersonated on the path | S, I | Leaf certificate pinned by SHA-256 (`tls_fingerprint`); disabling verification needs an explicit setting and UI confirmation | e2e pinned/badpin |
 | T32 | Access outlives the task | E | Grants expire (≤ 7 days, capped per grant), are revocable from UI/Telegram/Matrix, end on restart; open HTTP connections are re-checked per request | e2e revoke test |
 | T33 | An internal error (broken config entry, full disk, locked event log) lets a connection through unchecked | E, I | Every mitmproxy hook fails closed: an exception refuses the connection/flow; the error is set before the event is recorded; CIDRs are validated at startup (the gateway does not start otherwise) | e2e (`test_fail_closed.py`) |
+| T34 | A compromised UI session or API token defines a grant that injects a stored secret into requests to a host of its choosing | I | `inject` and `tls_verify: false` only in config-file grants; UI/API grants with them are rejected | unit + e2e (#12) |
 
 ## Residual risks
 
