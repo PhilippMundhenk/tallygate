@@ -26,7 +26,7 @@ Base URL: `http://172.31.11.2:8081` (control-net only). All endpoints except `/h
 | GET | `/stream` | – | Server-sent events (see below) |
 | GET | `/secrets` | – | `{"names": [...]}` — values are never returned |
 | PUT | `/secrets/{name}` | `{"value": "..."}` (empty removes) | `{"names": [...]}` |
-| GET | `/info` | – | `inject_hosts`, `inject_secrets_needed`, `services`, `ca_pem`, `pending`, `data_disk` (`{"total", "used", "free"}` of the file system holding the gateway state, or `null`), `events_db_bytes` (event log incl. WAL) |
+| GET | `/info` | – | `inject_hosts`, `inject_secrets_needed`, `services`, `ca_pem`, `pending`, `version` (the release, from `VERSION`), `data_disk` (`{"total", "used", "free"}` of the file system holding the gateway state, or `null`), `events_db_bytes` (event log incl. WAL) |
 | GET | `/grants` | – | `defs` (with `source` config/ui), `active`, pending `requests`, `lan_allow_ui`, `missing_secrets`, `auto_suspended` (`null` or `{"since", "by"}` after an emergency stop) |
 | PUT | `/grants/{name}` | Grant definition ([grants](grants.md)) | Validated, stored as a UI grant; `400` for config grants or LAN targets outside `grants_lan_allow` |
 | DELETE | `/grants/{name}` | – | UI grants only; also ends an active instance |
@@ -103,6 +103,7 @@ Used by the bundled web UI; documented for scripting and review.
 | POST | `/logout` | session | Clears the session |
 | GET | `/` | session | Single-page UI |
 | GET | `/api/meta` | session | Current user, terminal names, notification status |
+| GET | `/api/version` | session | `{"tallygate", "claude_code", "check": "ok"\|"error"\|"off", "latest": {"version", "url", "published"} \| null, "update_available": bool \| null, "error"?, "changelog", "upgrade"}`. `tallygate` is the gateway's VERSION; the latest release comes from GitHub's releases API (control's network, cached 6 h, `UPDATE_CHECK=0` switches it off); the release URL is built by control |
 | GET | `/api/stream` | session | Relayed gateway SSE stream |
 | * | `/api/gw/{path}` | session + CSRF | Relay to an **allowlisted** subset of the gateway API: `GET`/`PUT`/`PATCH /policy`, `POST /emergency-stop`, `POST /rules`, `DELETE /rules/{id}`, `GET /pending`, `POST /pending/{id}/decide`, `GET /events`, `GET /events/summary`, `POST /test`, `GET`/`POST`/`DELETE /presets…`, `GET /secrets`, `PUT /secrets/{name}`, `GET`/`PUT`/`DELETE /grants/{name}`, `POST /grants/{name}/activate`, `DELETE /active-grants/{id}`, `POST /grant-requests/{id}/decide`, `GET /info`. Everything else is refused (404). For decisions and the emergency stop, `by` is set to `web:<user>`. |
 | POST | `/api/github/check` | session + CSRF | `{"token": "...", "store": true}` — validate a token against GitHub from the control plane and store it in the gateway |

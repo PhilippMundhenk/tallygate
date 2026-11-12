@@ -11,6 +11,8 @@ RUN pip install --no-cache-dir -r /app/requirements.txt \
 COPY gateway/egressgw /app/egressgw
 COPY gateway/presets /app/presets
 COPY gateway/run.py /app/run.py
+# the release, reported by GET /info and shown in the UI (single source: VERSION in the repository)
+COPY VERSION /app/VERSION
 # Default static configuration; mount your own file over it to define grants, services or injection.
 COPY config/gateway.yaml /etc/egressgw/config.yaml
 ENV PRESET_DIR=/app/presets GW_CONFIG=/etc/egressgw/config.yaml

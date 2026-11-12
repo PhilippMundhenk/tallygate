@@ -656,6 +656,98 @@ async def api_setup_checks(request: web.Request):
     return web.json_response({"checks": checks, "password": password_state()})
 
 
+# ------------------------------------------------------------------ versions and update notice (#81)
+# Control asks GitHub's releases API itself (it has egress on mgmt), never through the agent. UPDATE_CHECK=0
+# switches it off. Results are cached: a release for 6 h, a failure for 30 min.
+UPDATE_REPO = "PhilippMundhenk/tallygate"
+UPDATE_TTL, UPDATE_RETRY = 6 * 3600, 30 * 60
+UPDATE_MAX_BYTES = 256 * 1024
+RELEASE_TAG = re.compile(r"v?(\d{1,4})\.(\d{1,4})\.(\d{1,6})")
+_release: dict = {}  # {"at": ts, "data": {...}}
+_release_lock = asyncio.Lock()
+
+
+def update_check_enabled() -> bool:
+    return os.environ.get("UPDATE_CHECK", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def parse_version(v: object) -> tuple[int, int, int] | None:
+    m = RELEASE_TAG.fullmatch(str(v or "").strip())
+    return tuple(int(x) for x in m.groups()) if m else None  # type: ignore[return-value]
+
+
+async def latest_release(app: web.Application) -> dict:
+    """{"version", "url", "published"} of the latest release, or {"error"}; cached."""
+    async with _release_lock:
+        now = time.time()
+        if _release and now - _release["at"] < (UPDATE_RETRY if "error" in _release["data"] else UPDATE_TTL):
+            return _release["data"]
+        try:
+            async with app["http"].get(
+                f"{GITHUB_API}/repos/{UPDATE_REPO}/releases/latest",
+                headers={"Accept": "application/vnd.github+json", "User-Agent": "tallygate-update-check"},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as r:
+                raw = b""  # read() returns what has arrived so far: read until the end or the cap
+                while len(raw) <= UPDATE_MAX_BYTES and (chunk := await r.content.read(UPDATE_MAX_BYTES + 1 - len(raw))):
+                    raw += chunk
+                if r.status != 200:
+                    raise ValueError(f"GitHub answered {r.status}")
+                if len(raw) > UPDATE_MAX_BYTES:
+                    raise ValueError("answer too large")
+                rel = json.loads(raw)
+                tag = rel.get("tag_name") if isinstance(rel, dict) else None
+                v = parse_version(tag)
+                if not v:
+                    raise ValueError("no release version in the answer")
+                published = str(rel.get("published_at") or "")[:40]
+                data = {
+                    "version": ".".join(map(str, v)),
+                    # built here, not taken from the answer
+                    "url": f"https://github.com/{UPDATE_REPO}/releases/tag/{urllib.parse.quote(str(tag))}",
+                    "published": published if re.fullmatch(r"[0-9TZ:.+-]*", published) else "",
+                }
+        except (TimeoutError, aiohttp.ClientError, ValueError) as e:
+            data = {"error": f"update check failed: {e}"[:200]}
+        _release.update(at=now, data=data)
+        return data
+
+
+async def api_version(request: web.Request):
+    """The running versions in one place and whether a newer tallygate release exists."""
+    app = request.app
+    out: dict = {
+        "tallygate": None,
+        "claude_code": None,
+        "changelog": f"https://github.com/{UPDATE_REPO}/blob/main/CHANGELOG.md",
+        "upgrade": "docker compose pull && docker compose up -d",
+        "check": "off",
+        "latest": None,
+        "update_available": None,
+    }
+    try:
+        _, info = await gw(app, "GET", "/info")
+        if isinstance(info, dict) and parse_version(info.get("version")):
+            out["tallygate"] = str(info["version"])
+    except (TimeoutError, aiohttp.ClientError, ValueError):
+        pass
+    try:
+        _, st = await agent_call(app, "GET", "status")
+        v = re.match(r"\d{1,4}\.\d{1,4}\.\d{1,6}", str(st.get("claude_version", "")))
+        out["claude_code"] = v.group(0) if v else None
+    except (TimeoutError, aiohttp.ClientError, ValueError):
+        pass
+    if update_check_enabled():
+        rel = await latest_release(app)
+        if "error" in rel:
+            out.update(check="error", error=rel["error"])
+        else:
+            out.update(check="ok", latest=rel)
+            cur = parse_version(out["tallygate"])
+            out["update_available"] = parse_version(rel["version"]) > cur if cur else None
+    return web.json_response(out)
+
+
 async def api_meta(request: web.Request):
     return web.json_response(
         {
@@ -804,6 +896,7 @@ def build_app() -> web.Application:
     app.router.add_get("/", index)
     app.router.add_get("/api/stream", api_stream)
     app.router.add_get("/api/meta", api_meta)
+    app.router.add_get("/api/version", api_version)
     app.router.add_post("/api/github/check", api_github_check)
     app.router.add_route("*", "/api/agent/{what:.*}", api_agent)
     app.router.add_get("/api/setup/checks", api_setup_checks)

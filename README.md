@@ -42,7 +42,7 @@ only then let through, turned back, or held for you to decide.
 - **Operator UI.** An overview of what the agent is doing and what needs you, approvals (with keyboard
   shortcuts), live log, rules editor with dry-run test, presets, browser consoles (Remote Control, bash,
   claude), and a guided first start that logs in to Claude, takes the git identity from GitHub and enables
-  Remote Control without a console.
+  Remote Control without a console. It tells you when a new release is out.
 - **Phone approvals** via Telegram buttons or Matrix reactions (outbound polling only, no webhooks).
 - **Hardened by default.** Non-root everywhere, `cap_drop: ALL`, `no-new-privileges`, read-only root
   filesystems, no `docker.sock`, pinned dependencies and checksum-verified downloads.

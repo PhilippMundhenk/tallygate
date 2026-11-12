@@ -8,6 +8,7 @@ import hmac
 import json
 import shutil
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from aiohttp import web
@@ -321,6 +322,7 @@ def build_app(gw: Gateway) -> web.Application:
                 "services": gw.config.get("services") or [],
                 "ca_pem": ca.read_text() if ca.exists() else None,
                 "pending": len(gw.pending),
+                "version": version(),
                 "data_disk": _disk(gw.events.path.parent),
                 "events_db_bytes": _size(gw.events.path),
             }
@@ -329,6 +331,15 @@ def build_app(gw: Gateway) -> web.Application:
     app = web.Application(middlewares=[auth], client_max_size=1024 * 1024)
     app.add_routes(routes)
     return app
+
+
+def version() -> str | None:
+    """The tallygate release (VERSION, copied into the image next to the package; the repository root in a checkout)."""
+    here = Path(__file__).resolve().parent
+    for p in (here.parent / "VERSION", here.parents[1] / "VERSION"):
+        with contextlib.suppress(OSError):
+            return p.read_text(encoding="utf-8").strip()[:20] or None
+    return None
 
 
 def _disk(path) -> dict | None:

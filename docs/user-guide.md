@@ -25,6 +25,7 @@ while it is open and at once when a request arrives or is decided.
 | Status | Claude logged in; Remote Control running, with the session name (or the question it waits for); Claude Code version; disk use of the workspace's file system; gateway health and the disk use of its state, with the size of the event log. 90 % or more is marked. |
 | Needs attention | Waiting connection and grant requests; rules and grants that end within the hour; a missing GitHub token, one GitHub refuses, or one that expires within 7 days (checked once per page load through the agent, so it appears in the log). |
 | Last hour | Connections allowed, denied and asked; the 10 most frequent destinations; destinations seen for the first time in the kept log (`log_keep_days`). |
+| Versions | tallygate (the release the gateway runs) and Claude Code, and the latest tallygate release. When a newer one exists, the header shows **Update: X.Y.Z**; the card links to the changelog and the release and shows the upgrade command (click to copy). Claude Code has no auto-updater in the agent: new versions come with tallygate releases. Control asks GitHub itself, at most every 6 hours; `UPDATE_CHECK=0` switches it off ([configuration](configuration.md)). |
 | Shortcuts | *Emergency stop* (click twice), *Allow web for 15 min* (the `open` preset), *Open the console* (rc). |
 
 ## Approvals

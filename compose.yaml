@@ -91,6 +91,7 @@ services:
       MATRIX_ACCESS_TOKEN: ${MATRIX_ACCESS_TOKEN:-}
       MATRIX_ROOM_ID: ${MATRIX_ROOM_ID:-}
       MATRIX_ALLOWED_USERS: ${MATRIX_ALLOWED_USERS:-}
+      UPDATE_CHECK: ${UPDATE_CHECK:-1}                 # 0: never ask GitHub for new releases
     volumes:
       - ${CONTROL_DATA:-control-data}:/data                         # session secret, UI password hash
       - gw-token:/run/tallygate/gw:ro
