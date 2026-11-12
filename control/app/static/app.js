@@ -59,6 +59,8 @@ if (location.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]"].includ
 }
 
 /* ---------------- tabs ---------------- */
+// Feature scripts loaded after this one (wizard.js, ...) register what to load when their tab opens.
+const tabHooks = {};
 function showTab(name) {
   $$("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "tab-" + name));
   $$("#tabs button").forEach((b) => {
@@ -68,7 +70,7 @@ function showTab(name) {
   history.replaceState(null, "", "#" + name);
   if (name === "rules") guard(loadPolicy)();
   if (name === "grants") { guard(loadGrants)(); guard(loadSecrets)(); }
-  if (name === "setup") guard(loadSetup)();
+  if (tabHooks[name]) guard(tabHooks[name])();
   if (name === "log" && !logLoaded) guard(loadLog)();
 }
 $$("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
@@ -569,52 +571,6 @@ function openTerm(name) {
   showTab("console"); $("#termFrame").src = `/term/${encodeURIComponent(name)}/`;
   $$("#termButtons button").forEach((b) => b.classList.toggle("secondary", b.dataset.name !== name));
 }
-
-/* ---------------- setup ---------------- */
-function setStatus(id, html, cls = "") { const s = $(`#${id} .status`); s.className = "status " + cls; s.innerHTML = html; }
-async function loadSetup() {
-  try {
-    const info = await gw("GET", "/info"); const sec = await gw("GET", "/secrets");
-    setStatus("st-gw", `${info.ca_pem ? "✔ CA exported" : "✖ CA missing"} · injection for <code>${esc(info.inject_hosts.join(", ") || "none")}</code> · pending ${info.pending}`, info.ca_pem ? "ok" : "bad");
-    const needed = info.inject_secrets_needed.filter((n) => !sec.names.includes(n));
-    setStatus("st-gh", sec.names.includes("github_token") ? "✔ github_token stored in gateway" : "✖ no token stored", sec.names.includes("github_token") ? "ok" : "warn");
-    if (needed.length && !needed.includes("github_token")) toast(`Missing secrets: ${needed.join(", ")}`, true);
-  } catch (e) { setStatus("st-gw", esc(e.message), "bad"); }
-  try {
-    const st = await api("GET", "/api/agent/status");
-    setStatus("st-claude", st.claude_logged_in ? "✔ credentials present" : "✖ not logged in", st.claude_logged_in ? "ok" : "warn");
-    setStatus("st-git", st.git_name ? `✔ ${esc(st.git_name)} &lt;${esc(st.git_email)}&gt;` : "✖ not set", st.git_name ? "ok" : "warn");
-    setStatus("st-rc", st.remote_control_running ? `✔ running (${esc(st.claude_version || "")})` : "✖ not running", st.remote_control_running ? "ok" : "warn");
-  } catch (e) { ["st-claude", "st-git", "st-rc"].forEach((id) => setStatus(id, esc(e.message), "bad")); }
-  const meta = await api("GET", "/api/meta");
-  $("#notifyStatus").textContent = `Telegram: ${meta.notify.telegram ? "configured" : "off"} · Matrix: ${meta.notify.matrix ? "configured" : "off"} (configure via environment)`;
-}
-$("#ghSave").onclick = guard(async () => {
-  const token = $("#ghToken").value.trim(); if (!token) return;
-  const r = await api("POST", "/api/github/check", { token, store: true });
-  $("#ghToken").value = "";
-  if (!r.ok) return setStatus("st-gh", `✖ GitHub says ${esc(r.status)}: ${esc(r.message)}`, "bad");
-  setStatus("st-gh", `✔ valid for <b>${esc(r.login)}</b>${r.expires ? ` · expires ${esc(r.expires)}` : ""}${r.scopes ? ` · scopes ${esc(r.scopes)}` : " · fine-grained"} · ${r.stored ? "stored in gateway" : "NOT stored"}`, r.stored ? "ok" : "bad");
-});
-$("#ghRemove").onclick = guard(async () => { await gw("PUT", "/secrets/github_token", { value: "" }); loadSetup(); });
-$("#selftestBtn").onclick = guard(async () => {
-  setStatus("st-test", "running… (up to a minute)");
-  const r = await api("GET", "/api/agent/selftest");
-  const rows = r.results.map((t) => `<tr><td class="${t.pass ? "ok" : "bad"}">${t.pass ? "PASS" : "FAIL"}</td><td>${esc(t.name)}</td><td class="muted">${esc(t.detail)}</td></tr>`).join("");
-  setStatus("st-test", `<table class="results">${rows}</table>`, r.results.every((t) => t.pass) ? "ok" : "bad");
-});
-// Browsers only show the permission prompt after a user gesture, so it is asked from a button.
-function showNotifyPerm() {
-  const supported = "Notification" in window;
-  $("#notifyBtn").classList.toggle("hidden", !supported || Notification.permission !== "default");
-  $("#notifyPerm").textContent = !supported ? "not supported by this browser"
-    : Notification.permission === "granted" ? "browser notifications are on"
-    : Notification.permission === "denied" ? "blocked in the browser's site settings" : "";
-}
-$("#notifyBtn").onclick = guard(async () => { await Notification.requestPermission(); showNotifyPerm(); });
-showNotifyPerm();
-$$(".wizard [data-term]").forEach((b) => (b.onclick = () => openTerm(b.dataset.term)));
-$$("pre.copy").forEach((p) => (p.onclick = () => navigator.clipboard.writeText(p.textContent).then(() => toast("Copied"))));
 
 /* ---------------- live stream ---------------- */
 let streamOpened = false;

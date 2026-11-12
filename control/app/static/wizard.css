@@ -1,0 +1,15 @@
+/* setup wizard (wizard.js) */
+.wizard li h3{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.wizard li h3:focus{outline:none}
+.wizard li h3:focus-visible{outline:2px solid #93c5fd;outline-offset:2px}
+.step-state{font-size:11px;font-weight:500;border:1px solid var(--line);border-radius:10px;padding:0 7px;color:var(--muted)}
+.step-state.done{border-color:var(--green);color:var(--green)}.step-state.missing{border-color:var(--amber);color:var(--amber)}
+.step-state.warn{border-color:var(--amber);color:var(--amber)}
+.wizard li.current{border-color:var(--blue);box-shadow:0 0 0 1px var(--blue)}
+.wizard li[data-state=done] .hint{display:none}
+ul.checks{list-style:none;padding:0;margin:0}ul.checks li{background:none;border:0;border-radius:0;padding:4px 0;margin:0;border-bottom:1px solid var(--line)}
+ul.checks li:last-child{border-bottom:0}ul.checks .ok b{color:var(--green)}ul.checks .warn b{color:var(--amber)}ul.checks .bad b{color:var(--red)}
+ul.checks .muted{display:block;font-size:12.5px}
+.wizard form{margin:8px 0}.wizard form p{margin:4px 0}.wizard a{color:#93c5fd}
+.preview{margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:8px}
+#wzSummary button{margin-left:6px}
+#st-policy button[aria-pressed=true]{outline:2px solid var(--blue)}

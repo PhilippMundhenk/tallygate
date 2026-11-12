@@ -125,8 +125,22 @@ Sessions persist when you close the tab. tmux basics: `Ctrl-b d` detaches, scrol
 
 ![Setup](images/setup.png)
 
-Walks through gateway status, GitHub token (stored in the gateway only), Claude login, git identity,
-Remote Control, and the isolation self-test. The status lines refresh whenever you open the tab.
+The **Setup** tab is the first start in one flow. Every step shows *done*, *to do*, *check* or *optional*; the
+summary at the top counts the steps and its *Next* button jumps to the first one still to do. The states are
+checked again whenever you open the tab or finish a step. No step needs a console.
+
+| Step | What it does |
+|---|---|
+| Access to this UI | Checks how your browser reaches the UI: HTTPS (or localhost), the session cookie's `Secure` flag, whether a reverse proxy sends forwarded headers and whether they are trusted, whether `PUBLIC_URL` matches the address you use, and how other machines reach the UI. Each line says what to change. |
+| UI password | *To do* while it is still the password generated on first start; change it with `docker compose exec control python -m app.passwd`. |
+| Gateway | The gateway's CA is exported and which hosts get credentials injected. |
+| GitHub token | *Validate & store* checks a token against GitHub (from control) and stores it in the gateway only. |
+| Log in to Claude | *Start login* runs `claude auth login` in the agent (tmux session `tg-login`) and shows the link to Anthropic's login page. Sign in there and paste the code it shows. Only links to Anthropic's login pages are shown. |
+| Git identity | *Use my GitHub identity* asks GitHub, through the gateway with the stored token, who you are (`gh api user`) and shows the name and the noreply address `<id>+<login>@users.noreply.github.com`; *Apply* sets them. Without a stored token, or when GitHub refuses it or cannot be reached, it says so and links to the token step. *Enter it yourself* is the fallback. Empty values are never written; a name or address that is set but empty (for example from a `git config` whose `$(…)` failed) is reported as such. |
+| Remote Control | *Enable Remote Control* answers Claude Code's one-time question `Enable Remote Control? (y/n)` with yes, trusts `/workspace` and restarts Remote Control. The step is done when it runs; it also tells you when Remote Control waits for an answer in the *rc* console. Switched off with `RC_ENABLE=0`. |
+| Starting policy | *Ask me* or *Strict* sets what happens with unknown destinations; *Templates* opens them in the Rules tab. |
+| Phone notifications | Telegram and Matrix status; browser notifications. |
+| Isolation self-test | Runs the in-agent self-test. |
 
 ## Telegram approvals
 

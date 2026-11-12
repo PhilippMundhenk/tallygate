@@ -96,6 +96,7 @@ service, **E**levation of privilege.
 | T33 | An internal error (broken config entry, full disk, locked event log) lets a connection through unchecked | E, I | Every mitmproxy hook fails closed: an exception refuses the connection/flow; the error is set before the event is recorded; CIDRs are validated at startup (the gateway does not start otherwise) | e2e (`test_fail_closed.py`) |
 | T34 | A compromised UI session or API token defines a grant that injects a stored secret into requests to a host of its choosing | I | `inject` and `tls_verify: false` only in config-file grants; UI/API grants with them are rejected | unit + e2e (#12) |
 | T35 | Rule bypass through odd notation: IPv4-mapped IPv6 literals (`[::ffff:127.0.0.1]`) or a null/garbled port that matches every port | E | Mapped addresses normalised in hard deny, rules, approvals and grants; ports validated strictly in the API and the UI | unit + e2e (#13) |
+| T36 | A compromised agent abuses the setup wizard: a phishing link instead of Claude's login page, script in the status text, a huge answer | S, E | The setup actions only do what the agent user can do in its own container; control shows a login link only for `https://` Anthropic login hosts with the `/oauth/authorize` path, passes on nothing else as a link, caps agent answers at 1 MiB and the UI escapes all agent text | unit + e2e (`test_setup_wizard.py`, #75) |
 
 ## Residual risks
 

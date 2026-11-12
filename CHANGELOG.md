@@ -71,6 +71,13 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - A weekly workflow that proposes new Claude Code versions (#17).
 - `make coverage`: a gate of 95 % line coverage per module, including the gateway and control processes; every
   module is at 98–100 % (#27).
+- **Guided first start:** the Setup tab is one flow in which every step says whether it is done and the next
+  missing one is highlighted. It checks how the browser reaches the UI (HTTPS or localhost, cookie flag,
+  forwarded headers, reverse proxy, `PUBLIC_URL`, how to reach it from another machine), whether the UI
+  password is still the generated one, and offers the starting policy. *Log in to Claude* runs
+  `claude auth login` in the agent and takes the code in the UI; *Use my GitHub identity* sets the git name
+  and noreply address from `gh api user` after a preview (it explains a missing or refused token and never
+  writes empty values); *Enable Remote Control* answers its one-time `(y/n)` question. No console needed (#75).
 
 ### Changed
 - **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie

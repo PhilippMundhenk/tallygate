@@ -40,7 +40,8 @@ only then let through, turned back, or held for you to decide.
   the CONNECT target and Host match. The agent's own credentials for those hosts are stripped, and
   read-only hosts (e.g. the npm registry) refuse uploads.
 - **Operator UI.** Approvals, live log, rules editor with dry-run test, presets, browser consoles (Remote
-  Control, bash, claude), and a setup wizard for GitHub, Claude login, git and Remote Control.
+  Control, bash, claude), and a guided first start that logs in to Claude, takes the git identity from GitHub
+  and enables Remote Control without a console.
 - **Phone approvals** via Telegram buttons or Matrix reactions (outbound polling only, no webhooks).
 - **Hardened by default.** Non-root everywhere, `cap_drop: ALL`, `no-new-privileges`, read-only root
   filesystems, no `docker.sock`, pinned dependencies and checksum-verified downloads.

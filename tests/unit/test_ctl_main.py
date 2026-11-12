@@ -83,6 +83,7 @@ class World:
         a.router.add_route("*", "/gw/{tail:.*}", self.gw)
         a.router.add_get("/gh/user", self.github)
         a.router.add_get("/term/bash/ws", self.ttyd)
+        a.router.add_route("*", "/setup/{what}", self.agent_setup)
         a.router.add_get("/{what}", self.agent_status)
         return a
 
@@ -108,6 +109,12 @@ class World:
 
     async def agent_status(self, request):
         status, raw = self.agent.get(request.match_info["what"], (404, b"{}"))
+        return web.Response(status=status, body=raw)
+
+    async def agent_setup(self, request):
+        body = await request.json() if request.can_read_body else None
+        self.seen.append((request.method, request.path, {}, body))
+        status, raw = self.agent.get("setup/" + request.match_info["what"], (404, b"{}"))
         return web.Response(status=status, body=raw)
 
     async def ttyd(self, request):

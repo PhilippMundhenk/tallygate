@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>tallygate</title><link rel="stylesheet" href="/static/style.css"></head>
+<title>tallygate</title><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/wizard.css"></head>
 <body>
 <header>
   <span class="brand">🔐 tallygate</span>
@@ -223,34 +223,65 @@
     <iframe id="termFrame" title="terminal"></iframe>
   </section>
 
-  <!-- SETUP -->
+  <!-- SETUP (wizard.js) -->
   <section id="tab-setup" role="tabpanel" aria-labelledby="tabbtn-setup" class="hidden">
-    <h2>Setup wizard</h2>
+    <h2>First start</h2>
+    <p class="hint">One step after the other: each step says whether it is done. Nothing here needs a console.</p>
+    <div id="wzSummary" class="card" role="status" aria-live="polite">…</div>
     <ol class="wizard">
-      <li id="st-gw"><h3>1 · Gateway</h3><div class="status">…</div></li>
-      <li id="st-gh"><h3>2 · GitHub token (stored in the gateway only)</h3>
+      <li id="st-access" data-required="1"><h3 tabindex="-1">Access to this UI <span class="step-state"></span></h3>
+        <ul id="accessChecks" class="checks"></ul><div class="status"></div></li>
+      <li id="st-password" data-required="1"><h3 tabindex="-1">UI password <span class="step-state"></span></h3>
+        <div class="status"></div></li>
+      <li id="st-gw" data-required="1"><h3 tabindex="-1">Gateway <span class="step-state"></span></h3><div class="status">…</div></li>
+      <li id="st-gh" data-required="1"><h3 tabindex="-1">GitHub token (stored in the gateway only) <span class="step-state"></span></h3>
         <p class="hint">Use a <b>fine-grained PAT</b> limited to the repos the agent may touch (Contents, Pull requests, Issues: read/write). The agent only ever sees a placeholder; the gateway injects the real token for github.com / api.github.com.</p>
         <div class="row"><input id="ghToken" type="password" aria-label="GitHub token" placeholder="github_pat_…" autocomplete="off"><button id="ghSave">Validate &amp; store</button><button id="ghRemove" class="secondary">Remove</button></div>
         <div class="status"></div></li>
-      <li id="st-claude"><h3>3 · Claude login</h3>
-        <p class="hint">Open the <b>bash</b> console and run <code>claude auth login</code>, open the shown URL, paste the code back. Needs a claude.ai subscription login (Remote Control does not work with API keys).</p>
-        <button data-term="bash">Open bash console</button><div class="status"></div></li>
-      <li id="st-git"><h3>4 · Git identity</h3>
-        <pre class="copy">git config --global user.name  "Your Name"
-git config --global user.email "id+user@users.noreply.github.com"</pre>
-        <button data-term="bash">Open bash console</button><div class="status"></div></li>
-      <li id="st-rc"><h3>5 · Remote Control</h3>
-        <p class="hint">Open the <b>rc</b> console. On first start Claude asks <code>Enable Remote Control? (y/n)</code> (and possibly to trust the workspace) — answer <b>y</b>. Afterwards the session appears in the Claude app under <i>Code</i>.</p>
-        <button data-term="rc">Open rc console</button><div class="status"></div></li>
-      <li id="st-test"><h3>6 · Isolation self-test</h3>
+      <li id="st-claude" data-required="1"><h3 tabindex="-1">Log in to Claude <span class="step-state"></span></h3>
+        <p class="hint">Needs a claude.ai subscription (Remote Control does not work with API keys). The login runs in the
+          agent; you sign in on Anthropic's page and paste the code it shows here.</p>
+        <button id="clStart">Start login</button>
+        <form id="clFlow" class="hidden">
+          <p>1. Open the <a id="clUrl" href="#" target="_blank" rel="noopener noreferrer">Claude login page</a> and sign in.</p>
+          <p>2. Paste the code the page shows:</p>
+          <div class="row"><input id="clCode" aria-label="Code from the login page" autocomplete="off" spellcheck="false"><button id="clSend">Log in</button></div>
+        </form>
+        <div class="status"></div></li>
+      <li id="st-git" data-required="1"><h3 tabindex="-1">Git identity <span class="step-state"></span></h3>
+        <p class="hint">The name and address on the agent's commits. Taken from the GitHub account of the token, with
+          its private <code>noreply</code> address.</p>
+        <button id="gitPreview">Use my GitHub identity</button>
+        <div id="gitBox" class="hidden preview"><dl class="fieldhelp"><dt>Name</dt><dd id="gitName"></dd><dt>Email</dt><dd id="gitEmail"></dd></dl>
+          <button id="gitApply">Apply</button></div>
+        <details class="help"><summary>Enter it yourself</summary>
+          <form id="gitManual" class="row"><input id="gitManName" aria-label="Name" placeholder="Your Name" autocomplete="off">
+            <input id="gitManEmail" aria-label="Email" placeholder="id+user@users.noreply.github.com" autocomplete="off"><button>Save</button></form></details>
+        <div class="status"></div></li>
+      <li id="st-rc" data-required="1"><h3 tabindex="-1">Remote Control <span class="step-state"></span></h3>
+        <p class="hint">Makes the agent's sessions reachable in the Claude app (<i>Code</i>) and on claude.ai/code with your
+          account. <i>Enable</i> answers Claude Code's one-time question <code>Enable Remote Control? (y/n)</code> with yes,
+          trusts <code>/workspace</code>, and restarts Remote Control.</p>
+        <div class="row"><button id="rcEnable">Enable Remote Control</button><button data-term="rc" class="secondary">Watch the rc console</button></div>
+        <div class="status"></div></li>
+      <li id="st-policy"><h3 tabindex="-1">Starting policy <span class="step-state"></span></h3>
+        <p class="hint">What happens with destinations no rule covers. You can change it any time under <i>Rules</i>.</p>
+        <div class="row" role="group" aria-label="Starting policy"><button data-policy="ask" class="secondary">Ask me (recommended)</button>
+          <button data-policy="deny" class="secondary">Strict: block unknown</button><button id="wzTemplates" class="secondary">Templates&hellip;</button></div>
+        <div class="status"></div></li>
+      <li id="st-notify"><h3 tabindex="-1">Phone notifications <span class="step-state"></span></h3>
+        <div id="notifyStatus" class="muted"></div>
+        <p class="hint">Telegram and Matrix are set up in the environment (<a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#telegram-approvals" target="_blank" rel="noopener">how</a>).
+          Browser notifications appear for new requests while this tab is in the background.</p>
+        <button id="notifyBtn" class="secondary">Enable browser notifications</button> <span id="notifyPerm" class="muted"></span>
+        <div class="status"></div></li>
+      <li id="st-test" data-required="1"><h3 tabindex="-1">Isolation self-test <span class="step-state"></span></h3>
         <p class="hint">Runs inside the agent: direct internet, raw TCP, UDP DNS, LAN via proxy, gateway API and control UI must all be <b>blocked</b>; the proxy path to Anthropic must work.</p>
         <button id="selftestBtn">Run self-test</button><div class="status"></div></li>
     </ol>
-    <div class="card"><h3>Notifications</h3><div id="notifyStatus" class="muted"></div>
-      <p class="hint">Browser notifications appear for new requests while this tab is in the background.</p>
-      <button id="notifyBtn" class="secondary">Enable browser notifications</button> <span id="notifyPerm" class="muted"></span></div>
   </section>
 </main>
 <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <script src="/static/app.js"></script>
+<script src="/static/wizard.js"></script>
 </body></html>

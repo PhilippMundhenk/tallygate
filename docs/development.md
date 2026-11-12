@@ -30,7 +30,7 @@
 ├── agent/                    # agent container
 │   ├── Dockerfile            #   Debian + Claude Code + gh (signed repo) + ttyd (checksummed)
 │   ├── entrypoint.sh         #   CA trust, placeholders, tmux/ttyd/Remote Control supervisor
-│   ├── status.py             #   status + isolation self-test endpoint
+│   ├── status.py             #   status, isolation self-test and setup actions (agent network)
 │   ├── tallygate-cli.py      #   `tallygate` CLI: list and request grants
 │   ├── CLAUDE.md             #   managed memory: explains the gateway and grants to Claude
 │   └── managed-settings.json #   managed Claude Code settings

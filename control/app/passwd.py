@@ -15,7 +15,7 @@ import argparse
 import getpass
 import os
 
-from app.bootstrap import PASSWORD_FILE, _write, hash_password
+from app.bootstrap import GENERATED_MARK, PASSWORD_FILE, _write, hash_password
 
 
 def ask() -> str:
@@ -41,6 +41,7 @@ def main(argv: list[str] | None = None) -> None:
     if os.environ.get("CONTROL_PASSWORD_HASH") or os.environ.get("CONTROL_PASSWORD"):
         raise SystemExit("CONTROL_PASSWORD_HASH / CONTROL_PASSWORD is set in the environment and takes precedence")
     _write(PASSWORD_FILE, hash_password(ask()))
+    GENERATED_MARK.unlink(missing_ok=True)  # no longer the generated password
     print(f"password updated ({PASSWORD_FILE}). Sessions opened with the old password end at their next request.")
 
 

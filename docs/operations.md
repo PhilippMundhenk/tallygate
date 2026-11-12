@@ -259,17 +259,24 @@ from the proxy, for example on a second network of the proxy.
 
 ## First-time setup
 
-Open the UI → **Setup**:
+Open the UI → **Setup**. Each step says whether it is done; *Next* at the top leads to the first one still
+to do ([user guide](user-guide.md#setup-wizard)):
 
-1. **Gateway**: must show "CA exported".
-2. **GitHub token**: create a fine-grained PAT (Settings → Developer settings → Fine-grained tokens) limited
+1. **Access to this UI**: fix what is marked (for example `TRUSTED_PROXIES` behind a reverse proxy, or
+   `PUBLIC_URL`). It also says how to reach the UI from another machine ([Reaching the UI](#reaching-the-ui)).
+2. **UI password**: change the generated one: `docker compose exec control python -m app.passwd`.
+3. **Gateway**: must show "CA exported".
+4. **GitHub token**: create a fine-grained PAT (Settings → Developer settings → Fine-grained tokens) limited
    to the repositories the agent may work on, with *Contents*, *Pull requests*, *Issues* read/write.
    *Validate & store* checks it against GitHub and stores it in the gateway only.
-3. **Claude login**: in the *bash* console run `claude auth login`, open the URL, paste the code.
-4. **Git identity**: run the two `git config` lines in the *bash* console. Use your GitHub noreply address.
-5. **Remote Control**: open the *rc* console. On first start answer `Enable Remote Control? (y/n)` with `y`
-   (and `Trust /workspace? [y/N]` if asked). The session appears in the Claude app under **Code**.
-6. **Self-test**: all rows must be PASS.
+5. **Log in to Claude**: *Start login*, open the link, sign in, paste the code.
+6. **Git identity**: *Use my GitHub identity* → check the preview → *Apply* (needs the token from step 4).
+7. **Remote Control**: *Enable Remote Control*. The session appears in the Claude app under **Code**.
+8. **Starting policy** and **phone notifications** (optional).
+9. **Self-test**: all rows must be PASS.
+
+Without the UI, the same steps work in the consoles: `claude auth login` in *bash*, the `git config` lines,
+and answering `y` in *rc*.
 
 Then clone repositories in the *bash* console: `gh repo clone owner/repo /workspace/repo`.
 

@@ -484,26 +484,175 @@ async def api_github_check(request: web.Request):
     return web.json_response(info)
 
 
+# Endpoints of the agent's status server (agent/status.py) the UI may use. The setup actions only do what
+# the agent user can do in its own container anyway (start `claude auth login`, set the git identity, give
+# Remote Control's consent); control adds the session and CSRF checks and treats every answer as untrusted.
+AGENT_ROUTES = {
+    ("GET", "status"),
+    ("GET", "selftest"),
+    ("GET", "setup/claude-login"),
+    ("POST", "setup/claude-login"),
+    ("POST", "setup/claude-code"),
+    ("GET", "setup/git-identity"),
+    ("POST", "setup/git-identity"),
+    ("POST", "setup/remote-control"),
+}
+AGENT_SETUP_MAX_BODY = 4096
+# The agent reports the login URL it read from `claude auth login`. It is shown as a link, so only Anthropic's
+# login pages pass: a compromised agent must not be able to send the operator to a page of its choosing.
+LOGIN_URL_HOSTS = {"claude.com", "claude.ai", "platform.claude.com", "console.anthropic.com"}
+
+
+def safe_login_url(url: object) -> str:
+    if not isinstance(url, str) or len(url) > 2048 or any(c in url for c in " \"'<>\\\r\n\t"):
+        return ""
+    u = urllib.parse.urlsplit(url)
+    if u.scheme != "https" or u.hostname not in LOGIN_URL_HOSTS or u.port or u.username or u.password:
+        return ""
+    return url if u.path.endswith("/oauth/authorize") else ""
+
+
+async def agent_call(app: web.Application, method: str, what: str, body: dict | None = None) -> tuple[int, dict]:
+    """Call the agent's status server; the answer is size-limited and must be a JSON object."""
+    async with app["http"].request(
+        method, f"http://{AGENT_HOST}:{AGENT_STATUS_PORT}/{what}", json=body, timeout=aiohttp.ClientTimeout(total=90)
+    ) as r:
+        raw = b""  # read() returns what has arrived so far: read until the end or the cap
+        while len(raw) <= AGENT_MAX_BYTES and (chunk := await r.content.read(AGENT_MAX_BYTES + 1 - len(raw))):
+            raw += chunk
+        if len(raw) > AGENT_MAX_BYTES:
+            raise ValueError("agent response too large")
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("not an object")
+        return r.status, data
+
+
 async def api_agent(request: web.Request):
-    """Read-only agent status + self-test (served by agent/status.py on the agent network)."""
+    """Agent status, self-test and setup actions (served by agent/status.py on the agent network)."""
     what = request.match_info["what"]
-    if what not in ("status", "selftest"):
+    if (request.method, what) not in AGENT_ROUTES:
         raise web.HTTPNotFound()
+    body = None
+    if request.method == "POST":
+        if (request.content_length or 0) > AGENT_SETUP_MAX_BODY:
+            return web.json_response({"error": "request too large"}, status=413)
+        body = await json_body(request)
+        if body is None:
+            body = {}
+        if not isinstance(body, dict):
+            return web.json_response({"error": "expected a JSON object"}, status=400)
     try:
-        async with request.app["http"].get(
-            f"http://{AGENT_HOST}:{AGENT_STATUS_PORT}/{what}", timeout=aiohttp.ClientTimeout(total=90)
-        ) as r:
-            raw = b""  # read() returns what has arrived so far: read until the end or the cap
-            while len(raw) <= AGENT_MAX_BYTES and (chunk := await r.content.read(AGENT_MAX_BYTES + 1 - len(raw))):
-                raw += chunk
-            if len(raw) > AGENT_MAX_BYTES:
-                return web.json_response({"error": "agent response too large"}, status=502)
-            data = json.loads(raw)
-            if not isinstance(data, dict):
-                raise ValueError("not an object")
-            return web.json_response(data, status=200 if r.status == 200 else 502)
-    except (TimeoutError, aiohttp.ClientError, ValueError) as e:
+        status, data = await agent_call(request.app, request.method, what, body)
+    except ValueError as e:
+        msg = "agent response too large" if "too large" in str(e) else f"agent unreachable or invalid response: {e}"
+        return web.json_response({"error": msg}, status=502)
+    except (TimeoutError, aiohttp.ClientError) as e:
         return web.json_response({"error": f"agent unreachable or invalid response: {e}"}, status=502)
+    if what.startswith("setup/claude-"):
+        data["url"] = safe_login_url(data.get("url"))
+    if status != 200:  # the agent's own refusals (400/409) are passed on; anything else is a failure
+        status = status if status in (400, 409) else 502
+    return web.json_response(data, status=status)
+
+
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]", "::1")
+
+
+def password_state() -> str:
+    if PROXY_AUTH_HEADER:
+        return "proxy"
+    if os.environ.get("CONTROL_PASSWORD_HASH"):
+        return "env-hash"
+    if os.environ.get("CONTROL_PASSWORD"):
+        return "env-plain"
+    return "generated" if bootstrap.password_generated() else "changed"
+
+
+async def api_setup_checks(request: web.Request):
+    """How this browser reaches the UI: HTTPS, cookie flag, forwarded headers, reverse proxy, PUBLIC_URL.
+    The page passes its own origin (`?origin=`), which is compared, never trusted for anything."""
+    origin = request.query.get("origin", "")[:300].lower()
+    u = urllib.parse.urlsplit(origin)
+    browser_scheme, browser_host = u.scheme, (u.hostname or "")
+    scheme = _request_scheme(request)
+    local = browser_host in LOCAL_HOSTS
+    checks = []
+
+    def add(cid: str, state: str, title: str, detail: str) -> None:
+        checks.append({"id": cid, "state": state, "title": title, "detail": detail})
+
+    if scheme == "https":
+        add("https", "ok", "Encrypted", "The browser reaches the UI over HTTPS.")
+    elif local:
+        add("https", "ok", "Local connection", "Plain HTTP on this machine (or through an SSH tunnel) is fine.")
+    else:
+        add(
+            "https",
+            "warn",
+            "Not encrypted",
+            "Plain HTTP from another machine: the password and the session travel unencrypted. "
+            "Fine for a trusted home network; otherwise put a TLS reverse proxy in front.",
+        )
+    secure, mode = cookie_secure(request), os.environ.get("COOKIE_SECURE", "auto").strip().lower() or "auto"
+    if scheme == "https" and not secure:
+        add("cookie", "bad", "Session cookie", f"COOKIE_SECURE={mode}: the cookie is not marked Secure over HTTPS.")
+    elif scheme != "https" and secure and not local:
+        add("cookie", "bad", "Session cookie", f"COOKIE_SECURE={mode}: a Secure cookie is not kept over plain HTTP.")
+    else:
+        add(
+            "cookie",
+            "ok",
+            "Session cookie",
+            f"{'Secure' if secure else 'Not Secure (plain HTTP)'}, COOKIE_SECURE={mode}.",
+        )
+    fwd = [h for h in ("X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host") if h in request.headers]
+    trusted = TRUST_FORWARDED and _peer_trusted(request)
+    if fwd and trusted:
+        add("proxy", "ok", "Reverse proxy", f"Detected and trusted ({request.remote} is in TRUSTED_PROXIES).")
+    elif fwd:
+        add(
+            "proxy",
+            "warn",
+            "Reverse proxy",
+            f"A proxy at {request.remote} sends {', '.join(fwd)}, which is ignored. To use it, set "
+            f"TRUST_FORWARDED_FOR=1 and TRUSTED_PROXIES={request.remote}/32.",
+        )
+    elif TRUST_FORWARDED:
+        add("proxy", "warn", "Reverse proxy", "TRUST_FORWARDED_FOR=1, but this request came without forwarded headers.")
+    else:
+        add("proxy", "ok", "Direct connection", "No reverse proxy in between; forwarded headers are not trusted.")
+    browser_origin = f"{browser_scheme}://{u.netloc}" if browser_scheme and u.netloc else ""
+    if PUBLIC_URL:
+        p = urllib.parse.urlsplit(PUBLIC_URL)
+        want = f"{p.scheme}://{p.netloc}".lower()
+        if browser_origin and browser_origin != want:
+            add(
+                "public_url",
+                "bad",
+                "PUBLIC_URL",
+                f"PUBLIC_URL is {want}, but this browser uses {browser_origin}: changes are refused (origin check). "
+                "Open the UI at PUBLIC_URL or correct it.",
+            )
+        else:
+            add("public_url", "ok", "PUBLIC_URL", f"Matches this browser ({want}).")
+    else:
+        add(
+            "public_url",
+            "info",
+            "PUBLIC_URL",
+            "Not set. Set it to the address you use, so links in Telegram and Matrix messages open the UI.",
+        )
+    add(
+        "reach",
+        "info",
+        "From another machine",
+        (f"Other devices use the same address: {browser_origin}. " if browser_origin and not local else "")
+        + "By default the UI is published on port 8080 of the Docker host (CONTROL_PUBLISH=0.0.0.0:8080): "
+        "http://<host's LAN address>:8080. With CONTROL_PUBLISH=127.0.0.1:8080 only this host, an SSH tunnel "
+        "or a reverse proxy reaches it.",
+    )
+    return web.json_response({"checks": checks, "password": password_state()})
 
 
 async def api_meta(request: web.Request):
@@ -655,7 +804,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/stream", api_stream)
     app.router.add_get("/api/meta", api_meta)
     app.router.add_post("/api/github/check", api_github_check)
-    app.router.add_get("/api/agent/{what}", api_agent)
+    app.router.add_route("*", "/api/agent/{what:.*}", api_agent)
+    app.router.add_get("/api/setup/checks", api_setup_checks)
     app.router.add_route("*", "/api/gw/{tail:.*}", api_gw)
     app.router.add_get("/term/{name}/", term_page)
     app.router.add_get("/term/{name}/ws", term_ws)
