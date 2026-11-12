@@ -48,7 +48,9 @@ COPY managed-settings.json /etc/claude-code/managed-settings.json
 COPY CLAUDE.md /etc/claude-code/CLAUDE.md
 COPY entrypoint.sh status.py /usr/local/bin/
 COPY tallygate-cli.py /usr/local/bin/tallygate
-RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/status.py /usr/local/bin/tallygate
+# PreToolUse hook (managed-settings.json): tells the gateway what is about to run, shown next to approvals
+COPY tallygate-hook.py /usr/local/bin/tallygate-hook
+RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/status.py /usr/local/bin/tallygate /usr/local/bin/tallygate-hook
 
 ENV HOME=/home/agent DISABLE_AUTOUPDATER=1 TERM=xterm-256color
 USER 1000:1000

@@ -169,8 +169,13 @@ def test_agent_api_is_rate_limited(tmp_path):
     from aiohttp.test_utils import TestClient, TestServer
 
     from egressgw import agentapi
+    from egressgw.availability import Availability
 
-    fake_gw = SimpleNamespace(config={"grant_api_rate": 3}, grants=SimpleNamespace(defs={}, active={}, requests={}))
+    fake_gw = SimpleNamespace(
+        config={"grant_api_rate": 3},
+        grants=SimpleNamespace(defs={}, active={}, requests={}),
+        availability=Availability({}, tmp_path),
+    )
 
     async def run():
         async with TestClient(TestServer(agentapi.build_app(fake_gw))) as c:

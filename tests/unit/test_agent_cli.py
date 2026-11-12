@@ -237,3 +237,27 @@ def test_status_unknown_request(cli, fake):
     fake.on("GET", "/v1/requests/zz", (404, {}))
     with pytest.raises(SystemExit, match="tallygate: 404"):
         cli.main(["status", "zz"])
+
+
+# ---------------------------------------------------------------- operator away / quiet hours (#73)
+def test_grants_shows_when_the_operator_is_away(cli, fake, capsys):
+    msg = "operator away: unknown destinations are refused without asking"
+    fake.on("GET", "/v1/grants", (200, {"grants": [], "operator": {"state": "away", "message": msg}}))
+    assert cli.main(["grants"]) == 0
+    assert capsys.readouterr().out.startswith(f"note: {msg}\n")
+
+
+def test_request_while_away_is_a_denial_not_an_error(cli, fake, capsys):
+    fake.on("POST", "/v1/grants/svc/request", (503, {"error": "quiet hours until 07:00: ...", "status": "denied"}))
+    assert cli.main(["request", "svc", "--reason", "x"]) == 1
+    assert "denied: quiet hours until 07:00" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- context for decisions (#74)
+def test_note_is_sent_as_activity(cli, fake, capsys):
+    fake.on("POST", "/v1/activity", (202, {"ok": True}))
+    assert cli.main(["note", "updating the lock file"]) == 0
+    assert fake.seen[-1][2] == {"kind": "note", "note": "updating the lock file"}
+    assert "noted" in capsys.readouterr().out
+    fake.on("POST", "/v1/activity", (429, {"error": "rate limited"}))
+    assert cli.main(["note", "again"]) == 2

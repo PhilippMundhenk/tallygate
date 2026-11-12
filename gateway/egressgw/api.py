@@ -531,6 +531,52 @@ def build_app(gw: Gateway) -> web.Application:
             gw.decide_grant(request.match_info["rid"], decision, str(body.get("by", "api"))[:64], body.get("ttl"))
         )
 
+    # ---------------------------------------------------------------- availability (#73)
+    @routes.get("/availability")
+    async def availability(_):
+        return _json(gw.availability.describe())
+
+    @routes.patch("/availability")
+    async def patch_availability(request):
+        """Away mode on/off (optionally until a time) and/or the quiet hours. Nothing here can allow anything:
+        while away or quiet, requests that need a human are refused."""
+        body = await request.json()
+        if not isinstance(body, dict) or not set(body) - {"by"}:
+            raise ValueError("expected an object with away, away_until and/or quiet_hours")
+        unknown = set(body) - {"away", "away_until", "quiet_hours", "by"}
+        if unknown:
+            raise ValueError(
+                f"PATCH /availability changes only away, away_until and quiet_hours, not {sorted(unknown)}"
+            )
+        by = str(body.get("by", "api"))[:64]
+        av = gw.availability
+        notes = []
+        if "quiet_hours" in body:
+            av.set_quiet(body["quiet_hours"])
+            q = av.quiet.to_dict() if av.quiet else None
+            notes.append(f"quiet hours {q['start']}-{q['end']} {','.join(q['days'])}" if q else "quiet hours off")
+        if "away" in body or "away_until" in body:
+            on = body.get("away", True)
+            if not isinstance(on, bool):
+                raise ValueError("away must be true or false")
+            av.set_away(on, body.get("away_until") if on else None, by)
+            until = av.away.get("until") if av.away else None
+            notes.append(
+                ("away" + (f" until {time.strftime('%H:%M', time.localtime(until))}" if until else ""))
+                if on
+                else "back"
+            )
+        gw.record(kind="admin", action="availability", reason=f"{'; '.join(notes)} by {by}")
+        gw.availability_tick()
+        gw.publish({"type": "availability"})
+        return _json(av.describe())
+
+    @routes.delete("/availability/missed")
+    async def clear_missed(_):
+        gw.availability.take()
+        gw.publish({"type": "availability"})
+        return _json(gw.availability.describe())
+
     @routes.get("/info")
     async def info(_):
         from egressgw.core import CA_EXPORT
@@ -541,6 +587,7 @@ def build_app(gw: Gateway) -> web.Application:
                 "inject_hosts": sorted(gw.inject_hosts),
                 "inject_secrets_needed": sorted({s for i in gw.inject for s in _secret_names(i["value"])}),
                 "services": gw.config.get("services") or [],
+                "github_repos": [f"{o}/{r}" for o, r in gw.github.patterns],
                 "ca_pem": ca.read_text() if ca.exists() else None,
                 "pending": len(gw.pending),
                 "version": version(),

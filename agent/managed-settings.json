@@ -2,5 +2,19 @@
   "env": {
     "DISABLE_AUTOUPDATER": "1"
   },
-  "skipDangerousModePermissionPrompt": true
+  "skipDangerousModePermissionPrompt": true,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/tallygate-hook",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
 }

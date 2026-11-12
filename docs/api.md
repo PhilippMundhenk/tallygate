@@ -38,7 +38,7 @@ imports, removal of expired rules) stores a version in the policy history, unles
 | GET | `/presets` | – | `["baseline", "containers", …]`; with `?details=1`: `[{name, title, description, category, default, rules}]` |
 | POST | `/presets/{name}` | optional `{"ttl": seconds}` | `{"added": [rule ids], "expires": ts \| null}`: rules inserted on top as `<name>:<id>`, tagged `source: preset:<name>`; applying again replaces them (new TTL). `409` if another rule uses such an id; `400` for `policy` presets (use `PUT /policy`) |
 | DELETE | `/presets/{name}` | – | `{"removed": [rule ids]}`: removes the rules tagged `preset:<name>` (undo) |
-| GET | `/pending` | – | Pending approvals: `id, host, port, ips, proto, client, created, expires, attempts` |
+| GET | `/pending` | – | Pending approvals: `id, host, port, ips, proto, client, created, expires, attempts, context` (`context`: up to 3 entries `{ts, kind, tool?, text?, note?}` the agent reported in the 2 minutes before; agent-written, untrusted) |
 | POST | `/pending/{id}/decide` | `{"scope": "once"\|"hour"\|"always"\|"domain"\|"deny"\|"deny_always", "by": "who"}` | `{"rule": {...}}`; `404` if already decided/timed out |
 | POST | `/test` | `{"host": "...", "port": 443}` | Dry run: `{"action", "reason", "rule_id", "ips"}` |
 | GET | `/events?limit=200&before=<id>&q=<text>` | – | Newest-first event log entries |
@@ -49,6 +49,10 @@ imports, removal of expired rules) stores a version in the policy history, unles
 | GET | `/stream` | – | Server-sent events (see below) |
 | GET | `/secrets` | – | `{"names": [...]}` — values are never returned |
 | PUT | `/secrets/{name}` | `{"value": "..."}` (empty removes) | `{"names": [...]}` |
+| GET | `/info` | – | `inject_hosts`, `inject_secrets_needed`, `services`, `github_repos`, `ca_pem`, `pending` |
+| GET | `/availability` | – | `mode` (`available` \| `away` \| `quiet`), `until`, `message` (what the agent is told), `away` (`{since, by, until}`), `quiet_hours`, `quiet_source` (`config` \| `ui`), `quiet_zone`, `digest_minutes`, `missed` (`[{kind: conn\|grant, host, port, first, last, count}]`), `missed_dropped` |
+| PATCH | `/availability` | `{"away": bool, "away_until": ts, "quiet_hours": {start, end, days?, tz?} \| null, "by": "who"}` (any of them) | Away on/off (optionally until a time, at most 30 days), quiet hours set or off. Going away denies everything waiting for a human. Returns the state; any other key is a `400` |
+| DELETE | `/availability/missed` | – | Clears the list of refused requests |
 | GET | `/info` | – | `inject_hosts`, `inject_secrets_needed`, `services`, `ca_pem`, `pending`, `version` (the release, from `VERSION`), `data_disk` (`{"total", "used", "free"}` of the file system holding the gateway state, or `null`), `events_db_bytes` (event log incl. WAL) |
 | GET | `/grants` | – | `defs` (with `source` config/ui), `active`, pending `requests`, `lan_allow_ui`, `missing_secrets`, `auto_suspended` (`null` or `{"since", "by"}` after an emergency stop) |
 | PUT | `/grants/{name}` | Grant definition ([grants](grants.md)) | Validated, stored as a UI grant; `400` for config grants or LAN targets outside `grants_lan_allow` |
@@ -100,18 +104,21 @@ data: {"type": "policy"}
 data: {"type": "grant_request", "request": {...}, "grant": {...summary...}}
 data: {"type": "grant_resolved", "request": {..., "status": "approved", "granted_level": "read"}}
 data: {"type": "grants"}                       (definitions or active grants changed)
+data: {"type": "availability"}                 (away mode or quiet hours changed)
+data: {"type": "digest", "why": "away ended", "items": [{kind, host, port, count, ...}], "more": 0}
 ```
 
 ## Agent grant API
 
 Base URL: `http://172.31.10.2:8079` (agent network, **no authentication**, rate-limited to
 `grant_api_rate` requests/min, 4 KiB bodies). This is the only gateway API the agent can reach. It can
-list, ask and poll, nothing else. The `tallygate` CLI in the agent image wraps it.
+list, ask and poll, and say what it is doing (shown as its claim), nothing else. The `tallygate` CLI in the agent image wraps it.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/v1/grants` | – | `{"grants": [{name, description, levels, default_ttl, max_ttl, targets, active?}]}`: no credentials |
-| POST | `/v1/grants/{name}/request` | `{"level": "read"\|"write", "ttl": "30m", "reason": "..."}` | `202 {"id", "status": "pending", ...}` or `200` if auto-approved; `429` when too many are pending |
+| GET | `/v1/grants` | – | `{"grants": [{name, description, levels, default_ttl, max_ttl, targets, active?}], "operator": {"state": "available"\|"away"\|"quiet", "until", "message"}}`: no credentials |
+| POST | `/v1/grants/{name}/request` | `{"level": "read"\|"write", "ttl": "30m", "reason": "..."}` | `202 {"id", "status": "pending", ...}` or `200` if auto-approved; `429` when too many are pending; `503 {"error", "status": "denied"}` while the operator is away or in quiet hours (auto-approved levels still work) |
+| POST | `/v1/activity` | `{"kind": "tool"\|"note", "tool": "Bash", "text": "npm install", "note": "Install deps"}` | `202`. What the agent is about to do, attached to its next approvals for 2 minutes. Cleaned, secrets redacted, 200 characters per field; own rate limit `activity_rate` (60/min) |
 | GET | `/v1/requests/{id}?wait=0..55` | – | `{"id", "grant", "level", "status": pending\|approved\|denied\|expired, "granted_level"?}`; `wait` long-polls |
 
 Keep-alive comments (`: ping`) are sent every 20 s.
@@ -126,6 +133,18 @@ Used by the bundled web UI; documented for scripting and review.
 | GET/POST | `/login` | – | Login form / submit (`password`); 10 failures per 15 min per client lock out (429); bodies over 4 KiB get 413; 429 while 5 checks are already queued |
 | POST | `/logout` | session | Clears the session |
 | GET | `/` | session | Single-page UI |
+| GET | `/api/meta` | session | Current user, terminal names, notification status (`telegram`, `matrix`, `webpush`, `ntfy`, `gotify`, `pushover`) |
+| GET | `/api/stream` | session | Relayed gateway SSE stream |
+| * | `/api/gw/{path}` | session + CSRF | Relay to an **allowlisted** subset of the gateway API: `GET`/`PUT`/`PATCH /policy`, `POST /emergency-stop`, `POST /rules`, `DELETE /rules/{id}`, `GET /pending`, `POST /pending/{id}/decide`, `GET /events`, `POST /test`, `GET`/`POST`/`DELETE /presets…`, `GET /secrets`, `PUT /secrets/{name}`, `GET`/`PUT`/`DELETE /grants/{name}`, `POST /grants/{name}/activate`, `DELETE /active-grants/{id}`, `POST /grant-requests/{id}/decide`, `GET /info`, `GET`/`PATCH /availability`, `DELETE /availability/missed`. Everything else is refused (404). For decisions, the emergency stop and availability changes, `by` is set to `web:<user>`. |
+| POST | `/api/github/check` | session + CSRF | `{"token": "...", "store": true}` — validate a token against GitHub from the control plane and store it in the gateway |
+| GET | `/api/agent/status` | session | Agent status (Claude login, git identity, Remote Control running, versions) |
+| GET | `/api/agent/selftest` | session | Run the in-agent isolation self-test |
+| GET | `/api/push` | session | Web Push: `{"enabled", "public_key" (VAPID, for `applicationServerKey`), "subscriptions": [{id, label, created, service}]}` |
+| POST | `/api/push/subscribe` | session + CSRF | `{"subscription": <PushSubscription JSON>, "label": "phone"}` → `201`; `400` for an unknown push service or invalid keys; `503` when Web Push is off |
+| DELETE | `/api/push/{id}` | session + CSRF | Stop notifications to that device |
+| POST | `/api/push/test` | session + CSRF | Send a test notification: `{"delivered": n}`; `502` if no device could be reached |
+| POST | `/api/push/act` | action token + CSRF | `{"token": ...}` from a notification button. No session needed: the token is signed, bound to one request, one decision and one device, single use, valid ≤ 10 min. `403` invalid/used/expired, `409` already decided, `200 {"ok", "decision"}` |
+| GET | `/sw.js`, `/manifest.webmanifest`, `/static/icon*` | – | Service worker, PWA manifest and icons (static, no session: browsers fetch them without cookies) |
 | GET | `/api/meta` | session | Current user, terminal names, notification status |
 | GET | `/api/version` | session | `{"tallygate", "claude_code", "check": "ok"\|"error"\|"off", "latest": {"version", "url", "published"} \| null, "update_available": bool \| null, "error"?, "changelog", "upgrade"}`. `tallygate` is the gateway's VERSION; the latest release comes from GitHub's releases API (control's network, cached 6 h, `UPDATE_CHECK=0` switches it off); the release URL is built by control |
 | GET | `/api/stream` | session | Relayed gateway SSE stream |

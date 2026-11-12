@@ -3,6 +3,10 @@
 Telegram: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALLOWED_USER_IDS (comma list, required).
 Matrix:   MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN, MATRIX_ROOM_ID, MATRIX_ALLOWED_USERS (comma list, required).
           Use an UNENCRYPTED room (the bot does not do E2EE); host it on your own homeserver.
+Web Push: browsers that subscribed in the UI (app/webpush.py); Allow 2 min / Deny buttons with action tokens.
+ntfy:     NTFY_URL (topic URL), NTFY_TOKEN (optional).  Gotify: GOTIFY_URL, GOTIFY_TOKEN (application token).
+Pushover: PUSHOVER_TOKEN (application), PUSHOVER_USER (user or group key).
+          These three only notify (with a link to the UI): deciding needs the UI, a chat bot or Web Push.
 
 Two kinds of prompts: connection requests (scopes below) and grant requests (approve / read-only /
 deny, then revoke). Both share one short-number space for Matrix text replies.
@@ -60,6 +64,31 @@ def _describe(p: dict) -> str:
     return text
 
 
+def digest_text(ev: dict, public_url: str = "", limit: int = 20) -> str:
+    """The digest: what was refused without asking while the operator was away or in quiet hours."""
+    items = ev.get("items") or []
+    total = len(items) + int(ev.get("more") or 0)
+    lines = [f"📋 tallygate digest ({ev.get('why', 'while away')}): {total} request(s) refused without asking"]
+    for i in items[:limit]:
+        what = f"grant {i['host']}" if i.get("kind") == "grant" else f"{i['host']}:{i['port']}"
+        lines.append(f"  {what}" + (f" ×{i['count']}" if i.get("count", 1) > 1 else ""))
+    if total > min(len(items), limit):
+        lines.append(f"  … and {total - min(len(items), limit)} more")
+    lines.append(
+        "Allow what you need in the UI (Approvals → Availability)" + (f": {public_url}" if public_url else ".")
+    )
+    return "\n".join(lines)
+
+
+def context_line(p: dict) -> str:
+    """The agent's most recent claim about what it is doing (#74), for the end-to-end encrypted Web Push
+    message only: third-party chat services do not get agent-written text from the workspace."""
+    ctx = (p.get("context") or [{}])[0]
+    what = f"{ctx['tool']}: {ctx['text']}" if ctx.get("tool") and ctx.get("text") else ctx.get("text", "")
+    text = " – ".join(x for x in (what, ctx.get("note", "")) if x)
+    return f"\nAgent says (unverified): {text[:160]}" if text else ""
+
+
 def _scope_label(scope: str, label: str, p: dict) -> str:
     if scope == "domain":
         return f"Always (*.{p['domain']})" if p.get("domain") else ""
@@ -67,8 +96,9 @@ def _scope_label(scope: str, label: str, p: dict) -> str:
 
 
 class Notifier:
-    def __init__(self, app, decide, decide_grant=None, revoke_grant=None) -> None:
+    def __init__(self, app, decide, decide_grant=None, revoke_grant=None, push=None) -> None:
         self.app = app
+        self.push = push  # webpush.WebPush, or None when Web Push is off
         self.decide = decide  # async (pending_id, scope, by) -> (status, data)
         self.decide_grant = decide_grant  # async (request_id, decision, by) -> (status, data)
         self.revoke_grant = revoke_grant  # async (active_id, by) -> (status, data)
@@ -85,6 +115,13 @@ class Notifier:
         if self.mx_hs and not self.mx_users:
             log.error("MATRIX_ALLOWED_USERS is required - Matrix approvals disabled")
             self.mx_hs = ""
+        self.ntfy_url = os.environ.get("NTFY_URL", "").strip()
+        self.ntfy_token = os.environ.get("NTFY_TOKEN", "")
+        self.gotify_url = os.environ.get("GOTIFY_URL", "").rstrip("/")
+        self.gotify_token = os.environ.get("GOTIFY_TOKEN", "")
+        self.po_token = os.environ.get("PUSHOVER_TOKEN", "")
+        self.po_user = os.environ.get("PUSHOVER_USER", "")
+        self.po_base = os.environ.get("PUSHOVER_API_BASE", "https://api.pushover.net").rstrip("/")
         if self.tg_token and not self.tg_users:
             # In a group chat every member could otherwise press "Allow".
             log.error("TELEGRAM_ALLOWED_USER_IDS is required - Telegram approvals disabled")
@@ -101,6 +138,10 @@ class Notifier:
         return {
             "telegram": bool(self.tg_token and self.tg_chat),
             "matrix": bool(self.mx_hs and self.mx_token and self.mx_room),
+            "webpush": bool(self.push and self.push.subs),
+            "ntfy": bool(self.ntfy_url),
+            "gotify": bool(self.gotify_url and self.gotify_token),
+            "pushover": bool(self.po_token and self.po_user),
         }
 
     def start(self) -> list[asyncio.Task]:
@@ -149,7 +190,9 @@ class Notifier:
         ok = {}
         for name, res in zip(names, results, strict=True):
             if isinstance(res, Exception):
-                msg = str(res).replace(self.tg_token, "<token>") if self.tg_token else str(res)
+                msg = str(res)
+                for secret in (self.tg_token, self.ntfy_token, self.gotify_token, self.po_token):
+                    msg = msg.replace(secret, "<token>") if secret else msg
                 log.warning("%s: sending %s failed: %s", name, what, msg)
             else:
                 ok[name] = res
@@ -175,6 +218,8 @@ class Notifier:
                 await self._on_grant_request(ev["request"], ev.get("grant") or {})
             elif ev["type"] == "grant_resolved":
                 await self._on_grant_resolved(ev["request"])
+            elif ev["type"] == "digest":
+                await self._on_digest(ev)
         except Exception as e:  # noqa: BLE001
             log.warning("notification failed: %s", e)
 
@@ -196,6 +241,10 @@ class Notifier:
             "approval prompt",
             tg=self._tg_send(p, timeout) if on["telegram"] else None,
             mx=self._mx_send(p, entry["short"], timeout) if on["matrix"] else None,
+            push=self._push_ask(p, timeout) if on["webpush"] else None,
+            **self._plain(
+                "tallygate: approval needed", f"🔐 Agent wants to connect:\n{_describe(p)}\nAuto-deny in {timeout}s."
+            ),
         )
         entry.update(sent)
 
@@ -224,7 +273,33 @@ class Notifier:
                     "m.relates_to": {"m.in_reply_to": {"event_id": entry["mx"]}},
                 },
             )
-        await self._channels("outcome", tg=tg, mx=mx)
+        push = None
+        if entry.get("push") and self.push:
+            done = {"title": f"{'✅' if ev.get('action') == 'allow' else '⛔'} {entry['text'].splitlines()[0]}"}
+            push = self._push_all(
+                lambda _s: {**done, "body": f"→ {outcome}", "tag": f"a{ev['id']}", "silent": True}, 600
+            )
+        await self._channels("outcome", tg=tg, mx=mx, push=push)
+
+    async def _on_digest(self, ev: dict) -> None:
+        """One message for everything that was refused while nobody could answer (away / quiet hours, #73)."""
+        text = digest_text(ev, self.public_url)
+        on = self.describe()
+        await self._channels(
+            "digest",
+            tg=self._tg("sendMessage", chat_id=self.tg_chat, text=text, disable_web_page_preview=True)
+            if on["telegram"]
+            else None,
+            mx=self._mx_put(
+                f"/rooms/{self._room()}/send/m.room.message/{uuid.uuid4().hex}", {"msgtype": "m.notice", "body": text}
+            )
+            if on["matrix"]
+            else None,
+            push=self._push_all(lambda _s: {"title": "tallygate digest", "body": text, "tag": "digest"}, 3600)
+            if on["webpush"]
+            else None,
+            **self._plain("tallygate digest", text, high=False),
+        )
 
     # ---------------------------------------------------------------- grants
     def _next_short(self, key: str) -> int:
@@ -255,6 +330,8 @@ class Notifier:
             "grant prompt",
             tg=self._tg_send_grant(r, g, text, timeout) if on["telegram"] else None,
             mx=self._mx_send_grant(short, text) if on["matrix"] else None,
+            push=self._push_grant(r, g, text, timeout) if on["webpush"] else None,
+            **self._plain("tallygate: grant requested", f"{text}\nAuto-deny in {timeout}s."),
         )
         entry.update(sent)
 
@@ -329,7 +406,11 @@ class Notifier:
                 f"/rooms/{self._room()}/send/m.room.message/{uuid.uuid4().hex}",
                 {"msgtype": "m.notice", "body": note, "m.relates_to": {"m.in_reply_to": {"event_id": entry["mx"]}}},
             )
-        await self._channels("grant outcome", tg=tg, mx=mx)
+        push = None
+        if entry.get("push") and self.push:
+            msg = {"title": f"🔑 {r['name']}", "body": f"→ {outcome}", "tag": f"g{r['id']}", "silent": True}
+            push = self._push_all(lambda _s: msg, 600)
+        await self._channels("grant outcome", tg=tg, mx=mx, push=push)
 
     async def _apply_grant(self, rid: str, decision: str, by: str) -> str:
         if decision == "revoke":
@@ -350,6 +431,111 @@ class Notifier:
         if status == 200:
             return "ok"
         return data.get("error", f"error {status}") if isinstance(data, dict) else f"error {status}"
+
+    # ---------------------------------------------------------------- Web Push (#72)
+    async def _push_all(self, make, ttl: int, topic: str | None = None) -> int:
+        """Send to every subscribed browser (make(sub) -> message; tokens are bound to the subscription).
+        Subscriptions the push service no longer knows (404/410) are removed. Raises if none got it."""
+        subs = list(self.push.subs)
+        results = await asyncio.gather(*(self._push_one(s, make(s), ttl, topic) for s in subs), return_exceptions=True)
+        delivered = 0
+        for sub, res in zip(subs, results, strict=True):
+            if isinstance(res, Exception):
+                log.warning("web push to %s failed: %s", sub["label"], res)
+            elif res in (404, 410):
+                log.info("web push subscription %s has expired: removed", sub["label"])
+                self.push.remove(sub["id"])
+            elif 200 <= res < 300:
+                delivered += 1
+            else:
+                log.warning("web push to %s: HTTP %s", sub["label"], res)
+        if subs and not delivered:
+            raise RuntimeError("no browser could be reached")
+        return delivered
+
+    async def _push_one(self, sub: dict, message: dict, ttl: int, topic: str | None) -> int:
+        url, body, headers = self.push.request(sub, message, ttl, topic)
+        async with self.http.post(
+            url, data=body, headers=headers, timeout=aiohttp.ClientTimeout(total=SEND_TIMEOUT)
+        ) as r:
+            return r.status
+
+    async def _push_ask(self, p: dict, timeout: int) -> bool:
+        def make(sub: dict) -> dict:
+            def mint(decision: str) -> str:
+                return self.push.mint("ask", p["id"], decision, sub["id"], p["expires"])
+
+            return {
+                "title": "🔐 tallygate: approval needed",
+                "body": f"{_describe(p)}{context_line(p)}\nAuto-deny in {timeout}s.",
+                "tag": f"a{p['id']}",
+                "url": "/#approvals",
+                "actions": [{"action": "once", "title": "Allow 2 min"}, {"action": "deny", "title": "Deny"}],
+                "tokens": {"once": mint("once"), "deny": mint("deny")},
+            }
+
+        await self._push_all(make, timeout, f"a{p['id']}")
+        return True
+
+    async def _push_grant(self, r: dict, g: dict, text: str, timeout: int) -> bool:
+        """Approve from the notification only at read level: write access needs the UI or a chat bot."""
+        if r["level"] == "read":
+            actions = [("approve", "Approve read")]
+        elif "read" in g.get("levels", []):
+            actions = [("read", "Approve read-only")]
+        else:
+            actions = []
+        actions.append(("deny", "Deny"))
+
+        def make(sub: dict) -> dict:
+            return {
+                "title": f"🔑 tallygate: grant {r['name']} ({r['level']})",
+                "body": f"{text}\nAuto-deny in {timeout}s.",
+                "tag": f"g{r['id']}",
+                "url": "/#approvals",
+                "actions": [{"action": d, "title": t} for d, t in actions],
+                "tokens": {d: self.push.mint("grant", r["id"], d, sub["id"], r["expires"]) for d, _ in actions},
+            }
+
+        await self._push_all(make, timeout, f"g{r['id']}")
+        return True
+
+    # ---------------------------------------------------------------- ntfy, Gotify, Pushover (#72)
+    def _plain(self, title: str, text: str, high: bool = True) -> dict:
+        """Notification-only channels: the same text as Telegram and a link to the UI, no decision buttons
+        (an approve link would be an unauthenticated approval)."""
+        on = self.describe()
+        return {
+            "ntfy": self._ntfy(title, text, high) if on["ntfy"] else None,
+            "gotify": self._gotify(title, text, high) if on["gotify"] else None,
+            "pushover": self._pushover(title, text, high) if on["pushover"] else None,
+        }
+
+    async def _post(self, name: str, url: str, **kw) -> None:
+        async with self.http.post(url, timeout=aiohttp.ClientTimeout(total=SEND_TIMEOUT), **kw) as r:
+            if r.status >= 300:
+                raise RuntimeError(f"{name}: HTTP {r.status}")
+
+    async def _ntfy(self, title: str, text: str, high: bool) -> None:
+        headers = {"Title": title, "Tags": "lock" if high else "clipboard", "Priority": "high" if high else "default"}
+        if self.public_url:
+            headers["Click"] = self.public_url
+        if self.ntfy_token:
+            headers["Authorization"] = f"Bearer {self.ntfy_token}"
+        await self._post("ntfy", self.ntfy_url, data=text.encode(), headers=headers)
+
+    async def _gotify(self, title: str, text: str, high: bool) -> None:
+        body: dict = {"title": title, "message": text, "priority": 8 if high else 4}
+        if self.public_url:
+            body["extras"] = {"client::notification": {"click": {"url": self.public_url}}}
+        await self._post("gotify", f"{self.gotify_url}/message", json=body, headers={"X-Gotify-Key": self.gotify_token})
+
+    async def _pushover(self, title: str, text: str, high: bool) -> None:
+        form = {"token": self.po_token, "user": self.po_user, "title": title, "message": text[:1024]}
+        form["priority"] = "1" if high else "0"
+        if self.public_url:
+            form["url"], form["url_title"] = self.public_url, "Open tallygate"
+        await self._post("pushover", f"{self.po_base}/1/messages.json", data=form)
 
     # ---------------------------------------------------------------- Telegram
     async def _tg(self, method: str, **params):

@@ -99,3 +99,19 @@ def test_check_dirs_refuses_unwritable_state_with_a_hint(boot, tmp_path, monkeyp
     monkeypatch.setenv("SESSION_SECRET", "s")
     monkeypatch.setenv("CONTROL_PASSWORD", "p")
     boot.check_dirs()  # nothing to store in /data any more
+
+
+def test_vapid_key_is_created_once_from_env_or_off(boot, tmp_path, monkeypatch, caplog):
+    monkeypatch.delenv("VAPID_PRIVATE_KEY", raising=False)
+    pem = boot.vapid_private_pem()
+    assert pem.startswith(b"-----BEGIN PRIVATE KEY-----") and boot.vapid_private_pem() == pem
+    assert (tmp_path / "data" / "vapid-private.pem").stat().st_mode & 0o777 == 0o600 or os.name == "nt"
+    one_line = pem.decode().strip().replace("\n", "\n")  # as it fits into a .env line
+    monkeypatch.setenv("VAPID_PRIVATE_KEY", one_line)
+    assert boot.vapid_private_pem().strip() == pem.strip()
+    monkeypatch.delenv("VAPID_PRIVATE_KEY")
+    monkeypatch.setattr(boot, "DATA", tmp_path / "file")
+    (tmp_path / "file").write_text("")
+    with caplog.at_level(logging.WARNING, logger="control"):
+        assert boot.vapid_private_pem() is None
+    assert "Web Push disabled" in caplog.text

@@ -24,7 +24,7 @@ control plane provides the UI, notifications and web consoles.
 2. Enforce isolation through **topology** (Docker networks), not through firewall rules the agent's
    container could influence.
 3. Keep **secrets out of the agent**: credentials are added in flight by the gateway.
-4. Provide a complete **operator experience**: web UI, phone approvals (Telegram/Matrix), web consoles,
+4. Provide a complete **operator experience**: web UI, phone approvals (Telegram/Matrix/Web Push), web consoles,
    guided setup, an audit log.
 5. Stay **small and auditable**: three containers, ~2k lines of application code, pinned dependencies.
 
@@ -173,6 +173,9 @@ sequenceDiagram
     S-->>A: response
 ```
 
+With `github_repos` set, the request is also refused with `403` unless its path names an allowed repository
+(`/repos/<owner>/<repo>/…` on the API, `/<owner>/<repo>[.git]/…` for git), before the token is added (#78).
+
 The double check (CONNECT target **and** Host header must both match the configured host) means an agent
 cannot obtain the token by connecting to another server while claiming to be GitHub
 ([ADR-0005](adr/0005-credential-injection-by-tls-interception.md)). TLS to injection and read-only hosts is
@@ -246,6 +249,13 @@ Approval scopes map to rules:
 
 Concurrent connections to the same `host:port` share one pending request (one notification).
 
+An `ask` carries the agent's recent activity (the tool call a Claude Code hook reported, or a
+`tallygate note`) as untrusted context for the human. It never influences the decision itself (#74).
+
+While the operator is **away** or in **quiet hours**, step 6 never waits: an `ask` becomes an immediate
+`deny` with a message for the agent, and grant requests that need approval are refused the same way (#73).
+It never becomes an `allow`. Refused destinations are collected and sent as one digest later.
+
 ## State and persistence
 
 | Data | Location | Owner | Notes |
@@ -260,7 +270,7 @@ Concurrent connections to the same `host:port` share one pending request (one no
 | UI-defined grants | `gateway-data`: `grants.yaml` | egress-gw | Active grants and pending requests live in memory (a restart ends them: fail closed). |
 | Agent home | `agent-home` | agent (uid 1000) | Claude login, settings, skills, `.gitconfig`, tmux/shell history. |
 | Workspace | `workspace` | agent | Repositories. |
-| Control | `control-data`: `session-secret`, `password-hash` | control (uid 10002) | Created on first start unless set by environment. Sessions in memory (a restart logs everyone out). |
+| Control | `control-data`: `session-secret`, `password-hash`, `vapid-private.pem`, `push-subscriptions.json` | control (uid 10002) | Created on first start unless set by environment. Sessions in memory (a restart logs everyone out). Without a writable volume, Web Push is off. |
 | Shared secrets | `gw-token` (gateway rw, control ro), `ttyd` (control rw, agent ro) | – | API token and console credential, created on first start. The agent never mounts `gw-token`. |
 
 ## Process model
@@ -268,7 +278,7 @@ Concurrent connections to the same `host:port` share one pending request (one no
 | Container | PID 1 | Processes |
 |---|---|---|
 | egress-gw | `python run.py` → `exec mitmdump` | mitmproxy event loop with the tallygate addon and the aiohttp API server on the same loop |
-| control | `python -m app.main` | aiohttp server, gateway SSE subscriber, Telegram long-poll, Matrix `/sync` loop |
+| control | `python -m app.main` | aiohttp server, gateway SSE subscriber, Telegram long-poll, Matrix `/sync` loop; outbound Web Push, ntfy, Gotify and Pushover requests |
 | agent | `tini` → `entrypoint.sh` | supervisor loop (5 s) restarting: tmux session `rc` (`claude remote-control` in a restart loop), ttyd × 3, `status.py` |
 
 ## Grants
@@ -309,7 +319,7 @@ targets are passed through.
 | DNS (NXDOMAIN) | 172.31.10.2 | 53/udp | agent-net |
 | Service ports | 172.31.10.2 | per config | agent-net |
 | Gateway API | 172.31.11.2 | 8081 | control-net (control only) |
-| Grant request API | 172.31.10.2 | 8079 | agent-net (list / request / poll only) |
+| Grant request API | 172.31.10.2 | 8079 | agent-net (list / request / poll grants, report activity) |
 | Control UI | 172.31.12.3 | 8080 | mgmt / published to `CONTROL_PUBLISH` |
 | Agent status | 172.31.10.10 | 7680 | agent-net (control) |
 | ttyd rc/bash/claude | 172.31.10.10 | 7681–7683 | agent-net (control) |

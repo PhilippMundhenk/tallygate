@@ -4,6 +4,8 @@
   tallygate grants                                   list grants you can request (and which are active)
   tallygate request NAME [--write] [--ttl 1h] --reason "why"   ask for a grant and wait for the decision
   tallygate status REQUEST_ID                        show the state of a request
+  tallygate note "what and why"                      tell the human what you are about to do (shown next to
+                                                     the approval prompts your next connections cause)
 
 A human approves or denies each request (some read-only grants may be approved automatically).
 You cannot define or widen grants. Exit codes: 0 granted, 1 denied/expired, 2 usage/connection error.
@@ -46,6 +48,9 @@ def cmd_grants(_args) -> int:
     status, data = call("GET", "/v1/grants")
     if status != 200:
         sys.exit(f"tallygate: {data.get('error', status)}")
+    operator = data.get("operator") or {}
+    if operator.get("message"):  # away or quiet hours: requests that need a human are refused at once
+        print(f"note: {operator['message']}")
     if not data["grants"]:
         print("No grants are defined. Ask the operator to define one.")
     for g in data["grants"]:
@@ -80,6 +85,9 @@ def cmd_request(args) -> int:
     if args.ttl:
         body["ttl"] = args.ttl
     status, r = call("POST", f"/v1/grants/{args.name}/request", body)
+    if status == 503:  # the operator is away or in quiet hours: refused, not an error
+        print(f"denied: {r.get('error', 'operator unavailable')}")
+        return 1
     if status not in (200, 202):
         print(f"tallygate: {r.get('error', status)}", file=sys.stderr)
         return 2
@@ -109,6 +117,15 @@ def cmd_status(args) -> int:
     return 0 if _report(r) == 0 or r["status"] == "pending" else 1
 
 
+def cmd_note(args) -> int:
+    status, r = call("POST", "/v1/activity", {"kind": "note", "note": args.text}, timeout=5)
+    if status != 202:
+        print(f"tallygate: {r.get('error', status)}", file=sys.stderr)
+        return 2
+    print("noted: it is shown (as your claim) next to approval prompts in the next 2 minutes")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="tallygate", description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -124,6 +141,9 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("status", help="state of a request")
     s.add_argument("id")
     s.set_defaults(fn=cmd_status)
+    n = sub.add_parser("note", help="say what you are about to do and why (shown to the human)")
+    n.add_argument("text")
+    n.set_defaults(fn=cmd_note)
     args = p.parse_args(argv)
     return args.fn(args)
 

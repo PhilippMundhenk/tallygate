@@ -71,6 +71,19 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - A weekly workflow that proposes new Claude Code versions (#17).
 - `make coverage`: a gate of 95 % line coverage per module, including the gateway and control processes; every
   module is at 98–100 % (#27).
+- **Away mode, quiet hours and a digest:** while you are away or in quiet hours, new destinations and grant
+  requests that need you are refused at once with a clear message to the agent (never allowed
+  automatically). What was refused is listed in the UI and sent as one digest when you are back (#73).
+- **Phone approvals without a chat bot:** the UI is an installable app with Web Push (VAPID key created on
+  first start). Notifications have *Allow 2 min* / *Deny* buttons that work through single-use, signed
+  action tokens, never an approve URL; plain HTTP degrades to a hint. ntfy, Gotify and Pushover can notify
+  as well (#72).
+- **Context for decisions:** an approval shows the agent's recent activity: the command or URL Claude Code was
+  about to run (PreToolUse hook, secrets redacted, never blocks the agent) or a `tallygate note`. It is
+  labelled as the agent's unverified claim and has its own rate limit (#74).
+- **GitHub access per repository:** `github_repos: [owner/repo, owner/*]` in the gateway config refuses
+  requests to other repositories (API, git, uploads) before they reach GitHub; GraphQL is refused unless
+  `github_graphql: true`. Empty keeps the current behaviour (#78).
 - **Guided first start:** the Setup tab is one flow in which every step says whether it is done and the next
   missing one is highlighted. It checks how the browser reaches the UI (HTTPS or localhost, cookie flag,
   forwarded headers, reverse proxy, `PUBLIC_URL`, how to reach it from another machine), whether the UI

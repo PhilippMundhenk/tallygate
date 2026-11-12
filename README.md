@@ -41,10 +41,13 @@ only then let through, turned back, or held for you to decide.
   with a reason, and you approve, downgrade to read-only, or deny with one tap. The gateway enforces Host,
   paths and methods on every request, injects the service's credentials, and pins self-signed certificates.
   [More](docs/grants.md)
+- **Context for decisions.** A prompt shows what Claude Code was running when it asked (reported by a hook,
+  secrets redacted, clearly labelled as the agent's claim).
 - **No DNS exfiltration.** The agent's DNS always answers NXDOMAIN, and every attempt is logged. The gateway
   only resolves a name after the policy or a human allowed it.
 - **Secrets stay out of the agent.** The GitHub token lives in the gateway and is injected in flight, only when
-  the CONNECT target and Host match. The agent's own credentials for those hosts are stripped, and
+  the CONNECT target and Host match, optionally only for the repositories you list. The agent's own
+  credentials for those hosts are stripped, and
   read-only hosts (e.g. the npm registry) refuse uploads.
 - **Operator UI.** An overview of what the agent is doing and what needs you, approvals (with keyboard
   shortcuts), live log, rules editor with dry-run test, presets, workspace files, browser consoles (Remote
@@ -58,7 +61,11 @@ only then let through, turned back, or held for you to decide.
   destinations and what decides each one, and export CSV or JSON.
 - **Policy history.** Every change is a version with author and time: see what changed since yesterday,
   restore an earlier version, or export the policy and UI grants as one YAML file for another host.
-- **Phone approvals** via Telegram buttons or Matrix reactions (outbound polling only, no webhooks).
+- **Phone approvals** via Telegram buttons or Matrix reactions (outbound polling only, no webhooks), or
+  without any bot: install the UI as an app and tap *Allow 2 min* / *Deny* right in the push notification.
+  ntfy, Gotify and Pushover can notify too.
+- **Away mode and quiet hours.** When you can't answer, new destinations are refused at once with a clear
+  message to the agent instead of waiting for you, and you get one digest of what was refused afterwards.
 - **Hardened by default.** Non-root everywhere, `cap_drop: ALL`, `no-new-privileges`, read-only root
   filesystems, no `docker.sock`, pinned dependencies and checksum-verified downloads.
 - **Tested.** Unit tests, end-to-end tests of every enforcement path (including SNI spoofing and upstream

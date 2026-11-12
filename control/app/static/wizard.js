@@ -112,8 +112,12 @@ function renderPolicy(pol) {
 function renderNotify(meta) {
   if (!meta.ok) return step("st-notify", "info", esc(meta.e.message), "bad");
   const n = meta.v.notify;
-  $("#notifyStatus").textContent = `Telegram: ${n.telegram ? "configured" : "off"} · Matrix: ${n.matrix ? "configured" : "off"}`;
-  step("st-notify", n.telegram || n.matrix ? "done" : "info", "");
+  const CHANNELS = { telegram: "Telegram", matrix: "Matrix", webpush: "Web Push", ntfy: "ntfy", gotify: "Gotify", pushover: "Pushover" };
+  $("#notifyStatus").textContent = Object.entries(CHANNELS)
+    .filter(([k]) => k in n)
+    .map(([k, label]) => `${label}: ${n[k] ? "configured" : "off"}`)
+    .join(" · ");
+  step("st-notify", Object.keys(CHANNELS).some((k) => n[k]) ? "done" : "info", "");
   showNotifyPerm();
 }
 

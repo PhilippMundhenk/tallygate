@@ -6,6 +6,7 @@ consoles into the agent, and run the setup wizard. Remote Control itself is used
 
 - [Overview](#overview)
 - [Approvals](#approvals)
+- [Away mode and quiet hours](#away-mode-and-quiet-hours)
 - [Log](#log)
 - [Rules](#rules)
 - [Console](#console)
@@ -13,6 +14,7 @@ consoles into the agent, and run the setup wizard. Remote Control itself is used
 - [Setup wizard](#setup-wizard)
 - [Telegram approvals](#telegram-approvals)
 - [Matrix approvals](#matrix-approvals)
+- [Phone approvals without a chat bot](#phone-approvals-without-a-chat-bot)
 - [Rule cookbook](#rule-cookbook)
 - [Working with the agent](#working-with-the-agent)
 
@@ -35,7 +37,8 @@ while it is open and at once when a request arrives or is decided.
 
 When the agent connects somewhere that no rule covers (and the default is `ask`), the connection is **held**
 and appears here, on Telegram/Matrix if configured, and as a desktop notification while the tab is in the
-background (turn these on once with **Enable browser notifications** in the Setup tab). The countdown shows
+background (turn these on once with **Enable browser notifications** in the Setup tab), and as a push
+notification on your phone ([without a chat bot](#phone-approvals-without-a-chat-bot)). The countdown shows
 when it will be denied automatically.
 
 | Button | Effect |
@@ -47,6 +50,14 @@ when it will be denied automatically.
 | Deny | Deny for 2 minutes (the tool gets an error now; asking again later is possible) |
 | Block forever | Permanent deny rule |
 
+**Why does the agent want this?** A card can show the agent's recent activity: the command or URL Claude
+Code was about to run when the connection started (`Bash curl … – Fetch the data`), or a note the agent
+wrote with `tallygate note "…"`. A hook in the agent image reports it, with obvious secrets (tokens,
+passwords, credentials in URLs) redacted. It is written by the agent, so it is labelled *claimed by the
+agent, unverified*: a prompt injection can lie here like anywhere else. Judge the destination, not the story.
+The activity appears in the UI, in Web Push notifications (end-to-end encrypted) and in the log, never in
+Telegram, Matrix, ntfy, Gotify or Pushover.
+
 Every decision becomes a normal rule (tagged `[approval]`) that you can review or delete under **Rules**.
 Before you click, check the **domain** line: the host is chosen by the agent, so `github.com.evil.example`
 has the domain `evil.example`. Punycode names (`xn--…`) are flagged. Names are not resolved before your
@@ -54,6 +65,27 @@ approval, so IPs show as "not resolved yet". A destination you approve can still
 deny (LAN, host, metadata…). At most `max_pending` (10) requests wait at once; further unknown destinations
 are denied immediately until you have answered.
 
+## Away mode and quiet hours
+
+When you cannot answer, the agent should not wait 60 seconds for every new destination, and your phone
+should not buzz at night. The **Availability** card at the top of **Approvals** has two switches:
+
+- **I'm away** (until you are back, for 1 h, 4 h or until 08:00): new destinations and grant requests that
+  need your approval are refused at once. The agent gets a clear message (`operator away until 14:00:
+  unknown destinations are refused without asking …`) instead of a held connection. Whatever was waiting
+  for you when you switch it on is denied too.
+- **Quiet hours** (e.g. 22:00–07:00, on the days you pick): the same, every day, without notifications.
+
+Nothing is ever allowed automatically because you are away: away mode only turns *ask* into *deny*. Rules
+that allow a destination keep working, and grants with `approval: auto` are still granted (and logged).
+What was refused is listed under **Refused while you were away**, with *Allow 1 h* per destination, and sent
+as one **digest** to Telegram/Matrix: when quiet hours end, when you are back, and while away every
+`digest_minutes` (30). The header shows *away* or *quiet hours* on every tab. The agent sees the state in
+`tallygate grants`.
+
+Quiet hours use the gateway's time zone: set `TZ` (e.g. `TZ=Europe/Berlin` in `.env`) or `tz` in
+`quiet_hours`. They can be preset in the gateway config (`quiet_hours`, see
+[configuration](configuration.md#availability)); a change in the UI is stored and wins over the file.
 ### Keyboard shortcuts, compact list and sound
 
 For approving a lot. The switches above the list are kept in this browser.
@@ -311,6 +343,35 @@ Each request is posted as `🔐 #3 Agent wants to connect: host:port …` with p
 reaction (👍 2 min · ⏰ 1 h · ✅ always · 🌐 domain · 👎 deny · ⛔ block) or reply `allow 3`, `hour 3`,
 `always 3`, `domain 3`, `deny 3` or `block 3`. The bot confirms the outcome in a reply.
 
+## Phone approvals without a chat bot
+
+**Web Push (installable app).** Open the UI on your phone over HTTPS, install it (*Add to Home screen* /
+*Install app*; on iPhone this is required, iOS 16.4 or later), then **Setup → Notifications → Turn on
+notifications on this device**. Each request arrives as a notification:
+
+| Request | Buttons in the notification |
+|---|---|
+| Connection | **Allow 2 min**, **Deny** |
+| Grant, read level | **Approve read**, **Deny** |
+| Grant, write level | **Approve read-only** (if the grant offers read), **Deny**. Write access needs the UI or a chat bot. |
+
+Tapping the notification itself opens the approvals. After a decision (from anywhere) the notification is
+replaced by the outcome. The buttons work for at most 10 minutes and once, only on the device they were sent
+to; they need no login, but they cannot do anything except that one decision (see the
+[threat model](threat-model.md), T37). *Send a test* checks the path; *Remove* stops a device. A device
+whose subscription expired is removed automatically.
+
+Web Push needs a secure context: HTTPS (your reverse proxy) or `localhost`. On plain HTTP the Setup tab says
+so, and everything else keeps working. Control sends the messages to the browser's push service (Google,
+Mozilla, Apple or Microsoft); the content is end-to-end encrypted to your device, only the timing and size
+are visible to the push service.
+
+**ntfy, Gotify, Pushover.** For a notification on the phone with apps you may already use, set `NTFY_URL`
+(+ `NTFY_TOKEN`), `GOTIFY_URL` + `GOTIFY_TOKEN` or `PUSHOVER_TOKEN` + `PUSHOVER_USER` (see
+[configuration](configuration.md)). They get the same text as Telegram and a link to the UI (`PUBLIC_URL`),
+but no decision buttons: an approve link would work for anyone who sees it. These services see the
+destinations in plain text, like Telegram does.
+
 ## Rule cookbook
 
 | Goal | Rule / setting |
@@ -327,6 +388,8 @@ reaction (👍 2 min · ⏰ 1 h · ✅ always · 🌐 domain · 👎 deny · ⛔
 ## Working with the agent
 
 - **Repositories**: `gh repo clone owner/repo /workspace/repo`. git uses HTTPS; the gateway injects your token.
+  To limit the agent to some repositories, list them in `github_repos` in the gateway config
+  ([configuration](configuration.md#github-per-repository)); the Setup tab shows the list.
 - **Parallel sessions**: start more sessions on the same environment from the Claude app; set
   `RC_ARGS=--spawn worktree` to give each session its own git worktree.
 - **Skills**: put them in `/home/agent/.claude/skills/<name>/SKILL.md` in the agent (the `agent-home` volume, owner uid 1000), e.g. with `docker compose cp`.

@@ -141,6 +141,7 @@ function pendingCard(p) {
     b.onclick = decide(el, async () => { await gw("POST", `/pending/${p.id}/decide`, { scope }); await loadPending(); });
     $(".btns", el).appendChild(b);
   }
+  document.dispatchEvent(new CustomEvent("tg:card", { detail: { el, item: p, kind: "ask" } }));  // feature scripts
   return el;
 }
 function tickCountdowns() {
@@ -587,6 +588,7 @@ function connectStream() {
       loadPending().catch(() => {}); loadGrants().catch(() => {});
       if (policy) loadPolicy(true).catch(() => {});  // rule changes during the gap
       if (logLoaded) loadLog().catch(() => {});
+      document.dispatchEvent(new CustomEvent("tg:reconnected"));
     }
     streamOpened = true;
   };

@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>tallygate</title><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/wizard.css"><link rel="stylesheet" href="/static/overview.css"><link rel="stylesheet" href="/static/keys.css"><link rel="stylesheet" href="/static/update.css"><link rel="stylesheet" href="/static/files.css"></head>
+<title>tallygate</title><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/wizard.css"><link rel="stylesheet" href="/static/overview.css"><link rel="stylesheet" href="/static/keys.css"><link rel="stylesheet" href="/static/update.css"><link rel="stylesheet" href="/static/files.css"><link rel="stylesheet" href="/static/availability.css"><link rel="stylesheet" href="/static/push.css"><link rel="stylesheet" href="/static/context.css"><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#181b22"></head>
 <body>
 <header>
   <a class="brand" href="/" aria-label="tallygate home"><img src="/static/logo.svg" alt="tallygate" height="26"></a>
@@ -45,6 +45,7 @@
 
   <!-- APPROVALS -->
   <section id="tab-approvals" role="tabpanel" aria-labelledby="tabbtn-approvals">
+    <div id="availability" class="card"></div>
     <div id="approvalOpts" class="toolbar" role="group" aria-label="Approval options"></div>
     <div id="grantReqBox" class="hidden">
       <h2>Grant requests</h2>
@@ -322,10 +323,17 @@
         <p class="hint">Runs inside the agent: direct internet, raw TCP, UDP DNS, LAN via proxy, gateway API and control UI must all be <b>blocked</b>; the proxy path to Anthropic must work.</p>
         <button id="selftestBtn">Run self-test</button><div class="status"></div></li>
     </ol>
+    <div class="card"><h3>Notifications</h3><div id="notifyStatus" class="muted"></div>
+      <p class="hint">Browser notifications appear for new requests while this tab is in the background.</p>
+      <button id="notifyBtn" class="secondary">Enable browser notifications</button> <span id="notifyPerm" class="muted"></span>
+      <div id="pushSetup"></div></div>
   </section>
 </main>
 <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <script src="/static/app.js"></script>
+<script src="/static/availability.js"></script>
+<script src="/static/push.js"></script>
+<script src="/static/context.js"></script>
 <script src="/static/wizard.js"></script>
 <script src="/static/overview.js"></script>
 <script src="/static/keys.js"></script>

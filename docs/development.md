@@ -16,6 +16,9 @@
 │       ├── core.py           #   hooks: server_connect, tls_clienthello, request, dns_request; approvals
 │       ├── policy.py         #   pure policy engine (rules, hard deny, approvals → rules)
 │       ├── grants.py         #   grant definitions, requests, active grants
+│       ├── availability.py   #   away mode, quiet hours, digest of refused requests
+│       ├── activity.py       #   what the agent says it is doing (context for approvals)
+│       ├── github.py         #   github_repos: GitHub access per repository
 │       ├── store.py          #   SQLite event log, secrets store, header templating
 │       ├── api.py            #   management API (aiohttp, bearer token)
 │       └── agentapi.py       #   grant request API for the agent (agent network)
@@ -25,15 +28,19 @@
 │       ├── main.py           #   auth, CSRF, gateway relay, terminal proxy, agent status
 │       ├── bootstrap.py      #   secrets and UI password on first start
 │       ├── passwd.py         #   `python -m app.passwd`: change the stored UI password
-│       ├── notify.py         #   Telegram + Matrix approval bots
+│       ├── notify.py         #   Telegram + Matrix bots, Web Push, ntfy, Gotify, Pushover
+│       ├── webpush.py        #   Web Push: VAPID, RFC 8291 encryption, subscriptions, action tokens
 │       └── static/           #   single-page UI (vanilla JS, no build step)
 ├── agent/                    # agent container
 │   ├── Dockerfile            #   Debian + Claude Code + gh (signed repo) + ttyd (checksummed)
 │   ├── entrypoint.sh         #   CA trust, placeholders, tmux/ttyd/Remote Control supervisor
+│   ├── status.py             #   status + isolation self-test endpoint
+│   ├── tallygate-cli.py      #   `tallygate` CLI: list and request grants, notes
+│   ├── tallygate-hook.py     #   PreToolUse hook: reports the running command to the gateway
 │   ├── status.py             #   status, isolation self-test and setup actions (agent network)
 │   ├── tallygate-cli.py      #   `tallygate` CLI: list and request grants
 │   ├── CLAUDE.md             #   managed memory: explains the gateway and grants to Claude
-│   └── managed-settings.json #   managed Claude Code settings
+│   └── managed-settings.json #   managed Claude Code settings (incl. the PreToolUse hook)
 ├── tests/
 │   ├── unit/                 # policy engine
 │   ├── e2e/                  # real gateway + control on localhost, mock upstreams and bot APIs
@@ -56,7 +63,8 @@ The e2e suite (`tests/e2e`) needs no Docker and no root:
   `/etc/hosts`. `GW_TEST_FLOOR_REPLACE=1` lets the test config's `hard_deny_floor` replace the built-in
   list, because the upstreams run on loopback.
 - Upstreams are local HTTP/HTTPS echo servers with a throwaway certificate.
-- The control plane runs as a real process; Telegram and Matrix are mocked (`tests/e2e/mockbots.py`).
+- The control plane runs as a real process; Telegram, Matrix, a Web Push service, ntfy, Gotify and Pushover are
+  mocked (`tests/e2e/mockbots.py`).
 - The web-console test runs if `ttyd` is installed (CI installs the checksum-verified binary).
 
 Run a subset: `pytest tests/e2e -k injection -x -vv`. Process logs end up in pytest's tmp directories

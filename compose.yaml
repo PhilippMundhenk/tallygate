@@ -48,6 +48,7 @@ services:
       GW_API_PORT: "8081"
       GW_GRANTS_PORT: "8079"             # grant request API for the agent (agent network)
       GW_API_TOKEN: ${GW_API_TOKEN:-}    # empty: created on first start in the gw-token volume
+      TZ: ${TZ:-}                        # time zone for quiet hours, e.g. Europe/Berlin (empty: UTC)
     volumes:
       - ${GATEWAY_DATA:-gateway-data}:/data        # policy, log, secrets (GitHub token), CA key
       - gw-token:/run/tallygate/gw                 # API token, shared read-only with control
@@ -69,6 +70,7 @@ services:
     environment:
       CONTROL_BIND_HOST: 172.31.12.3     # UI only on the mgmt network, NOT reachable from agent-net
       CONTROL_PORT: "8080"
+      TZ: ${TZ:-}                        # times in notifications (empty: UTC)
       # Empty: a password is generated on first start and printed to the log (shown once).
       CONTROL_PASSWORD_HASH: ${CONTROL_PASSWORD_HASH:-}
       CONTROL_PASSWORD: ${CONTROL_PASSWORD:-}          # plain text, discouraged: prefer the hash
@@ -91,6 +93,14 @@ services:
       MATRIX_ACCESS_TOKEN: ${MATRIX_ACCESS_TOKEN:-}
       MATRIX_ROOM_ID: ${MATRIX_ROOM_ID:-}
       MATRIX_ALLOWED_USERS: ${MATRIX_ALLOWED_USERS:-}
+      NTFY_URL: ${NTFY_URL:-}                         # e.g. https://ntfy.example.org/tallygate (notify only)
+      NTFY_TOKEN: ${NTFY_TOKEN:-}
+      GOTIFY_URL: ${GOTIFY_URL:-}                     # e.g. https://gotify.example.org (notify only)
+      GOTIFY_TOKEN: ${GOTIFY_TOKEN:-}
+      PUSHOVER_TOKEN: ${PUSHOVER_TOKEN:-}             # notify only
+      PUSHOVER_USER: ${PUSHOVER_USER:-}
+      PUSH_ALLOWED_HOSTS: ${PUSH_ALLOWED_HOSTS:-}     # Web Push: extra push services (self-hosted)
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}               # Web Push contact (mailto: or https:), default PUBLIC_URL
       UPDATE_CHECK: ${UPDATE_CHECK:-1}                 # 0: never ask GitHub for new releases
       FILES_MAX_UPLOAD: ${FILES_MAX_UPLOAD:-52428800}       # Files tab: largest upload into the workspace (bytes)
       FILES_MAX_DOWNLOAD: ${FILES_MAX_DOWNLOAD:-209715200}  # Files tab: largest download (bytes)

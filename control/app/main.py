@@ -26,7 +26,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import WSMsgType, web
 
-from app import bootstrap, notify
+from app import bootstrap, notify, webpush
 
 log = logging.getLogger("control")
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -57,6 +57,16 @@ PROXY_SECRET_HEADER = "X-Tallygate-Proxy-Secret"  # noqa: S105 (a header name)
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
 GITHUB_API = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")  # tests point it elsewhere
 COOKIE = "tallygate_session"
+# Served without a session: the PWA manifest and icons are fetched without cookies, and the service worker
+# script must load before any login. None of them contains anything but static code and pictures.
+PUBLIC_FILES = {
+    "/sw.js": ("sw.js", "text/javascript"),
+    "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
+    "/static/icon.svg": ("icon.svg", "image/svg+xml"),
+    "/static/icon-192.png": ("icon-192.png", "image/png"),
+    "/static/icon-512.png": ("icon-512.png", "image/png"),
+}
+PUSH_ACT = "/api/push/act"  # notification buttons: authenticated by a single-use action token, not a session
 AGENT_MAX_BYTES = 1024 * 1024  # cap on anything read from the agent (status JSON, terminal frames)
 BROWSER_MAX_FRAME = 64 * 1024
 
@@ -102,6 +112,9 @@ GW_ALLOW = [
     ("DELETE", r"/active-grants/[a-f0-9]+"),
     ("POST", r"/grant-requests/[a-f0-9]+/decide"),
     ("GET", r"/info"),
+    ("GET", r"/availability"),
+    ("PATCH", r"/availability"),
+    ("DELETE", r"/availability/missed"),
 ]
 
 
@@ -247,7 +260,17 @@ def _per_ip_lockout() -> bool:
 @web.middleware
 async def security(request: web.Request, handler):
     path = request.path
-    if path in ("/login", "/healthz", "/static/logo.svg", "/static/favicon.svg") or path.startswith("/static/login"):
+    if (
+        path in ("/login", "/healthz", "/static/logo.svg", "/static/favicon.svg")
+        or path.startswith("/static/login")
+        or path in PUBLIC_FILES
+    ):
+        resp = await handler(request)
+    elif path == PUSH_ACT:
+        # No session (a phone's session may have expired), but the same CSRF rule as every other API call;
+        # the action token in the body is the authentication (see app/webpush.py).
+        if request.method != "POST" or request.headers.get("X-Tallygate") != "1" or not _same_origin(request):
+            return web.json_response({"error": "csrf check failed"}, status=403)
         resp = await handler(request)
     else:
         user = read_session(request)
@@ -278,7 +301,8 @@ async def security(request: web.Request, handler):
 
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-    "connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'"
+    "connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'; "
+    "manifest-src 'self'; worker-src 'self'"
 )
 
 
@@ -402,6 +426,93 @@ async def healthz(_request: web.Request):
     return web.json_response({"ok": True})
 
 
+async def public_file(request: web.Request):
+    name, ctype = PUBLIC_FILES[request.path]
+    resp = web.FileResponse(STATIC / name, headers={"Content-Type": ctype, "Cache-Control": "no-cache"})
+    if name == "sw.js":
+        resp.headers["Service-Worker-Allowed"] = "/"
+    return resp
+
+
+# ------------------------------------------------------------------ Web Push (#72)
+def _push(request: web.Request) -> webpush.WebPush:
+    push = request.app["webpush"]
+    if push is None:
+        raise web.HTTPServiceUnavailable(
+            text=json.dumps({"error": "Web Push is off: the control data volume is not writable"}),
+            content_type="application/json",
+        )
+    return push
+
+
+async def api_push(request: web.Request):
+    """Web Push status: the VAPID public key for subscribing, and the subscribed devices."""
+    push = request.app["webpush"]
+    if push is None:
+        return web.json_response({"enabled": False, "subscriptions": []})
+    return web.json_response(
+        {"enabled": True, "public_key": push.public_key, "subscriptions": [push.public(x) for x in push.subs]}
+    )
+
+
+async def api_push_subscribe(request: web.Request):
+    push = _push(request)
+    body = await json_body(request)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "expected a JSON object"}, status=400)
+    try:
+        sub = push.add(body.get("subscription"), str(body.get("label", "")))
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    log.info("web push: %s subscribed (%s) by %s", sub["label"], sub["service"], request["user"])
+    return web.json_response(sub, status=201)
+
+
+async def api_push_delete(request: web.Request):
+    if not _push(request).remove(request.match_info["sid"]):
+        return web.json_response({"error": "no such device"}, status=404)
+    return web.json_response({"ok": True})
+
+
+async def api_push_test(request: web.Request):
+    push = _push(request)
+    if not push.subs:
+        return web.json_response({"error": "no device subscribed"}, status=400)
+    try:
+        n = await request.app["notifier"]._push_all(
+            lambda _s: {"title": "tallygate", "body": "Test notification: phone approvals work.", "tag": "test"}, 300
+        )
+    except RuntimeError as e:
+        return web.json_response({"error": str(e)}, status=502)
+    return web.json_response({"delivered": n})
+
+
+async def api_push_act(request: web.Request):
+    """A button in a push notification: {"token": ...}. The token says what to decide (see app/webpush.py)."""
+    push = _push(request)
+    body = await json_body(request)
+    try:
+        claims = push.redeem(body.get("token", "") if isinstance(body, dict) else "")
+    except (ValueError, KeyError, TypeError) as e:
+        msg = str(e) if isinstance(e, ValueError) and "invalid" not in str(e) else "invalid action"
+        return web.json_response({"error": msg}, status=403)
+    if not re.fullmatch(r"[a-f0-9]{1,32}", str(claims["i"])):
+        return web.json_response({"error": "invalid action"}, status=403)
+    by = f"push:{push.label(claims['s'])}"
+    if claims["k"] == "ask":
+        path, payload = f"/pending/{claims['i']}/decide", {"scope": claims["d"], "by": by}
+    else:
+        path, payload = f"/grant-requests/{claims['i']}/decide", {"decision": claims["d"], "by": by}
+    try:
+        status, _ = await gw(request.app, "POST", path, payload)
+    except (TimeoutError, aiohttp.ClientError, ValueError) as e:
+        return web.json_response({"error": f"gateway unreachable: {e}"}, status=502)
+    if status != 200:
+        return web.json_response({"error": "already decided or expired"}, status=409)
+    log.info("web push action %s %s %s by %s", claims["k"], claims["i"], claims["d"], by)
+    return web.json_response({"ok": True, "decision": claims["d"]})
+
+
 # ------------------------------------------------------------------ gateway relay
 async def gw(app: web.Application, method: str, path: str, body=None, timeout: float = 15, by: str = ""):
     headers = {"Authorization": f"Bearer {GW_TOKEN}"}
@@ -439,7 +550,8 @@ async def api_gw(request: web.Request):
     by = f"web:{request['user']}"
     if sub == "/emergency-stop":
         body = {}  # nothing to choose: the whole stop always runs
-    if (sub.endswith("/decide") or sub.endswith("/activate") or sub == "/emergency-stop") and isinstance(body, dict):
+    attributed = sub.endswith("/decide") or sub.endswith("/activate") or sub in ("/emergency-stop", "/availability")
+    if attributed and isinstance(body, dict):
         body["by"] = by  # attribution is set here, never taken from the browser
     qs = ("?" + request.query_string) if request.query_string else ""
     if sub.startswith("/active-grants/"):
@@ -1017,6 +1129,7 @@ async def on_startup(app: web.Application):
         ),
         revoke_grant=lambda aid, by: gw(app, "DELETE", f"/active-grants/{aid}?" + urllib.parse.urlencode({"by": by})),
         decide=lambda pid, scope, by: gw(app, "POST", f"/pending/{pid}/decide", {"scope": scope, "by": by}),
+        push=app["webpush"],
     )
     app["bg"] = [asyncio.create_task(watch_gateway(app)), *app["notifier"].start()]
 
@@ -1045,7 +1158,7 @@ async def watch_gateway(app: web.Application):
                     line = line.decode().strip()
                     if line.startswith("data: "):
                         ev = json.loads(line[6:])
-                        if ev.get("type") in ("ask", "resolved", "grant_request", "grant_resolved"):
+                        if ev.get("type") in ("ask", "resolved", "grant_request", "grant_resolved", "digest"):
                             app["notifier"].enqueue(ev)
         except asyncio.CancelledError:
             raise
@@ -1076,6 +1189,15 @@ def build_app() -> web.Application:
     if os.environ.get("CONTROL_PASSWORD") and not os.environ.get("CONTROL_PASSWORD_HASH"):
         log.warning("CONTROL_PASSWORD (plain text) is in use - prefer CONTROL_PASSWORD_HASH")
     app = web.Application(middlewares=[security], client_max_size=2 * 1024 * 1024)
+    pem = bootstrap.vapid_private_pem()
+    subject = PUBLIC_URL if PUBLIC_URL.startswith("https://") else "https://github.com/PhilippMundhenk/tallygate"
+    app["webpush"] = (
+        webpush.WebPush(
+            pem, bootstrap.DATA / "push-subscriptions.json", os.environ.get("VAPID_SUBJECT") or subject, SESSION_SECRET
+        )
+        if pem
+        else None
+    )
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
     app.router.add_get("/healthz", healthz)
@@ -1091,6 +1213,14 @@ def build_app() -> web.Application:
     app.router.add_post("/api/github/check", api_github_check)
     app.router.add_route("*", "/api/agent/{what:.*}", api_agent)
     app.router.add_get("/api/setup/checks", api_setup_checks)
+    app.router.add_get("/api/push", api_push)
+    app.router.add_post("/api/push/subscribe", api_push_subscribe)
+    app.router.add_post("/api/push/test", api_push_test)
+    app.router.add_post(PUSH_ACT, api_push_act)
+    app.router.add_delete("/api/push/{sid}", api_push_delete)
+    for path in PUBLIC_FILES:
+        if not path.startswith("/static/"):
+            app.router.add_get(path, public_file)
     app.router.add_route("*", "/api/gw/{tail:.*}", api_gw)
     app.router.add_get("/term/{name}/", term_page)
     app.router.add_get("/term/{name}/ws", term_ws)

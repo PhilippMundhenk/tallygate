@@ -30,6 +30,9 @@ from mitmproxy.net.dns import response_codes
 from mitmproxy.proxy import server_hooks
 
 from egressgw import api
+from egressgw.activity import Activity
+from egressgw.availability import Availability, Unavailable
+from egressgw.github import RepoScope
 from egressgw.grants import READ_METHODS, GrantDef, Grants, Target, path_ok
 from egressgw.history import PolicyHistory
 from egressgw.learning import REASON as LEARNING
@@ -174,6 +177,7 @@ class Pending:
     created: float = field(default_factory=time.time)
     attempts: int = 1
     future: asyncio.Future | None = None
+    context: list = field(default_factory=list)  # what the agent said it was doing (#74): a claim, untrusted
 
     def to_dict(self) -> dict:
         return {
@@ -188,6 +192,7 @@ class Pending:
             "created": self.created,
             "expires": self.created + self.timeout,
             "attempts": self.attempts,
+            "context": self.context,
         }
 
 
@@ -232,6 +237,7 @@ class Gateway:
         self.inject = [dict(i) for i in self.config.get("inject") or []]
         self.inject_hosts = {i["host"].lower().rstrip(".") for i in self.inject}
         self.readonly = parse_readonly(self.config.get("readonly") or [])
+        self.github = RepoScope(self.config)  # github_repos (#78); an invalid entry stops the gateway
         self.strip_headers = [str(h) for h in self.config.get("inject_strip_headers") or ["Authorization", "Cookie"]]
         self.max_pending = int(self.config.get("max_pending", 10))
         # rule usage (#70): matches per rule id since the last flush to the event log, as [count, last ts]
@@ -241,6 +247,9 @@ class Gateway:
         self.suggest_days = int(self.config.get("suggest_window_days", 7))
         self._dups: dict[tuple, list] = {}
         self.grants = Grants(self.config, DATA_DIR)
+        self.availability = Availability(self.config, DATA_DIR)
+        self.activity = Activity()
+        self._unavailable = self.availability.mode()[0]  # last state seen by availability_tick
         # server connection id -> (active grant id, host the agent asked for, target)
         self.conn_grant: dict[str, tuple[str, str, Target]] = {}
         self._grant_events: dict[str, asyncio.Event] = {}
@@ -327,6 +336,47 @@ class Gateway:
             self._grant_resolved(r)
         if expired:
             self.publish({"type": "grants"})
+        self.availability_tick(now)
+
+    # ------------------------------------------------------------------ availability (#73)
+    def availability_tick(self, now: float | None = None) -> None:
+        """Called by housekeeping and after every change: when nobody can answer any more, what is waiting
+        is denied; when the operator is back (or periodically while away), the digest goes out."""
+        now = time.time() if now is None else now
+        if self.availability.expire_away(now):
+            self.record(kind="admin", action="availability", reason="away period ended")
+        mode = self.availability.mode(now)[0]
+        was, self._unavailable = self._unavailable, mode
+        if mode != "available" and was == "available":
+            self._deny_waiting(self.availability.blocking(now) or mode)
+            self.publish({"type": "availability"})
+        elif mode == "available" and was != "available":
+            self._digest("away ended" if was == "away" else "quiet hours ended")
+            self.publish({"type": "availability"})
+        elif mode != was:  # quiet hours <-> away
+            self.publish({"type": "availability"})
+        elif self.availability.digest_due(now):
+            self._digest("while away")
+
+    def _deny_waiting(self, why: str) -> None:
+        """Deny held connections and grant requests that wait for a human: nobody will answer them."""
+        for key, p in list(self.pending.items()):
+            if self.pending.pop(key, None) is not p:
+                continue
+            self.availability.note("conn", p.host, p.port, why)
+            if p.future is not None and not p.future.done():
+                p.future.set_result(Decision("deny", why))
+            self.publish({"type": "resolved", "id": p.id, "action": "deny", "reason": why.split(":", 1)[0]})
+        for r in self.grants.pending():
+            self.availability.note("grant", r.name, 0, why)
+            r.status, r.decided_by = "denied", "availability"
+            self.record(kind="grant", host=r.name, action="deny", reason=f"grant request for {r.name}: {why}")
+            self._grant_resolved(r)
+
+    def _digest(self, why: str) -> None:
+        items, dropped = self.availability.take()
+        if items or dropped:
+            self.publish({"type": "digest", "why": why, "items": items, "more": dropped})
 
     # ------------------------------------------------------------------ events
     def publish(self, ev: dict) -> None:
@@ -442,6 +492,11 @@ class Gateway:
 
     async def ask(self, host: str, port: int, ips: list[str], proto: str, client: str) -> Decision:
         key = (host.lower(), port)
+        if why := self.availability.blocking():
+            # Nobody can answer (away / quiet hours): refuse at once instead of holding the connection, and
+            # remember it for the digest. Never allowed automatically (fail closed).
+            self.availability.note("conn", host.lower(), port, why)
+            return Decision("deny", why)
         if self.neg_cache.get(key, 0) > time.time():
             return Decision("deny", "approval timed out recently")
         p = self.pending.get(key)
@@ -450,7 +505,13 @@ class Gateway:
             return Decision("deny", f"too many pending approvals (max_pending={self.max_pending})")
         if p is None:
             p = Pending(
-                host=host.lower(), port=port, ips=ips, proto=proto, client=client, timeout=self.policy.ask_timeout
+                host=host.lower(),
+                port=port,
+                ips=ips,
+                proto=proto,
+                client=client,
+                timeout=self.policy.ask_timeout,
+                context=self.activity.recent(client),
             )
             self.record(  # first: if the log cannot be written, nothing is left pending
                 kind="ask",
@@ -461,7 +522,7 @@ class Gateway:
                 ips=ips,
                 action="ask",
                 reason="awaiting approval",
-                extra={"pending_id": p.id},
+                extra={"pending_id": p.id, "context": p.context} if p.context else {"pending_id": p.id},
             )
             p.future = asyncio.get_running_loop().create_future()
             self.pending[key] = p
@@ -514,6 +575,10 @@ class Gateway:
             r = self.grants.new_request(name, level, ttl, reason, client)
             self._approve(r, level, "auto")
             return r
+        if why := self.availability.blocking():
+            self.availability.note("grant", name, 0, why)
+            self.record(kind="grant", client=client, host=name, action="deny", reason=f"grant {name} ({level}): {why}")
+            raise Unavailable(why)
         r = self.grants.new_request(name, level, ttl, reason, client)
         if r.id not in self._grant_events:
             self._grant_events[r.id] = asyncio.Event()
@@ -700,8 +765,9 @@ class Gateway:
         return next((r for r in self.readonly if host_matches(r.host, host)), None)
 
     def _intercepted(self, host: str) -> bool:
-        """TLS to injection and read-only hosts is always intercepted (whatever the SNI says)."""
-        return host in self.inject_hosts or self._readonly(host) is not None
+        """TLS to injection, read-only and repository-limited GitHub hosts is always intercepted (whatever the
+        SNI says): their requests are checked one by one."""
+        return host in self.inject_hosts or self._readonly(host) is not None or self.github.applies(host)
 
     def _grant_match(self, host: str, port: int):
         """Active grant for host:port - unless the policy already allows the name: grants only ADD
@@ -889,6 +955,8 @@ class Gateway:
         ro = self._readonly(target)
         if ro and ro.refuses(flow.request.method.upper(), flow.request.path):
             return "read-only host"
+        if self.github.applies(target) and (why := self.github.check(target, flow.request.method, flow.request.path)):
+            return why  # another repository: refused before it reaches GitHub, before any token is added
         if target not in self.inject_hosts:
             return None
         # Never forward the agent's own credentials to an injection host: otherwise it could act as
@@ -914,6 +982,8 @@ class Gateway:
         b = self._grant_binding(flow)
         if b is not None:
             why = self._grant_checks(flow, b)
+            if not why and self.github.applies(b[1]):  # a grant to a GitHub host does not widen github_repos
+                why = self.github.check(b[1], flow.request.method, flow.request.path)
             return (b[1], b[2].port, why) if why else None
         # The real destination: the connection's checked target (TLS) or the absolute-form URL host
         # (plain HTTP proxy requests, whose server connection is opened after these hooks).

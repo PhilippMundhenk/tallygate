@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
+from egressgw.availability import Unavailable
+
 if TYPE_CHECKING:
     from egressgw.core import Gateway
 
@@ -18,20 +20,26 @@ if TYPE_CHECKING:
 def build_app(gw: Gateway) -> web.Application:
     rate = int(gw.config.get("grant_api_rate", 30))  # requests/minute, all endpoints: the agent is untrusted
     hits: list[float] = []
+    # activity reports (a hook on every tool call) have their own budget, so they never starve grant requests
+    activity_rate = int(gw.config.get("activity_rate", 60))
+    activity_hits: list[float] = []
 
     @web.middleware
     async def limit(request: web.Request, handler):
         now = time.time()
-        hits[:] = [t for t in hits if now - t < 60]
-        if len(hits) >= rate:
+        bucket, limit_ = (activity_hits, activity_rate) if request.path == "/v1/activity" else (hits, rate)
+        bucket[:] = [t for t in bucket if now - t < 60]
+        if len(bucket) >= limit_:
             return web.json_response({"error": "rate limited"}, status=429)
-        hits.append(now)
+        bucket.append(now)
         try:
             return await handler(request)
         except KeyError as e:
             return web.json_response({"error": f"unknown: {e}"}, status=404)
         except OverflowError as e:
             return web.json_response({"error": str(e)}, status=429)
+        except Unavailable as e:  # away / quiet hours: refused at once, never approved automatically
+            return web.json_response({"error": str(e), "status": "denied"}, status=503)
         except (ValueError, TypeError) as e:
             return web.json_response({"error": str(e)}, status=400)
 
@@ -46,7 +54,9 @@ def build_app(gw: Gateway) -> web.Application:
             if g.name in active:
                 d["active"] = {"level": active[g.name].level, "expires": int(active[g.name].expires)}
             out.append(d)
-        return web.json_response({"grants": out})
+        mode, until = gw.availability.mode()
+        operator = {"state": mode, "until": until, "message": gw.availability.blocking()}
+        return web.json_response({"grants": out, "operator": operator})
 
     @routes.post("/v1/grants/{name}/request")
     async def request_grant(request: web.Request):
@@ -61,6 +71,12 @@ def build_app(gw: Gateway) -> web.Application:
             request.remote or "?",
         )
         return web.json_response(_public(r), status=202 if r.status == "pending" else 200)
+
+    @routes.post("/v1/activity")
+    async def activity(request: web.Request):
+        """What the agent is about to do (#74): shown next to its next approval, labelled as its claim."""
+        gw.activity.add(await request.json(), request.remote or "?")
+        return web.json_response({"ok": True}, status=202)
 
     @routes.get("/v1/requests/{rid}")
     async def status(request: web.Request):

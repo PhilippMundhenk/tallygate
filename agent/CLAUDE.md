@@ -8,6 +8,19 @@ You run in a container whose only network path is an egress gateway with a polic
   is only possible through **grants**: predefined, time-limited bundles of access.
 - A refused connection whose message says `available via grant <name>` can be unlocked by requesting
   that grant.
+- When the operator is away or in quiet hours, new destinations and grant requests are refused at once
+  (`operator away …` / `quiet hours until …`). Do not retry in a loop: continue with what works, and
+  note what you could not reach so the human can allow it later. `tallygate grants` shows the state.
+
+## Context for approvals
+
+The human who approves a new destination sees the command or URL you are running (reported by a hook,
+secrets redacted) and your tool description. Write clear tool descriptions. Before something that will need
+new destinations, you can add one line of context:
+
+    tallygate note "installing the test dependencies of repo X (npm)"
+
+It is shown for about two minutes next to the prompts your connections cause, labelled as your claim.
 
 ## Grants
 

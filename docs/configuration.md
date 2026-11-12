@@ -21,6 +21,7 @@ All variables are optional. Secrets are created on first start when they are not
 | `CONTROL_DATA` | volume `control-data` | UI password hash and session secret. A host path makes it a bind mount (owner uid 10002, mode 700). See [host directories](operations.md#host-directories). |
 | `CONTROL_PUBLISH` | `0.0.0.0:8080` | Host address:port the UI is published on. `127.0.0.1:8080` with a reverse proxy on the same host; see [reaching the UI](operations.md#reaching-the-ui). |
 | `PUBLIC_URL` | – | External UI URL, included in notifications. |
+| `TZ` | UTC | Time zone of the gateway and control, e.g. `Europe/Berlin`: quiet hours and times in notifications use it. |
 | `COOKIE_SECURE` | `auto` | `auto`: the session cookie is `Secure` exactly when the browser uses HTTPS (directly, or `X-Forwarded-Proto` from a trusted proxy). `1` / `0` force it on or off. |
 | `TRUST_FORWARDED_FOR` | `0` | `1` when the UI sits behind your reverse proxy: trust `X-Forwarded-For`/`-Host`/`-Proto` for rate limiting and origin checks — **only** from peers in `TRUSTED_PROXIES`. |
 | `TRUSTED_PROXIES` | – | Comma-separated CIDRs of your reverse/auth proxy as seen by control. Forwarded and auth headers from any other peer are ignored. With a published port this is the `mgmt` bridge gateway `172.31.12.1/32`, which every local process shares: see [reverse proxy](operations.md#reverse-proxy). |
@@ -50,6 +51,13 @@ All variables are optional. Secrets are created on first start when they are not
 | `MATRIX_ACCESS_TOKEN` | – | Access token of a dedicated bot user. |
 | `MATRIX_ROOM_ID` | – | `!id:server` of an **unencrypted** room the bot has joined. |
 | `MATRIX_ALLOWED_USERS` | – | **Required** for Matrix: comma-separated MXIDs allowed to decide (must not include the bot). |
+| `NTFY_URL` | – | ntfy topic URL, e.g. `https://ntfy.example.org/tallygate`. Notifications only (link to the UI, no buttons). |
+| `NTFY_TOKEN` | – | ntfy access token, sent as `Authorization: Bearer`. Recommended: on a public server anyone who guesses the topic reads it. |
+| `GOTIFY_URL` / `GOTIFY_TOKEN` | – | Gotify server and application token. Notifications only. |
+| `PUSHOVER_TOKEN` / `PUSHOVER_USER` | – | Pushover application token and user (or group) key. Notifications only. |
+| `VAPID_SUBJECT` | `PUBLIC_URL` if it is `https://`, else the project URL | Contact for Web Push services (`mailto:` or `https:`). |
+| `VAPID_PRIVATE_KEY` | *(created in `control-data`)* | EC P-256 private key (PEM; `\n` for line breaks) that signs Web Push messages. Changing it ends every subscription. |
+| `PUSH_ALLOWED_HOSTS` | – | Comma-separated extra push service hosts (`*.example.org` allowed). Built in: Google (`fcm.googleapis.com`), Mozilla, Apple, Microsoft. Control only ever sends Web Push to these hosts. |
 
 ### Examples
 
@@ -76,6 +84,15 @@ WORKSPACE=/srv/tallygate/workspace
 AGENT_MEM_LIMIT=4g
 AGENT_CPUS=2
 RC_NAME=homelab-agent
+```
+
+A self-hosted ntfy server for notifications, Web Push for deciding on the phone:
+
+```sh
+# .env
+PUBLIC_URL=https://tallygate.example.org     # Web Push needs HTTPS
+NTFY_URL=https://ntfy.example.org/tallygate
+NTFY_TOKEN=tk_…
 ```
 
 Matrix instead of Telegram:
@@ -107,8 +124,13 @@ Every key with an example. The file in the repository lists them all, commented 
 | `hard_deny_floor` | built-in list | `[203.0.113.7/32]` | **Added** to the built-in hard deny (your VPS's public IP). |
 | `readonly` | npm, Yarn, crates.io, Docker Hub, GHCR, Quay, Hugging Face | `[registry.npmjs.org, {host: ghcr.io, post_is_write: true}]` | Hosts where writes are refused: PUT/PATCH/DELETE, and with `post_is_write` also POST (except `read_posts`). See [Read-only hosts](#read-only-hosts). |
 | `inject` | GitHub entries | see below | Credential injection per host. |
+| `github_repos` | `[]` (every repository) | `[acme/app, acme-tools/*]` | Limit GitHub to these repositories; others are refused before they reach GitHub. See [GitHub per repository](#github-per-repository). |
+| `github_graphql` | `false` | `true` | With `github_repos`: allow `/graphql` anyway (it can reach any repository the token can). |
+| `github_hosts` | `github.com`, `api.github.com`, `uploads.github.com` | `[github.example.org]` | Hosts `github_repos` applies to (GitHub Enterprise Server: your host). |
 | `inject_strip_headers` | `[Authorization, Cookie]` | `[Authorization, Cookie, X-Api-Key]` | Agent headers always removed on inject hosts. |
 | `services` | `[]` | `[{name: pg, listen: 15432, target: db.example.org:5432}]` | TCP service ports. |
+| `quiet_hours` | – | `{start: "22:00", end: "07:00", days: [mon, tue, wed, thu, fri], tz: Europe/Berlin}` | Daily period in which requests that need you are refused at once. See [Availability](#availability). |
+| `digest_minutes` | `30` | `0` | While away: a digest of what was refused every N minutes; `0` = only when you are back. |
 | `grants`, `grants_*`, `grant_*` | – | see [Grants](#grants) and [grants.md](grants.md) | Grants. |
 
 ### Read-only hosts
@@ -180,6 +202,59 @@ hosts; if a referenced secret is missing the request goes out without credential
 
 Every `inject` host must also be **allowed** by the policy (the baseline preset allows GitHub).
 
+### GitHub per repository
+
+The injected token works for every repository it can reach. A fine-grained token limited to a few
+repositories is the first line; `github_repos` is a second one in the gateway, independent of how the
+token was made:
+
+```yaml
+github_repos:
+  - acme/app            # exactly this repository (case-insensitive)
+  - acme-tools/*        # every repository of this owner
+```
+
+With a list, TLS to the `github_hosts` is always intercepted and every request must name an allowed
+repository, or it is refused with `403` before it reaches GitHub (no token is added):
+
+| Host | Allowed paths |
+|---|---|
+| `github.com` (git, archives, raw files) | `/<owner>/<repo>[.git][/...]` |
+| `api.github.com`, `uploads.github.com`, GitHub Enterprise `/api/v3`, `/api/uploads` | `/repos/<owner>/<repo>/...`; `GET`/`HEAD` of `/`, `/user`, `/rate_limit`, `/meta`, `/versions` |
+| `/graphql` | refused, unless `github_graphql: true` |
+
+Paths must be canonical (no `..`, `//`, encoded slashes). Everything else is refused: other repositories,
+`/repositories/<id>` (repositories by number, which GitHub also uses to redirect renamed ones), search,
+gists, organisations, creating repositories. **GraphQL** can address any repository by name or node id, so
+it is refused while `github_repos` is set. `gh` uses it for pull requests (`gh pr create`, `gh pr view`)
+and some other commands: `gh api repos/<owner>/<repo>/pulls` and git work; set `github_graphql: true` if
+you need the GraphQL commands and accept that the limit then does not cover them. Raw downloads from
+`*.githubusercontent.com` carry no token and are not covered by the list.
+
+An empty list keeps the earlier behaviour. An invalid entry stops the gateway.
+
+*Follow-up:* a GitHub App installation token (short-lived, repository-scoped, rotated by the gateway) instead
+of a personal access token is not implemented yet.
+
+### Availability
+
+Away mode is switched in the UI (**Approvals → Availability**) or with `PATCH /availability`. Quiet hours
+can be preset here:
+
+```yaml
+quiet_hours:
+  start: "22:00"           # HH:MM
+  end: "07:00"             # before start = over midnight
+  days: [mon, tue, wed, thu, fri, sat, sun]   # the days a period STARTS on (default: every day)
+  tz: Europe/Berlin        # default: the gateway's TZ (UTC unless set)
+digest_minutes: 30         # while away: a digest every N minutes; 0 = only when you are back
+```
+
+While away or in quiet hours, connection asks and grant requests that need approval are **denied at once**
+with a message to the agent; nothing is allowed automatically. A change in the UI is stored in
+`availability.yaml` in the `gateway-data` volume and wins over this file from then on. An invalid entry here
+stops the gateway; an unreadable `availability.yaml` turns away mode on until you change it (fail closed).
+
 ### Grants
 
 See [grants.md](grants.md) for the concept and examples. Keys in `config/gateway.yaml`:
@@ -192,6 +267,7 @@ See [grants.md](grants.md) for the concept and examples. Keys in `config/gateway
 | `grant_request_timeout` | `300` | Seconds a request waits for a decision. |
 | `grant_max_pending` | `3` | Open grant requests at once. |
 | `grant_api_rate` | `30` | Requests/minute on the agent grant API. |
+| `activity_rate` | `60` | Activity reports/minute (the agent's PreToolUse hook and `tallygate note`), counted separately from grant requests. Excess reports are dropped. |
 
 Target fields: `host` (name, `*.domain` or IP), `port`, `scheme` (`https` default, `http`, `tcp`), `paths`
 (globs, default `/*`), `lan`, `address` (fixed IP), `tls_fingerprint` (SHA-256), `tls_verify`
@@ -282,6 +358,9 @@ These are wired by the compose file and normally need no change.
 | control | `GW_URL` | Gateway API base URL. |
 | control | `AGENT_HOST`, `AGENT_STATUS_PORT`, `TERMINALS` | Agent address, status port, `name:port` list of ttyd consoles. |
 | control | `SESSION_TTL`, `LOG_LEVEL` | Session lifetime (s, default 12 h), log level. |
+| control | `CONTROL_DATA` | Control state directory (`/data`): session secret, password hash, VAPID key, push subscriptions. |
+| control | `TELEGRAM_API_BASE`, `PUSHOVER_API_BASE` | API base URLs (the test suite points them at mock servers). |
+| control | `PUSH_TEST_ALLOW_HTTP` | **Test suite only.** `1` = Web Push endpoints over plain HTTP are accepted (logged as a warning). |
 | agent | `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` (+ lowercase) | Route all tools through the gateway. |
 | agent | `SELFTEST_BLOCKED_PROBES` | Management endpoints the self-test expects to be unreachable. |
 | agent | `TALLYGATE_URL` | Grant API for the `tallygate` CLI (`http://172.31.10.2:8079`). |
