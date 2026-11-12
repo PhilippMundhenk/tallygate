@@ -72,6 +72,7 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-1}
       TRUST_FORWARDED_FOR: ${TRUST_FORWARDED_FOR:-0}  # 1 = behind a reverse proxy that sets X-Forwarded-*
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}           # CIDRs whose X-Forwarded-*/auth headers are believed
+      TRUST_PROXY_SECRET: ${TRUST_PROXY_SECRET:-}     # empty: no secret; else required as X-Tallygate-Proxy-Secret
       SESSION_IDLE: ${SESSION_IDLE:-7200}
       PUBLIC_URL: ${PUBLIC_URL:-}                     # e.g. https://tallygate.example.org (links in notifications)
       GW_URL: http://172.31.11.2:8081
@@ -131,6 +132,7 @@ services:
       agent-net: {ipv4_address: 172.31.10.10}
     pids_limit: 1024
     mem_limit: ${AGENT_MEM_LIMIT:-6g}
+    cpus: ${AGENT_CPUS:-0}                  # 0 = no limit; e.g. 2 keeps CPU for the gateway and the host
     depends_on:
       egress-gw: {condition: service_healthy}
       control: {condition: service_healthy}
@@ -148,10 +150,16 @@ networks:
   agent-net:
     internal: true                        # no default route: the core isolation property
     enable_ipv6: false
+    driver_opts:
+      # No address for the host on this network. Otherwise the host's bridge IP (172.31.10.1) is reachable
+      # from the agent, and with it every host service listening on 0.0.0.0, bypassing the gateway.
+      com.docker.network.bridge.inhibit_ipv4: "true"
     ipam: {config: [{subnet: 172.31.10.0/24}]}
   control-net:
     internal: true
     enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.inhibit_ipv4: "true"
     ipam: {config: [{subnet: 172.31.11.0/24}]}
   egress:
     enable_ipv6: false

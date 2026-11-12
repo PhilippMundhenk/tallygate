@@ -18,7 +18,8 @@ async function api(method, path, body) {
 const gw = (method, sub, body) => api(method, "/api/gw" + sub, body);
 
 function toast(msg, bad = false) {
-  const t = $("#toast"); t.textContent = msg; t.style.display = "block"; t.style.color = bad ? "#fca5a5" : "";
+  const t = $("#toast"); t.setAttribute("role", bad ? "alert" : "status");
+  t.textContent = msg; t.style.display = "block"; t.style.color = bad ? "#fca5a5" : "";
   clearTimeout(toast._t); toast._t = setTimeout(() => (t.style.display = "none"), 4000);
 }
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
@@ -26,14 +27,23 @@ const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toas
 /* ---------------- tabs ---------------- */
 function showTab(name) {
   $$("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "tab-" + name));
-  $$("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  $$("#tabs button").forEach((b) => {
+    const on = b.dataset.tab === name;
+    b.classList.toggle("active", on); b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1;
+  });
   history.replaceState(null, "", "#" + name);
-  if (name === "rules") loadPolicy();
-  if (name === "grants") { loadGrants(); loadSecrets(); }
-  if (name === "setup") loadSetup();
-  if (name === "log" && !$("#logBody").children.length) loadLog();
+  if (name === "rules") guard(loadPolicy)();
+  if (name === "grants") { guard(loadGrants)(); guard(loadSecrets)(); }
+  if (name === "setup") guard(loadSetup)();
+  if (name === "log" && !logLoaded) guard(loadLog)();
 }
 $$("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+$("#tabs").addEventListener("keydown", (e) => {  // arrow keys move between tabs (WAI-ARIA tabs pattern)
+  const tabs = $$("#tabs button"), i = tabs.indexOf(document.activeElement);
+  if (i < 0 || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+  const j = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (i + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  e.preventDefault(); tabs[j].focus(); showTab(tabs[j].dataset.tab);
+});
 
 /* ---------------- approvals ---------------- */
 const SCOPES = [["once", "Allow 2 min", ""], ["hour", "Allow 1 h", ""], ["always", "Always (host)", ""],
@@ -43,29 +53,58 @@ async function loadPending() {
   pending = await gw("GET", "/pending");
   renderPending();
 }
+// Cards are kept per id. A card that went away (decided elsewhere, expired) while the pointer is over the
+// list stays in place, greyed out, until the pointer leaves: the next click must not land on another card.
+function syncCards(list, items, build) {
+  const byId = new Map($$(":scope > .pending", list).map((el) => [el.dataset.id, el]));
+  const hovered = list.matches(":hover");
+  for (const [id, el] of byId) {
+    if (items.some((it) => it.id === id)) continue;
+    if (hovered) { el.classList.add("gone"); $$("button", el).forEach((b) => (b.disabled = true)); }
+    else el.remove();
+  }
+  for (const it of items) {
+    const sig = JSON.stringify(it);
+    const old = byId.get(it.id);
+    if (old && (old.dataset.sig === sig || old.classList.contains("busy"))) continue;
+    const el = build(it); el.dataset.id = it.id; el.dataset.sig = sig;
+    if (old) old.replaceWith(el); else list.appendChild(el);
+  }
+  if (hovered && !list._leave) {
+    list._leave = () => { $$(":scope > .pending.gone", list).forEach((el) => el.remove()); };
+    list.addEventListener("mouseleave", list._leave);
+  }
+}
+// Disables the card's buttons while its decision is in flight (no double submits).
+const decide = (el, fn) => async () => {
+  el.classList.add("busy"); $$("button", el).forEach((b) => (b.disabled = true));
+  try { await fn(); } catch (e) {
+    toast(e.message, true); el.classList.remove("busy"); $$("button", el).forEach((b) => (b.disabled = false));
+  }
+};
 function renderPending() {
-  const list = $("#pendingList"); list.innerHTML = "";
+  syncCards($("#pendingList"), pending, pendingCard);
   $("#pendingEmpty").classList.toggle("hidden", pending.length > 0);
   updateBadges();
-  for (const p of pending) {
-    const el = document.createElement("div"); el.className = "pending";
-    // Host names are chosen by the agent: show the registrable domain separately (look-alikes such as
-    // github.com.evil.example) and warn about punycode names.
-    el.innerHTML = `<div class="dest">${esc(p.host)}:${esc(p.port)}</div>
-      ${p.domain && p.domain !== p.host ? `<div class="meta">domain <b>${esc(p.domain)}</b></div>` : ""}
-      ${p.idn ? `<div class="meta warn">⚠ internationalised (punycode) name – check for look-alikes</div>` : ""}
-      <div class="meta">${esc(p.proto)} · IPs ${esc((p.ips || []).join(", ") || "not resolved yet")} · attempts ${esc(p.attempts)} ·
-      <span class="countdown" data-exp="${Number(p.expires)}"></span></div><div class="btns"></div>`;
-    for (const [scope, label, cls] of SCOPES) {
-      if (scope === "domain" && !p.domain) continue;  // no registrable domain (IP, public suffix)
-      const b = document.createElement("button"); if (cls) b.className = cls;
-      b.textContent = scope === "domain" ? `Always (*.${p.domain})` : label;
-      b.onclick = guard(async () => { await gw("POST", `/pending/${p.id}/decide`, { scope }); await loadPending(); });
-      $(".btns", el).appendChild(b);
-    }
-    list.appendChild(el);
-  }
   tickCountdowns();
+}
+function pendingCard(p) {
+  const el = document.createElement("div"); el.className = "pending";
+  // Host names are chosen by the agent: show the registrable domain separately (look-alikes such as
+  // github.com.evil.example) and warn about punycode names.
+  el.innerHTML = `<div class="dest">${esc(p.host)}:${esc(p.port)}</div>
+    ${p.domain && p.domain !== p.host ? `<div class="meta">domain <b>${esc(p.domain)}</b></div>` : ""}
+    ${p.idn ? `<div class="meta warn">⚠ internationalised (punycode) name – check for look-alikes</div>` : ""}
+    <div class="meta">${esc(p.proto)} · IPs ${esc((p.ips || []).join(", ") || "not resolved yet")} · attempts ${esc(p.attempts)} ·
+    <span class="countdown" data-exp="${Number(p.expires)}"></span></div><div class="btns"></div>`;
+  for (const [scope, label, cls] of SCOPES) {
+    if (scope === "domain" && !p.domain) continue;  // no registrable domain (IP, public suffix)
+    const b = document.createElement("button"); if (cls) b.className = cls;
+    b.textContent = scope === "domain" ? `Always (*.${p.domain})` : label;
+    b.onclick = decide(el, async () => { await gw("POST", `/pending/${p.id}/decide`, { scope }); await loadPending(); });
+    $(".btns", el).appendChild(b);
+  }
+  return el;
 }
 function tickCountdowns() {
   const now = Date.now() / 1000;
@@ -74,9 +113,21 @@ function tickCountdowns() {
 setInterval(tickCountdowns, 1000);
 
 /* ---------------- log ---------------- */
-let oldestId = null;
+let oldestId = null, logLoaded = false;
+const logIds = new Set();
+// Rows are ordered by event id (newest first) and shown once, whether they came live or from history.
+function addLogRow(e, trim = true) {
+  if (logIds.has(e.id)) return;
+  logIds.add(e.id);
+  const body = $("#logBody"), tr = logRow(e);
+  let next = body.firstElementChild;
+  while (next && Number(next.dataset.id) > e.id) next = next.nextElementSibling;
+  body.insertBefore(tr, next);
+  while (trim && body.children.length > 2000) { logIds.delete(Number(body.lastElementChild.dataset.id)); body.lastElementChild.remove(); }
+  oldestId = Number(body.lastElementChild.dataset.id);
+}
 function logRow(e) {
-  const tr = document.createElement("tr");
+  const tr = document.createElement("tr"); tr.dataset.id = e.id;
   const dest = `${e.host ?? ""}${e.port ? ":" + e.port : ""}`;
   tr.dataset.kind = e.kind; tr.dataset.action = e.action;
   tr.dataset.text = `${dest} ${e.action} ${e.reason}`.toLowerCase();
@@ -104,10 +155,11 @@ function applyLogFilter(tr) {
   tr.classList.toggle("hidden", !!hide);
 }
 async function loadLog(older = false) {
-  const q = older && oldestId ? `?limit=200&before=${oldestId}` : "?limit=200";
+  const q = older && oldestId !== null ? `?limit=200&before=${oldestId}` : "?limit=200";
   const rows = await gw("GET", "/events" + q);
-  if (!older) $("#logBody").innerHTML = "";
-  for (const e of rows) { $("#logBody").appendChild(logRow(e)); oldestId = e.id; }
+  rows.forEach((e) => addLogRow(e, !older));  // "Load older" may grow the table beyond 2000
+  logLoaded = true;
+  if (older && !rows.length) toast("No older events");
 }
 ["#logFilter", "#logHideDns", "#logOnlyBlocked"].forEach((s) => $(s).addEventListener("input", () => $$("#logBody tr").forEach(applyLogFilter)));
 $("#logMore").onclick = guard(() => loadLog(true));
@@ -116,16 +168,31 @@ $("#logMore").onclick = guard(() => loadLog(true));
 let policy = null;
 function portText(p) { return p === undefined || p === "*" ? "*" : Array.isArray(p) ? p.join(",") : String(p); }
 function parsePort(s) {
+  // Typos must fail visibly: parseInt("https") is NaN (sent as null = all ports) and parseInt("44 3") is 44.
   s = (s || "").trim(); if (!s || s === "*") return "*";
-  if (s.includes(",")) return s.split(",").map((x) => (x.includes("-") ? x.trim() : parseInt(x, 10)));
-  return s.includes("-") ? s : parseInt(s, 10);
+  const one = (x) => {
+    x = x.trim();
+    if (/^\d{1,5}$/.test(x) && +x >= 1 && +x <= 65535) return +x;
+    const m = /^(\d{1,5})\s*-\s*(\d{1,5})$/.exec(x);
+    if (m && +m[1] >= 1 && +m[1] <= +m[2] && +m[2] <= 65535) return `${+m[1]}-${+m[2]}`;
+    throw new Error(`Invalid port "${x}": use 443, 80,443, 8000-8100 or *`);
+  };
+  return s.includes(",") ? s.split(",").map(one) : one(s);
 }
-async function loadPolicy() {
+// Editable policy fields remember unsaved edits; a policy event (change elsewhere) leaves them alone.
+const POLICY_FIELDS = ["#defaultAction", "#askTimeout", "#hardDeny", "#rawPolicy"];
+POLICY_FIELDS.forEach((s) => $(s).addEventListener("input", () => ($(s).dataset.dirty = "1")));
+function setField(sel, value, keepEdits) {
+  const el = $(sel);
+  if (keepEdits && el.dataset.dirty) { el.classList.add("stale"); el.title = "Changed elsewhere since you started editing"; return; }
+  el.value = value; delete el.dataset.dirty; el.classList.remove("stale"); el.title = "";
+}
+async function loadPolicy(keepEdits = false) {
   policy = await gw("GET", "/policy");
-  $("#defaultAction").value = policy.default; $("#askTimeout").value = policy.ask_timeout;
+  setField("#defaultAction", policy.default, keepEdits); setField("#askTimeout", policy.ask_timeout, keepEdits);
   $("#hardDenyFloor").textContent = (policy.hard_deny_floor || []).join("  ");
-  $("#hardDeny").value = policy.hard_deny.join("\n");
-  $("#rawPolicy").value = JSON.stringify(policy, null, 2);
+  setField("#hardDeny", policy.hard_deny.join("\n"), keepEdits);
+  setField("#rawPolicy", JSON.stringify(policy, null, 2), keepEdits);
   const body = $("#rulesBody"); body.innerHTML = "";
   policy.rules.forEach((r, i) => {
     const tr = document.createElement("tr");
@@ -144,7 +211,11 @@ $("#saveMode").onclick = guard(() => putPolicy({ ...policy, default: $("#default
 $("#saveHard").onclick = guard(() => {
   return putPolicy({ ...policy, hard_deny: $("#hardDeny").value.split(/\s+/).filter(Boolean) });
 });
-$("#saveRaw").onclick = guard(() => putPolicy(JSON.parse($("#rawPolicy").value)));
+$("#saveRaw").onclick = guard(() => {
+  let p;
+  try { p = JSON.parse($("#rawPolicy").value); } catch (e) { throw new Error(`Invalid JSON: ${e.message}`); }
+  return putPolicy(p);
+});
 $("#nrAdd").onclick = guard(async () => {
   const rule = { action: $("#nrAction").value, [$("#nrKind").value]: $("#nrMatch").value.trim(), port: parsePort($("#nrPort").value) };
   if ($("#nrNote").value) rule.note = $("#nrNote").value;
@@ -171,26 +242,26 @@ function grantTargets(d) {
   return d.targets.map((t) => `<code>${esc(t.scheme)}://${esc(t.host)}:${esc(t.port)}${t.paths && t.paths.join(",") !== "/*" ? esc(" " + t.paths.join(",")) : ""}</code>${t.lan ? ' <span class="tag warn">LAN</span>' : ""}`).join("<br>");
 }
 function renderGrantRequests() {
-  const box = $("#grantReqList"); box.innerHTML = "";
-  $("#grantReqBox").classList.toggle("hidden", !grants.requests.length);
-  for (const r of grants.requests) {
-    const d = grants.defs.find((x) => x.name === r.name) || { targets: [], levels: [], description: "" };
-    const el = document.createElement("div"); el.className = "pending grantreq";
-    el.innerHTML = `<div class="dest">🔑 ${esc(r.name)} <span class="tag ${r.level === "write" ? "warn" : ""}">${esc(r.level)}</span> for ${esc(r.ttl_label)}</div>
-      <div class="meta">${esc(d.description)}</div><div class="meta">${grantTargets(d)}</div>
-      <div class="meta">Agent's reason: <i>${esc(r.reason || "(none given)")}</i></div>
-      <div class="meta"><span class="countdown" data-exp="${Number(r.expires)}"></span></div><div class="btns"></div>`;
-    const btn = (label, decision, cls = "") => {
-      const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls;
-      b.onclick = guard(async () => { await gw("POST", `/grant-requests/${r.id}/decide`, { decision }); await loadGrants(); });
-      $(".btns", el).appendChild(b);
-    };
-    btn(`Approve ${r.level} (${r.ttl_label})`, "approve");
-    if (r.level === "write" && d.levels.includes("read")) btn("Approve read-only", "read", "secondary");
-    btn("Deny", "deny", "danger");
-    box.appendChild(el);
-  }
+  syncCards($("#grantReqList"), grants.requests, grantRequestCard);
+  $("#grantReqBox").classList.toggle("hidden", !$("#grantReqList").children.length);
   updateBadges(); tickCountdowns();
+}
+function grantRequestCard(r) {
+  const d = grants.defs.find((x) => x.name === r.name) || { targets: [], levels: [], description: "" };
+  const el = document.createElement("div"); el.className = "pending grantreq";
+  el.innerHTML = `<div class="dest">🔑 ${esc(r.name)} <span class="tag ${r.level === "write" ? "warn" : ""}">${esc(r.level)}</span> for ${esc(r.ttl_label)}</div>
+    <div class="meta">${esc(d.description)}</div><div class="meta">${grantTargets(d)}</div>
+    <div class="meta">Agent's reason: <i>${esc(r.reason || "(none given)")}</i></div>
+    <div class="meta"><span class="countdown" data-exp="${Number(r.expires)}"></span></div><div class="btns"></div>`;
+  const btn = (label, decision, cls = "") => {
+    const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls;
+    b.onclick = decide(el, async () => { await gw("POST", `/grant-requests/${r.id}/decide`, { decision }); await loadGrants(); });
+    $(".btns", el).appendChild(b);
+  };
+  btn(`Approve ${r.level} (${r.ttl_label})`, "approve");
+  if (r.level === "write" && d.levels.includes("read")) btn("Approve read-only", "read", "secondary");
+  btn("Deny", "deny", "danger");
+  return el;
 }
 function renderGrants() {
   const act = $("#activeGrants"); act.innerHTML = "";
@@ -240,24 +311,15 @@ setInterval(() => $$(".left").forEach((x) => (x.textContent = fmtLeft(Number(x.d
 
 function targetRow(t = { scheme: "https", host: "", port: 443, paths: ["/*"] }) {
   const row = document.createElement("div"); row.className = "target-row";
-  row.innerHTML = `<select class="t-scheme"><option>https</option><option>http</option><option>tcp</option></select>
-    <input class="t-host" placeholder="ha.lan or 192.168.1.5"><input class="t-port" type="number" min="1" max="65535">
-    <input class="t-paths" placeholder="paths, e.g. /api/*"><label><input type="checkbox" class="t-lan"> LAN</label>
-    <input class="t-address" placeholder="fixed IP (optional)"><input class="t-fp" placeholder="SHA-256 cert fingerprint (optional)">
-    <label title="only for https without fingerprint"><input type="checkbox" class="t-verify" checked> verify TLS</label>
-    <button class="small secondary t-del">✕</button>`;
+  row.innerHTML = `<select class="t-scheme" aria-label="Scheme"><option>https</option><option>http</option><option>tcp</option></select>
+    <input class="t-host" aria-label="Host" placeholder="ha.lan or 192.168.1.5"><input class="t-port" type="number" min="1" max="65535" aria-label="Port">
+    <input class="t-paths" aria-label="Paths" placeholder="paths, e.g. /api/*"><label><input type="checkbox" class="t-lan"> LAN</label>
+    <input class="t-address" aria-label="Fixed IP (optional)" placeholder="fixed IP (optional)"><input class="t-fp" aria-label="SHA-256 certificate fingerprint (optional)" placeholder="SHA-256 cert fingerprint (optional)">
+    <button class="small secondary t-del" aria-label="Remove target">✕</button>`;
   $(".t-scheme", row).value = t.scheme; $(".t-host", row).value = t.host; $(".t-port", row).value = t.port;
   $(".t-paths", row).value = (t.paths || ["/*"]).join(", "); $(".t-lan", row).checked = !!t.lan;
-  $(".t-address", row).value = t.address || ""; $(".t-fp", row).value = t.tls_fingerprint || ""; $(".t-verify", row).checked = t.tls_verify !== false;
+  $(".t-address", row).value = t.address || ""; $(".t-fp", row).value = t.tls_fingerprint || "";
   $(".t-del", row).onclick = () => row.remove();
-  return row;
-}
-function injectRow(i = { host: "", header: "Authorization", value: "Bearer ${token_name}" }) {
-  const row = document.createElement("div"); row.className = "inject-row";
-  row.innerHTML = `<input class="i-host" placeholder="host (an https target)"><input class="i-header" placeholder="header">
-    <input class="i-value" placeholder="value template, e.g. Bearer \${ha_token}"><button class="small secondary i-del">✕</button>`;
-  $(".i-host", row).value = i.host; $(".i-header", row).value = i.header; $(".i-value", row).value = i.value;
-  $(".i-del", row).onclick = () => row.remove();
   return row;
 }
 function openGrantEditor(d) {
@@ -269,12 +331,10 @@ function openGrantEditor(d) {
   $("#geApprRead").value = d?.approval?.read || "ask"; $("#geApprWrite").value = d?.approval?.write || "ask";
   $("#geTtl").value = d ? d.default_ttl : "1h"; $("#geMaxTtl").value = d ? d.max_ttl : "4h";
   $("#geTargets").innerHTML = ""; (d ? d.targets : [undefined]).forEach((t) => $("#geTargets").appendChild(targetRow(t)));
-  $("#geInject").innerHTML = ""; (d ? d.inject : []).forEach((i) => $("#geInject").appendChild(injectRow(i)));
   ed.scrollIntoView({ behavior: "smooth" });
 }
 $("#grantNew").onclick = () => openGrantEditor(null);
 $("#geAddTarget").onclick = () => $("#geTargets").appendChild(targetRow());
-$("#geAddInject").onclick = () => $("#geInject").appendChild(injectRow());
 $("#geCancel").onclick = () => $("#grantEditor").classList.add("hidden");
 $("#geSave").onclick = guard(async () => {
   const name = $("#geName").value.trim();
@@ -286,12 +346,9 @@ $("#geSave").onclick = guard(async () => {
     if ($(".t-lan", r).checked) t.lan = true;
     if ($(".t-address", r).value.trim()) t.address = $(".t-address", r).value.trim();
     if ($(".t-fp", r).value.trim()) t.tls_fingerprint = $(".t-fp", r).value.trim();
-    if (t.scheme === "https" && !$(".t-verify", r).checked && !t.tls_fingerprint) t.tls_verify = false;
     return t;
   });
-  const inject = $$("#geInject .inject-row").map((r) => ({ host: $(".i-host", r).value.trim(), header: $(".i-header", r).value.trim(), value: $(".i-value", r).value }));
-  const body = { description: $("#geDesc").value.trim(), levels, approval, default_ttl: $("#geTtl").value.trim(), max_ttl: $("#geMaxTtl").value.trim(), targets, inject };
-  if (targets.some((t) => t.tls_verify === false) && !confirm("TLS verification is disabled for a target. Anyone on that network path could impersonate it. Prefer pinning the certificate fingerprint. Save anyway?")) return;
+  const body = { description: $("#geDesc").value.trim(), levels, approval, default_ttl: $("#geTtl").value.trim(), max_ttl: $("#geMaxTtl").value.trim(), targets };
   await gw("PUT", `/grants/${encodeURIComponent(name)}`, body);
   $("#grantEditor").classList.add("hidden"); toast(`Grant ${name} saved`); await loadGrants();
 });
@@ -353,20 +410,47 @@ $("#selftestBtn").onclick = guard(async () => {
   const rows = r.results.map((t) => `<tr><td class="${t.pass ? "ok" : "bad"}">${t.pass ? "PASS" : "FAIL"}</td><td>${esc(t.name)}</td><td class="muted">${esc(t.detail)}</td></tr>`).join("");
   setStatus("st-test", `<table class="results">${rows}</table>`, r.results.every((t) => t.pass) ? "ok" : "bad");
 });
+// Browsers only show the permission prompt after a user gesture, so it is asked from a button.
+function showNotifyPerm() {
+  const supported = "Notification" in window;
+  $("#notifyBtn").classList.toggle("hidden", !supported || Notification.permission !== "default");
+  $("#notifyPerm").textContent = !supported ? "not supported by this browser"
+    : Notification.permission === "granted" ? "browser notifications are on"
+    : Notification.permission === "denied" ? "blocked in the browser's site settings" : "";
+}
+$("#notifyBtn").onclick = guard(async () => { await Notification.requestPermission(); showNotifyPerm(); });
+showNotifyPerm();
 $$(".wizard [data-term]").forEach((b) => (b.onclick = () => openTerm(b.dataset.term)));
 $$("pre.copy").forEach((p) => (p.onclick = () => navigator.clipboard.writeText(p.textContent).then(() => toast("Copied"))));
 
 /* ---------------- live stream ---------------- */
+let streamOpened = false;
+// Connection state in words as well as colour.
+function setConn(ok) { $("#conn").classList.toggle("ok", ok); $("#connText").textContent = ok ? "live" : "reconnecting"; }
+// After every (re)connect, reload what may have changed during the gap (sleep, network change, gateway
+// restart): otherwise asks and grant requests from the gap stay invisible until they are auto-denied.
 function connectStream() {
   const es = new EventSource("/api/stream");
-  es.onopen = () => $("#conn").classList.add("ok");
-  es.onerror = () => { $("#conn").classList.remove("ok"); };
+  es.onopen = () => {
+    setConn(true);
+    if (streamOpened) {
+      loadPending().catch(() => {}); loadGrants().catch(() => {});
+      if (logLoaded) loadLog().catch(() => {});
+    }
+    streamOpened = true;
+  };
+  es.onerror = () => {
+    setConn(false);
+    if (es.readyState !== EventSource.CLOSED) return;  // the browser retries by itself
+    // Closed for good (e.g. 401 after the session ended): api() sends us to the login page on 401.
+    setTimeout(() => api("GET", "/api/meta").then(connectStream, connectStream), 3000);
+  };
   es.onmessage = (m) => {
     const ev = JSON.parse(m.data);
-    if (ev.type === "event") { const body = $("#logBody"); body.insertBefore(logRow(ev.event), body.firstChild); while (body.children.length > 2000) body.lastChild.remove(); }
+    if (ev.type === "event") addLogRow(ev.event);
     if (ev.type === "ask" || ev.type === "resolved") loadPending().catch(() => {});
     if (ev.type === "ask" && document.hidden && Notification?.permission === "granted") new Notification("tallygate: approval needed", { body: `${ev.pending.host}:${ev.pending.port}` });
-    if (ev.type === "policy" && !$("#tab-rules").classList.contains("hidden")) loadPolicy().catch(() => {});
+    if (ev.type === "policy" && !$("#tab-rules").classList.contains("hidden")) loadPolicy(true).catch(() => {});
     if (["grant_request", "grant_resolved", "grants"].includes(ev.type)) loadGrants().catch(() => {});
     if (ev.type === "grant_request" && document.hidden && Notification?.permission === "granted") new Notification("tallygate: grant requested", { body: `${ev.request.name} (${ev.request.level})` });
   };
@@ -379,7 +463,6 @@ function connectStream() {
     const b = document.createElement("button"); b.textContent = name; b.dataset.name = name; b.className = "secondary";
     b.onclick = () => openTerm(name); $("#termButtons").appendChild(b);
   }
-  if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {});
   await loadPending().catch((e) => toast(e.message, true));
   await loadGrants().catch((e) => toast(e.message, true));
   connectStream();

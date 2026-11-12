@@ -20,5 +20,5 @@ services:
     build:
       context: ./agent
       args:
-        CLAUDE_VERSION: ${CLAUDE_VERSION:-2.1.304}
-        EXTRA_PACKAGES: ${AGENT_EXTRA_PACKAGES:-}
+        - CLAUDE_VERSION                  # only passed when set; default: the version pinned in agent/Dockerfile
+        - EXTRA_PACKAGES=${AGENT_EXTRA_PACKAGES:-}

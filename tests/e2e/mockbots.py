@@ -24,6 +24,8 @@ class MockBots:
         # telegram: {"scope_label": "Always (host)", "user_id": 4242, "chat_id": 777}
         # matrix:   {"actions": [("@user:hs", "reaction", "👎") | ("@user:hs", "text", "allow {n}")]}
         self.plan: dict = {}
+        # outages for sending: {"telegram" | "matrix": "error" | "slow"}
+        self.fail: dict[str, str] = {}
         self._ids = itertools.count(100)
         self._tg_updates: list = []
         self._mx_events: list = []
@@ -85,6 +87,10 @@ class MockBots:
         method = request.match_info["method"]
         p = await request.json()
         if method == "sendMessage":
+            if self.fail.get("telegram") == "slow":
+                await asyncio.sleep(30)
+            if self.fail.get("telegram") == "error":
+                return web.json_response({"ok": False, "description": "service unavailable"}, status=503)
             mid = next(self._ids)
             self.log.append(("tg.send", p["text"]))
             plan = self.plan.get("telegram")
@@ -137,6 +143,10 @@ class MockBots:
 
     async def _mx_send(self, request: web.Request) -> web.Response:
         body = await request.json()
+        if self.fail.get("matrix") == "slow":
+            await asyncio.sleep(30)
+        if self.fail.get("matrix") == "error":
+            return web.json_response({"errcode": "M_UNKNOWN", "error": "service unavailable"}, status=503)
         eid = f"$e{next(self._ids)}"
         if request.match_info["type"] == "m.room.message":
             self.log.append(("mx.msg", body["body"]))

@@ -24,8 +24,8 @@ agent:  granted: homeassistant (read) for 30 min
 | **approval** | Per level: `ask` (a human decides) or `auto` (granted at once, still logged and shown). A common choice is `read: auto, write: ask`. |
 | **lan** | Exempts **exactly this target** from the hard deny, so it may resolve to a private address. Loopback, link-local/metadata and multicast stay unreachable (`grants_never`). |
 | **address** | Fixed IP for the target (no DNS lookup), handy when the gateway cannot resolve your local names. |
-| **tls_fingerprint** | SHA-256 of the service's certificate: lets the gateway trust a self-signed cert (Proxmox, a NAS, a router) **without** turning verification off. `tls_verify: false` exists, but avoid it. |
-| **inject** | Header templates such as `Authorization: Bearer ${ha_token}`. The secret lives in the gateway, and the agent never sees it. The agent's own `Authorization`/`Cookie` are stripped. |
+| **tls_fingerprint** | SHA-256 of the service's certificate: lets the gateway trust a self-signed cert (Proxmox, a NAS, a router) **without** turning verification off. `tls_verify: false` exists (config-file grants only), but avoid it. |
+| **inject** | Header templates such as `Authorization: Bearer ${ha_token}`. The secret lives in the gateway, and the agent never sees it. The agent's own `Authorization`/`Cookie` are stripped. **Config-file grants only.** |
 | **default_ttl / max_ttl** | How long an approval lasts (1 min … 7 days). The agent may ask for less or more; the duration is capped at `max_ttl`. |
 
 ## Defining grants
@@ -80,6 +80,12 @@ UI grants are stored in `grants.yaml` in the `gateway-data` volume.
 
 A UI-defined grant can only use `lan: true` for addresses inside `grants_lan_allow`, which only the
 config file can set. That way a compromised UI session cannot open arbitrary parts of your network.
+
+`inject` and `tls_verify: false` are only accepted in grants from the config file. Otherwise whoever holds
+a UI session or the API token could define a grant that sends a stored secret (e.g. the GitHub token) to a
+host of their choosing. The UI and API reject such grants with a validation error; a UI grant saved by an
+older version with either setting is ignored at startup (and logged). Define such grants in
+`config/gateway.yaml`.
 
 ## Using grants
 
