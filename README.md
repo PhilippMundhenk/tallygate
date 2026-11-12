@@ -43,7 +43,7 @@ only then let through, turned back, or held for you to decide.
   Control, bash, claude), and a setup wizard for GitHub, Claude login, git and Remote Control.
 - **Phone approvals** via Telegram buttons or Matrix reactions (outbound polling only, no webhooks).
 - **Hardened by default.** Non-root everywhere, `cap_drop: ALL`, `no-new-privileges`, read-only root
-  filesystems, no `docker.sock`, pinned and checksum-verified dependencies.
+  filesystems, no `docker.sock`, pinned dependencies and checksum-verified downloads.
 - **Tested.** Unit tests, end-to-end tests of every enforcement path (including SNI spoofing and upstream
   certificate verification), and a Docker-based isolation test in CI.
 
@@ -63,21 +63,53 @@ Details: [docs/architecture.md](docs/architecture.md) · Security: [docs/threat-
 
 ## Quick start
 
-Requirements: Linux with Docker Engine ≥ 25 and the Compose plugin, a claude.ai subscription.
+Requirements: Linux (amd64 or arm64) with Docker Engine ≥ 25 and the Compose plugin, a claude.ai
+subscription.
+
+### With Docker Compose (recommended)
+
+tallygate runs as three containers from prebuilt images: the gateway, the control plane and the agent with
+Claude Code. All you need is [`compose.yaml`](compose.yaml):
+
+```bash
+mkdir tallygate && cd tallygate
+curl -fsSLO https://raw.githubusercontent.com/PhilippMundhenk/tallygate/main/compose.yaml
+docker compose up -d
+docker compose logs control | grep -A1 password    # generated UI password, shown once
+```
+
+Open <http://127.0.0.1:8080> and follow **Setup**: GitHub token → `claude auth login` → git identity →
+confirm Remote Control → self-test. Your session then appears in the Claude app under **Code**.
+
+No configuration is needed to start: secrets are created on first start and kept in Docker volumes. Optional
+settings go into a `.env` file next to `compose.yaml`, for example:
+
+```bash
+# .env
+PUBLIC_URL=https://tallygate.example.org   # behind your TLS reverse proxy
+TRUST_FORWARDED_FOR=1
+TRUSTED_PROXIES=172.31.12.1/32
+RC_NAME=my-agent                           # session name in the Claude app
+TELEGRAM_BOT_TOKEN=...                     # approvals on your phone
+TELEGRAM_CHAT_ID=...
+TELEGRAM_ALLOWED_USER_IDS=...
+```
+
+All settings: [`.env.example`](.env.example) and [docs/configuration.md](docs/configuration.md). Reverse
+proxy, host directories, your own agent image, upgrades and backups:
+[docs/operations.md](docs/operations.md).
+
+### From source
+
+To build the images yourself, for development or to change the code:
 
 ```bash
 git clone https://github.com/PhilippMundhenk/tallygate.git && cd tallygate
-sudo ./setup.sh            # random secrets, UI password, state directories
-$EDITOR .env               # RC_NAME, CONTROL_PUBLISH, PUBLIC_URL, optional Telegram/Matrix
-make up                    # build and start
+make up                    # build and start (docker compose with compose.build.yaml)
 make bypass-test           # isolation test: must end with "ALL CHECKS PASSED"
 ```
 
-Put a TLS reverse proxy in front of `CONTROL_PUBLISH` (default `127.0.0.1:8080`), open the UI and follow
-**Setup**: GitHub token → `claude auth login` → git identity → confirm Remote Control → self-test. Your
-session then appears in the Claude app under **Code**.
-
-Full guide: [docs/operations.md](docs/operations.md)
+Details: [docs/operations.md#from-source](docs/operations.md#from-source)
 
 ## Documentation
 
