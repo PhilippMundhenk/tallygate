@@ -51,6 +51,13 @@ function confirmClick(btn, question, fn) {
   });
 }
 
+/* ---------------- unencrypted access ---------------- */
+// Plain HTTP from another machine: the session travels unencrypted (#97). Shown, not blocked.
+if (location.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)) {
+  const b = document.getElementById("insecureBanner");
+  if (b) b.hidden = false;
+}
+
 /* ---------------- tabs ---------------- */
 function showTab(name) {
   $$("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "tab-" + name));

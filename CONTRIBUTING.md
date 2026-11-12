@@ -7,7 +7,7 @@ Thanks for helping! tallygate is security-sensitive, so changes are reviewed wit
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 make dev-setup          # gateway + control deps, pytest, ruff, shellcheck
-make lint test          # everything that CI runs except the Docker integration job
+make lint coverage          # everything that CI runs except the Docker integration job
 ```
 
 The e2e suite starts the real gateway (mitmdump) and control plane on localhost with throwaway

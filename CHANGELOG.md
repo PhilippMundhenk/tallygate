@@ -6,168 +6,133 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Fixed
-- CI: the image scan used an invalid image reference and failed on every push to `main`; release notes named
-  `:vX.Y.Z` tags that don't exist; manual runs on other branches pushed images; the Claude Code workflow
-  opens an issue when Actions may not create pull requests (#64).
+The result of a full project review: Docker Compose with published images as the main installation, a large
+set of security fixes from two review rounds, quick actions and templates, help everywhere, and a 95 %
+coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you update.
 
 ### Security
-- The gateway fails closed: an error inside a hook (e.g. the event log cannot be written) refuses the
-  connection instead of letting it through. An invalid `hard_deny_floor` entry stops the gateway at
-  startup, and until a failed startup has exited every connection is refused (it used to be proxied
-  without the policy for a moment) ([#8](https://github.com/PhilippMundhenk/tallygate/issues/8)).
-- TLS to injection and read-only hosts is always intercepted. A missing, trailing-dot or different SNI
-  used to pass it through untouched, skipping credential stripping and the read-only check
-  ([#9](https://github.com/PhilippMundhenk/tallygate/issues/9)).
-- CIDR `allow`/`ask` rules, including those created by approving an IP literal, apply only to IP-literal
-  destinations. They made the name phase inconclusive, so unknown names were resolved before the decision
-  (TG-02 regression). **Behaviour change:** names resolving into an allowed CIDR are no longer allowed by
-  it; use host rules ([#10](https://github.com/PhilippMundhenk/tallygate/issues/10)).
-- `hard_deny_floor` now extends the built-in hard-deny list instead of replacing it; adding a VPS address
-  silently dropped RFC 1918, loopback and metadata ranges. Extras from the API are compared with the floor
-  in force ([#11](https://github.com/PhilippMundhenk/tallygate/issues/11)).
-- Grants defined in the UI or API can no longer use `inject` or `tls_verify: false` (config-file grants
-  only): a UI session could send stored secrets to any host. Such UI grants saved earlier are ignored at
-  startup ([#12](https://github.com/PhilippMundhenk/tallygate/issues/12)).
-- Rules reject null or non-integer ports (they matched every port; the UI produced them from typos such as
-  `443,` or `https`), and IPv4-mapped IPv6 literals are matched like IPv4 by rules and approvals
-  ([#13](https://github.com/PhilippMundhenk/tallygate/issues/13)).
-- Grant enforcement: plain HTTP to an `https` grant target is refused instead of skipping the per-request
-  checks; LAN grants also work while a rule (e.g. the `open` preset) allows the name; re-approving a grant
-  keeps its id, so open connections survive; agent credentials are stripped on inject hosts reached
-  through a grant ([#14](https://github.com/PhilippMundhenk/tallygate/issues/14)).
+- **Host services:** the agent could reach services on the Docker host that listen on all interfaces through
+  the host's address on `agent-net`, bypassing the gateway. `agent-net` and `control-net` no longer give the
+  host an address (`com.docker.network.bridge.inhibit_ipv4`); `bypass.sh` checks it with a real listener (#7).
+- **Fail closed:** an error inside a gateway hook (for example when the event log cannot be written) refuses
+  the connection instead of letting it through. An invalid `hard_deny_floor` entry stops the gateway at
+  startup, and until a failed startup has exited every connection is refused (#8).
+- **Credential stripping and read-only hosts:** TLS to injection and read-only hosts is always intercepted.
+  A missing, trailing-dot or different SNI used to pass it through untouched (#9).
+- **Domain fronting:** TLS is passed through only when the SNI matches the checked name (a missing SNI is
+  refused; for an IP literal an SNI name must be allowed by the rules), and HTTP requests whose `Host` is not
+  the checked target get `403`. On shared CDNs an allowed name used to reach other sites (#57).
+- **Large bodies:** request bodies over 1 MB were streamed upstream before the per-request checks ran. The
+  checks now run on the headers, before anything is forwarded (#56).
+- **DNS before the decision:** CIDR `allow`/`ask` rules, including those from approving an IP, apply only to
+  IP-literal destinations; they used to make the gateway resolve unknown names before asking (TG-02
+  regression) (#10).
+- **Hard deny:** `hard_deny_floor` extends the built-in list instead of replacing it (#11).
+- **Secrets:** grants defined in the UI or API can no longer use `inject` or `tls_verify: false`; a UI
+  session could send stored secrets to any host (#12).
+- **Rule validation:** null or non-integer ports are refused (they matched every port), and IPv4-mapped IPv6
+  addresses match like IPv4 (#13).
+- **Grants:** plain HTTP to an `https` grant target is refused; LAN grants work while a rule allows the name;
+  re-approving keeps open connections; agent credentials are stripped on inject hosts reached through a
+  grant (#14).
+- **Publishing:** the npm, Yarn, crates.io, container registry and Hugging Face hosts are read-only by default.
+  `readonly` entries can also refuse POST (`post_is_write`, with `read_posts` exceptions) and take `*.domain`
+  patterns (#58).
+- **Reverse proxy:** `TRUST_FORWARDED_FOR` defaults to `0`; the docs explain that the `mgmt` bridge address is
+  shared by every process on the host; new optional `TRUST_PROXY_SECRET` (#19).
+- **Login:** bodies over 4 KiB are refused unread, more than 5 queued password checks get `429`, and the
+  failure limit is checked inside the password lock (#20).
+- **Sessions:** the event stream and the console end within 10 s of logout or expiry (#21). Changing the UI
+  password ends every session opened with the old one (#62). A `CONTROL_PASSWORD_HASH` that is not an scrypt
+  hash refuses every login instead of falling back to `CONTROL_PASSWORD` (#27).
+- **Policy writes:** the mode buttons and the emergency stop no longer send the browser's possibly stale
+  policy back, which could restore deleted rules. `PATCH /policy` changes only the mode; `POST
+  /emergency-stop` runs on the gateway: it revokes grants, denies pending requests, removes the internet
+  shortcuts and sets mode `deny`, and it suspends grant auto-approval until the mode changes (#60).
+- CI: actions pinned to commit SHAs, base images by digest, gitleaks secret scan, Trivy image scan (#18).
+
 ### Added
-- Line-coverage gate of 95 % per module in CI (`make coverage`), measuring the gateway and control
-  processes too; every module is now at 98-100 % (424 tests) (#27).
-- **Help and examples**: `docs/rules.md` (how a connection is decided, ~20 worked examples), an example for
-  every setting in the configuration reference and in `config/gateway.yaml`; in the UI, field help for rules
-  and grants, expandable explanations with examples, *Test a destination* explains which rule or check
-  decided, and host/CIDR typos are refused with a valid example (#35).
-- **Quick actions** in the Rules tab: allow the web or all ports for 15 min / 1 h, switch what happens with
-  unknown destinations, an emergency stop, a guided path to a local-network grant, and **templates** for
-  Python, Node.js, Go, Rust, Debian/Ubuntu apt, container registries and Hugging Face. Preset rules are
-  tagged `preset:<name>`; `DELETE /presets/<name>` undoes them; `GET /presets?details=1` (#34).
-- **Docker Compose with prebuilt images is the recommended installation.** Multi-arch images
-  (`linux/amd64`, `linux/arm64`) `ghcr.io/philippmundhenk/tallygate-{gateway,control,agent}` are published
-  from `main` and for every release; releases attach `compose.yaml`, `.env.example`, `gateway.yaml` and
-  `bypass.sh`.
-- Zero-config first start: the gateway API token, session secret and console credential are created in
-  volumes, and a UI password is generated and printed once to the control log. Environment variables still
-  take precedence. `docker compose exec control python -m app.passwd` changes the stored password.
-- `compose.build.yaml` to build the images from a checkout (`make up`).
-- A weekly workflow opens a PR when a new Claude Code version is published; `agent/Dockerfile` is the
-  single place that pins the version (#17).
-- `AGENT_CPUS` to limit the agent's CPU (default: no limit), and a resource-limits section in the
-  operations guide on keeping the workspace from filling the host disk (#25).
-- Health check for the agent; services start in order of health (`depends_on: condition: service_healthy`).
+- **Docker Compose with published images** is the recommended installation. Multi-arch images
+  `ghcr.io/philippmundhenk/tallygate-{gateway,control,agent}` (`linux/amd64`, `linux/arm64`) are published
+  from `main` (`:main`) and for every release (`:X.Y.Z`, `:X.Y`, `:latest`). Releases attach `compose.yaml`,
+  `.env.example`, `gateway.yaml` and `bypass.sh` (#16).
+- **Zero-config first start:** the gateway API token, session secret and console credential are created in
+  volumes, and a UI password is generated and printed to the control log. Environment variables still take
+  precedence. `python -m app.passwd` changes the password; `--print-hash` prints a hash for
+  `CONTROL_PASSWORD_HASH` (#16, #62).
+- **Quick actions** in the Rules tab: allow the web or all ports for a while, choose what happens with unknown
+  destinations, an emergency stop, a guided path to a local-network grant, and **templates** for Python,
+  Node.js, Go, Rust, Debian/Ubuntu apt, container registries and Hugging Face (#34, #59, #61).
+- **Help and examples:** [docs/rules.md](docs/rules.md) with about 20 worked examples, an example for every
+  setting, field help and explanations in the UI, *Test a destination* says what decided (#35).
+- `compose.build.yaml` to build the images from a checkout (`make up`) (#16).
+- Health check for the agent; services start in order of health (#16).
+- `AGENT_CPUS` and a guide to keeping the workspace from filling the host disk (#25).
+- A weekly workflow that proposes new Claude Code versions (#17).
+- `make coverage`: a gate of 95 % line coverage per module, including the gateway and control processes; every
+  module is at 98–100 % (#27).
 
 ### Changed
-- CI: actions pinned to commit SHAs, base images pinned by digest, Dependabot groups minor/patch
-  updates, gitleaks secret scan on every PR and weekly, Trivy scan of the published images, image
-  build tested on pull requests, ttyd and tool versions pinned in one place (#18).
-- Gateway and control images on Python 3.15 (was 3.13); actions/checkout and actions/setup-python v7;
-  ruff 0.17.4 (also in pre-commit), pytest 9.2.0.
+- **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie
+  follows the connection (`COOKIE_SECURE=auto`): plain HTTP works out of the box, HTTPS keeps the cookie
+  `Secure`, and the UI warns on unencrypted access from another machine. The agent still cannot reach the UI
+  (#97).
 - State lives in Docker volumes by default. `TALLYGATE_DIR` is replaced by `GATEWAY_DATA`, `AGENT_HOME` and
-  `WORKSPACE` (each a volume name or a host path); `./setup.sh /path` sets them up for host directories.
-- The default `config/gateway.yaml` is built into the gateway image; mount your own file to change it.
-- `setup.sh` runs as your normal user (sudo only for `chown`) and no longer generates secrets.
-- `TRUST_FORWARDED_FOR` defaults to `0`; docs explain that the `mgmt` bridge address is shared by every
-  process on the host.
+  `WORKSPACE`, which take a host path instead of the volume; `./setup.sh /path` prepares host directories (#16).
+- The default `config/gateway.yaml` is built into the gateway image; mount your own file to change it (#16).
+- `setup.sh` runs as your normal user and no longer generates secrets (#16).
+- **Behaviour:** a CIDR `allow` rule no longer allows host names that resolve into it; use host rules (#10).
+- Template rule ids are `<preset>:<id>`; applying a preset never takes over a rule from another source (`409`),
+  and `policy` presets cannot be applied on top (#59).
+- Gateway and control images on Python 3.15; `agent/Dockerfile` is the single place that pins Claude Code
+  (#17, #18).
 
 ### Fixed
-- `bypass.sh` works when downloaded next to `compose.yaml` (it no longer changes directory and runs the
-  self-test with `docker exec`); the meaningless IPv6 link-local probe is gone (the sysctl checks remain) (#65).
-- Undoing a template could delete rules it never added (`lockdown` shares ids with the baseline, so undoing it
-  removed the Anthropic rules). Template rule ids are now `<preset>:<id>`, rules from another source are never
-  taken over (`409`), and `POST` refuses `policy` presets. "Apply again" with a time limit now limits the
-  template's own earlier rules, and the UI shows the expiry the gateway set. Templates: GHCR and Docker Hub
-  blob hosts, `repo.yarnpkg.com` for corepack, a correct Go note; the docs say that
-  template rules win over your own rules while active (#59).
-- Quick actions: policy events no longer rebuild the template cards, so a chosen duration and the focus survive; focus moves to *Apply* after *Undo*; buttons are named after their template; `confirm()` dialogs (silently skipped when the browser suppresses them) are replaced by an in-page two-step confirmation (#61).
-- Mode buttons, the mode *Save* and the emergency stop no longer send the browser's (possibly stale) policy back: `PATCH /policy` changes only the mode and timeout, `POST /emergency-stop` runs on the gateway (revoke grants, deny pending asks and grant requests, remove internet presets, mode deny; best effort, result per step) and suspends grant auto-approval until the mode changes; full replaces start from a fresh copy (#60).
-- The gateway's warnings never reached its log: mitmdump ran with `-q`, which overrides the log level (#27).
-- Agent status responses larger than one network read were cut off and reported as an error (#27).
-- The managed setting `skipDangerousModePermissionPrompt` was nested under `permissions`, where Claude Code
-  ignores it; it is now a top-level key, so the bypass-mode confirmation no longer appears (#26).
+- Undoing a template could delete rules it never added; "Apply again" with a time limit kept the template
+  permanent; template host lists completed (GHCR and Docker Hub blob hosts, `repo.yarnpkg.com`) (#59).
+- The managed setting that skips the bypass-mode prompt had no effect (#26).
+- The gateway's warnings never reached its log (#27). Agent status responses over one network read were cut
+  off (#27).
+- Web UI: log history, reconnects, unsaved edits, the console (UTF-8, large pastes, expired sessions), cards
+  moving under the cursor, links from chat messages, error messages (#23); accessibility and phone layout
+  (#24); quick-action selections and focus, in-page confirmations instead of `confirm()` (#61).
+- Notifications: channels fail independently, a queue decouples delivery, a slow homeserver no longer delays
+  other prompts, expired prompts are skipped (#22, #63).
+- Gateway robustness: event counts, preset time limits, `fsync` before renames, connection state (#15).
+- `bypass.sh` works when downloaded next to `compose.yaml` (#65).
+- State directories that are bind mounts with the wrong owner stop the containers with a clear message (directory, uid, the
+  `chown` to run) instead of a traceback; the docs list every volume with its owner; `CONTROL_DATA` (#95).
+- CI: the image scan, release notes and pushes from other branches (#64).
 
 ### Removed
-- `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
-
-### Security
-- A `CONTROL_PASSWORD_HASH` that is not an scrypt hash refuses every login instead of falling back to
-  `CONTROL_PASSWORD` (#27).
-
-- Request bodies over 1 MB were streamed upstream before the per-request checks ran, so a large `PUT` to a
-  read-only host, the agent's own credentials on an injection host, or a write on a read-only grant went
-  through. The checks now run on the request headers, before anything is forwarded (#56).
-- Domain fronting: the TLS SNI and the HTTP `Host` were not compared with the checked name, so on a shared
-  CDN an allowed name gave access to other sites. TLS is now passed through only when the SNI matches the
-  CONNECT name (a missing SNI is refused; for an IP literal an SNI name must be allowed by the rules), and
-  HTTP requests with another `Host` get `403` (#57).
-- The templates opened publish paths around `readonly`: Yarn, crates.io, the container registries and
-  Hugging Face were writable. They are now read-only by default; `readonly` entries can refuse POST as
-  well (`post_is_write`, with `read_posts` exceptions) and take `*.domain` patterns. The container template
-  is called "pull only" (#58).
-- The agent could reach services on the Docker host that listen on all interfaces through the host's
-  address on `agent-net` (`172.31.10.1`), bypassing the gateway. `agent-net` and `control-net` no longer
-  give the host an address (`com.docker.network.bridge.inhibit_ipv4`), and `bypass.sh` checks it with a
-  listener on the host (#7).
-- `TRUST_PROXY_SECRET`: forwarded and auth headers are believed only when the proxy also sends the
-  shared secret in `X-Tallygate-Proxy-Secret`. The docs describe the safe proxy-auth setup (proxy container
-  on `mgmt` with a fixed address, nothing else published) (#19).
-- Login flood: bodies over 4 KiB are refused unread (413), more than 5 queued password checks get 429 at once,
-  and the per-address failure limit is re-checked and recorded inside the password lock (#20).
-- The event stream and the web console end within 10 s of logout or session expiry, and console input is
-  checked before it reaches the agent (#21).
-### Fixed
-- e2e tests skip instead of erroring without aiohttp, and cover password hash formats, idle and absolute
-  session expiry, dropped console frames, grant deny and revoke through Telegram and Matrix (#27).
-### Fixed
-- Web UI (#23):
-  - Log tab: history loads even after live events arrived; "Load older" no longer duplicates rows.
-  - After an event-stream reconnect, pending asks and grant requests from the gap are reloaded; a stream
-    closed by an ended session leads to the login page.
-  - Rules tab: a policy change elsewhere no longer overwrites unsaved edits (the field is marked instead).
-  - Console: UTF-8 split across frames is no longer garbled; pastes over 64 KiB no longer kill the console;
-    reconnecting after the session ended shows "session expired" instead of looping.
-  - Approval and grant cards do not move under the cursor when another one goes away, and their buttons are
-    disabled while a decision is sent.
-  - The session cookie is `SameSite=Lax`, so links in Telegram/Matrix messages arrive logged in.
-  - Invalid JSON, non-JSON gateway replies and an unreachable GitHub return `{"error": …}` with 400/502.
-- Accessibility and mobile layout (#24): tables scroll inside their own container, rows wrap on phones, tabs
-  are ARIA tabs (arrow keys work), the toast is a live region, the connection state is shown in words, and
-  every input has a label. Browser notifications are enabled with a button in Setup (browsers ignore a
-  permission request without a user gesture).
-- Notifications: Telegram and Matrix are sent concurrently and fail independently, so an outage of one no
-  longer hides prompts on the other. A queue decouples delivery from the gateway event stream, and chat API
-  calls time out after 15 s (#22).
-### Security
-- The event stream and the web console end within 10 s of logout or session expiry, and console input is
-  checked before it reaches the agent (#21).
-- Login flood: bodies over 4 KiB are refused unread (413), more than 5 queued password checks get 429 at once,
-  and the per-address failure limit is re-checked and recorded inside the password lock (#20).
-- `TRUST_PROXY_SECRET`: forwarded and auth headers are believed only when the proxy also sends the
-  shared secret in `X-Tallygate-Proxy-Secret`. The docs describe the safe proxy-auth setup (proxy container
-  on `mgmt` with a fixed address, nothing else published) (#19).
-- The agent could reach services on the Docker host that listen on all interfaces through the host's
-  address on `agent-net` (`172.31.10.1`), bypassing the gateway. `agent-net` and `control-net` no longer
-  give the host an address (`com.docker.network.bridge.inhibit_ipv4`), and `bypass.sh` checks it with a
-  listener on the host (#7).
+- `gateway/config.example.yaml`, a stale duplicate of `config/gateway.yaml` (#16).
 
 ### Upgrading from 0.3.0
-Keep your existing state: in `.env`, replace `TALLYGATE_DIR=/your/dir` with
-`GATEWAY_DATA=/your/dir/gateway`, `AGENT_HOME=/your/dir/agent-home`, `WORKSPACE=/your/dir/workspace`. Your
-secrets in `.env` keep working. If you changed `config/gateway.yaml`, mount it as described in
-[docs/operations.md](docs/operations.md#with-docker-compose-recommended). Then `make up`, or switch to the
-published images with `docker compose pull && docker compose up -d`.
-Recreate the networks so the new network option takes effect: `docker compose down && docker compose up -d`
-(compose warns that the network configuration changed).
 
-### Fixed
-- Gateway robustness: "repeated N×" counts are no longer lost when a new event replaces an unflushed one;
-  re-applying a preset with a TTL keeps its permanent rules permanent; policy, UI grants and secrets are
-  fsynced before the atomic rename; per-connection state is released when an upstream connect fails
-  ([#15](https://github.com/PhilippMundhenk/tallygate/issues/15)).
+1. **Stop the stack first**: `docker compose down`. The internal networks changed (#7). A plain `up -d` keeps
+   the running containers on the wrong addresses, and the gateway then fails to start.
+2. **Keep your state.** 0.4.0 uses Docker volumes by default. If your state is in host directories, point the
+   new variables at them in `.env`:
+   - with `TALLYGATE_DIR=/your/dir`: `GATEWAY_DATA=/your/dir/gateway`, `AGENT_HOME=/your/dir/agent-home`,
+     `WORKSPACE=/your/dir/workspace`;
+   - without `TALLYGATE_DIR`, 0.3.0 used `./state` next to `compose.yaml`: `GATEWAY_DATA=./state/gateway`,
+     `AGENT_HOME=./state/agent-home`, `WORKSPACE=./state/workspace`.
+
+   Otherwise you start with empty volumes: no Claude login, no workspace, the default policy.
+3. **Review `.env`.** Your secrets keep working. 0.3.0's `.env` set `TRUST_FORWARDED_FOR=1`; remove it unless
+   you run a reverse proxy and set `TRUSTED_PROXIES` for it. While `CONTROL_PASSWORD_HASH` is set,
+   `python -m app.passwd` refuses to change the password: change the hash in `.env` instead (use
+   `--print-hash`), or remove it to use the stored password.
+4. **Static config:** if you changed `config/gateway.yaml`, mount it as described in
+   [docs/operations.md](docs/operations.md#with-docker-compose-recommended).
+5. **Behaviour changes to check:** CIDR `allow` rules cover IP literals only (#10); UI grants with `inject` or
+   `tls_verify: false` are ignored, so move them to the config file (#12); the Hugging Face and registry
+   hosts are read-only (#58).
+6. **UI address:** the UI is now published on all interfaces (`0.0.0.0:8080`). With a reverse proxy on the
+   same host, set `CONTROL_PUBLISH=127.0.0.1:8080` to keep it local; remove `COOKIE_SECURE=1` from `.env` unless
+   you only use HTTPS (the new default `auto` decides per connection) (#97).
+7. Start: `docker compose pull && docker compose up -d`, or `make up` from source. Then run the self-test or
+   `bash bypass.sh`.
 
 ## [0.3.0] - 2026-11-11
 

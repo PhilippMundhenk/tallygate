@@ -9,10 +9,13 @@
   input{background:#0f1115;border:1px solid #2c313c;color:inherit;margin-bottom:12px} button{background:#3b82f6;border:0;color:#fff;cursor:pointer}
   .err{color:#f87171;font-size:13px;margin-bottom:10px;display:none} label{display:block;margin-bottom:6px;color:#9aa3b2}
   input:focus-visible,button:focus-visible{outline:2px solid #93c5fd;outline-offset:2px}
+  .warn{color:#fbbf24;font-size:13px;margin:0 0 14px}
 </style></head>
 <body><form method="post" action="/login">
   <h1><img src="/static/logo.svg" alt="tallygate"></h1>
   <div class="err" id="err" role="alert">Wrong password.</div>
+  <p class="warn" id="insecure" hidden>Not encrypted: your password is sent in plain text over the network.
+    Fine for a quick test on a trusted LAN; otherwise use HTTPS through a reverse proxy, or an SSH tunnel.</p>
   <label for="password">Password</label>
   <input type="password" id="password" name="password" autofocus autocomplete="current-password" required>
   <button>Sign in</button>

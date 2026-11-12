@@ -34,6 +34,7 @@ class Chat:
         self.fail: set[str] = set()  # telegram methods or matrix path fragments that raise
         self.script: list = []  # replies for getUpdates / sync (an exception is raised instead)
         self.whoami: object = {"user_id": "@bot:hs"}
+        self.hold: asyncio.Event | None = None  # while set up and not set, reactions hang (slow homeserver)
 
     def _next(self):
         item = self.script.pop(0)
@@ -53,6 +54,8 @@ class Chat:
         self.calls.append(("mx", method, path, body, params))
         if any(f in path for f in self.fail):
             raise RuntimeError(f"matrix {path}: down")
+        if "m.reaction" in path and self.hold is not None:
+            await self.hold.wait()
         if path == "/account/whoami":
             if isinstance(self.whoami, BaseException):
                 raise self.whoami
@@ -198,15 +201,65 @@ def test_telegram_prompt_without_a_domain_has_no_domain_button(make):
 def test_reaction_seeding_stops_at_the_first_failure_but_the_prompt_stands(make, kind):
     n = make(MX)
     n.chat.fail.add("m.reaction")
+
+    async def go(prompt):
+        await prompt
+        await asyncio.gather(*n.tasks)  # seeding runs in the background
+
     if kind == "ask":
-        run(n._on_ask(pending()))
+        run(go(n._on_ask(pending())))
         entry = n.msgs["p1"]
     else:
         req = {"id": "r1", "name": "svc", "level": "read", "ttl_label": "1h", "expires": time.time() + 60}
-        run(n._on_grant_request(req, {"description": "d", "targets": ["http://svc"]}))
+        run(go(n._on_grant_request(req, {"description": "d", "targets": ["http://svc"]})))
         entry = n.gmsgs["r1"]
     assert len(n.chat.sent("mx", "m.reaction")) == 1  # tried once, then gave up
     assert entry["mx"].startswith("$e")  # the prompt itself was sent and is answerable by text
+
+
+def test_slow_reaction_seeding_does_not_delay_the_next_prompt(make):
+    n = make({**TG, **MX})
+
+    async def go():
+        n.chat.hold = asyncio.Event()  # the homeserver hangs on reactions
+        await n.handle({"type": "ask", "pending": pending("p1")})
+        req = {"id": "r1", "name": "svc", "level": "read", "ttl_label": "1h", "expires": time.time() + 60}
+        await asyncio.wait_for(n.handle({"type": "grant_request", "request": req, "grant": {}}), 1)
+        await asyncio.wait_for(n.handle({"type": "ask", "pending": pending("p2")}), 1)
+        assert len(n.chat.sent("tg", "sendMessage")) == 3 and len(n.tasks) == 3  # prompts out, seeding waits
+        n.chat.hold.set()
+        await asyncio.gather(*n.tasks)
+        assert not n.tasks
+
+    run(go())
+    keys = [c[3]["m.relates_to"]["key"] for c in n.chat.sent("mx", "m.reaction")]
+    assert len(keys) == 6 + 3 + 6
+
+
+def test_expired_asks_and_grant_requests_are_not_sent(make, caplog):
+    n = make({**TG, **MX})
+    old = time.time() - 1
+    with caplog.at_level(logging.INFO, logger="notify"):
+        run(n.handle({"type": "ask", "pending": pending(expires=old)}))
+        req = {"id": "r1", "name": "svc", "level": "read", "ttl_label": "1h", "expires": old}
+        run(n.handle({"type": "grant_request", "request": req, "grant": {}}))
+        run(n.handle({"type": "resolved", "id": "p1", "action": "deny"}))  # no prompt, nothing to update
+    assert n.chat.calls == [] and not n.msgs and not n.gmsgs and not n.short
+    assert caplog.text.count("expired before it could be sent") == 2
+
+
+def test_close_cancels_and_awaits_background_work(make):
+    n = make(MX)
+
+    async def go():
+        n.chat.hold = asyncio.Event()  # never set: seeding would hang until SEND_TIMEOUT
+        await n._on_ask(pending())
+        (task,) = n.tasks
+        await n.close()
+        assert task.cancelled() and not n.tasks
+        await n.close()  # nothing left: a no-op
+
+    run(go())
 
 
 # ---------------------------------------------------------------- applying decisions

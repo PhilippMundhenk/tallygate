@@ -16,6 +16,9 @@
   <form method="post" action="/logout" class="logout"><button>Log out</button></form>
 </header>
 
+<p id="insecureBanner" class="banner warn" role="note" hidden>Not encrypted: this session travels in plain text over
+  the network. For more than a quick test on a trusted LAN, put a TLS reverse proxy in front
+  (<a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/operations.md#reverse-proxy" target="_blank" rel="noopener">how</a>).</p>
 <main>
   <!-- APPROVALS -->
   <section id="tab-approvals" role="tabpanel" aria-labelledby="tabbtn-approvals">

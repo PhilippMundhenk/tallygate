@@ -95,6 +95,7 @@ class Notifier:
         self._n = 0
         # Gateway events wait here, so slow chat APIs never block the reader of the gateway stream.
         self.queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=QUEUE_SIZE)
+        self.tasks: set[asyncio.Task] = set()  # background work outside the worker (Matrix reaction seeding)
 
     def describe(self) -> dict:
         return {
@@ -109,6 +110,19 @@ class Notifier:
         if self.describe()["matrix"]:
             tasks.append(asyncio.create_task(self._mx_sync()))
         return tasks
+
+    def _background(self, coro) -> None:
+        """Run coro without holding up the worker (the next prompt must not wait for it); kept until done."""
+        t = asyncio.create_task(coro)
+        self.tasks.add(t)
+        t.add_done_callback(self.tasks.discard)
+
+    async def close(self) -> None:
+        """Cancel background work and wait for it, so nothing uses the HTTP session after it is closed."""
+        tasks = list(self.tasks)
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     @property
     def http(self) -> aiohttp.ClientSession:
@@ -141,9 +155,19 @@ class Notifier:
                 ok[name] = res
         return ok
 
+    @staticmethod
+    def _expired(ev: dict) -> bool:
+        """A prompt for an ask or grant request that already timed out (e.g. after a backlog) is pointless."""
+        key = {"ask": "pending", "grant_request": "request"}.get(ev.get("type"))
+        item = ev.get(key) if key else None
+        exp = item.get("expires") if isinstance(item, dict) else None
+        return isinstance(exp, (int, float)) and exp <= time.time()
+
     async def handle(self, ev: dict) -> None:
         try:
-            if ev["type"] == "ask":
+            if self._expired(ev):
+                log.info("skipping %s event: expired before it could be sent", ev["type"])
+            elif ev["type"] == "ask":
                 await self._on_ask(ev["pending"])
             elif ev["type"] == "resolved":
                 await self._on_resolved(ev)
@@ -256,15 +280,20 @@ class Notifier:
             {"msgtype": "m.text", "body": body, "format": "org.matrix.custom.html", "formatted_body": html_body},
         )
         event_id = res["event_id"]
-        for reaction in GRANT_REACTIONS:
+        self._background(self._mx_seed(event_id, list(GRANT_REACTIONS)))
+        return event_id
+
+    async def _mx_seed(self, event_id: str, reactions: list[str]) -> None:
+        """Pre-seed reactions so a single tap answers. Runs in the background: a slow homeserver (up to
+        SEND_TIMEOUT per reaction) must not delay the next prompt. Stops at the first failure."""
+        for reaction in reactions:
             try:
                 await self._mx_put(
                     f"/rooms/{self._room()}/send/m.reaction/{uuid.uuid4().hex}",
                     {"m.relates_to": {"rel_type": "m.annotation", "event_id": event_id, "key": reaction}},
                 )
-            except Exception:  # noqa: BLE001
-                break
-        return event_id
+            except Exception:  # noqa: BLE001 - the prompt stands; text replies still work
+                return
 
     async def _on_grant_resolved(self, r: dict) -> None:
         entry = self.gmsgs.get(r["id"])
@@ -433,14 +462,7 @@ class Notifier:
             {"msgtype": "m.text", "body": body, "format": "org.matrix.custom.html", "formatted_body": html_body},
         )
         event_id = res["event_id"]
-        for _, _, reaction in BUTTONS:  # pre-seed reactions so a single tap works
-            try:
-                await self._mx_put(
-                    f"/rooms/{self._room()}/send/m.reaction/{uuid.uuid4().hex}",
-                    {"m.relates_to": {"rel_type": "m.annotation", "event_id": event_id, "key": reaction}},
-                )
-            except Exception:  # noqa: BLE001
-                break
+        self._background(self._mx_seed(event_id, [reaction for _, _, reaction in BUTTONS]))
         return event_id
 
     async def _mx_sync(self) -> None:

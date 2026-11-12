@@ -17,14 +17,16 @@ set_var() { if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else ech
 if [[ -n "${1:-}" ]]; then
   DIR=$(realpath -m "$1")
   SUDO=""; [[ $(id -u) -eq 0 ]] || SUDO=sudo
-  $SUDO mkdir -p "$DIR/gateway" "$DIR/agent-home" "$DIR/workspace"
+  $SUDO mkdir -p "$DIR/gateway" "$DIR/agent-home" "$DIR/workspace" "$DIR/control-data"
   $SUDO chown 10001:10001 "$DIR/gateway"                      # gateway user
   $SUDO chown 1000:1000 "$DIR/agent-home" "$DIR/workspace"    # agent user
-  $SUDO chmod 700 "$DIR/gateway"
+  $SUDO chown 10002:10002 "$DIR/control-data"                # control user
+  $SUDO chmod 700 "$DIR/gateway" "$DIR/control-data"
   set_var GATEWAY_DATA "$DIR/gateway"
   set_var AGENT_HOME "$DIR/agent-home"
   set_var WORKSPACE "$DIR/workspace"
-  echo "state in $DIR (GATEWAY_DATA, AGENT_HOME, WORKSPACE set in .env)"
+  set_var CONTROL_DATA "$DIR/control-data"
+  echo "state in $DIR (GATEWAY_DATA, AGENT_HOME, WORKSPACE, CONTROL_DATA set in .env)"
 fi
 echo "Next: docker compose up -d   (or 'make up' to build from this checkout)"
 echo "      docker compose logs control | grep -A1 password   (first start: generated UI password)"

@@ -9,6 +9,7 @@ import pytest
 
 from .conftest import start_echo
 from .helpers import http_via_proxy
+from .test_gateway import in_thread
 
 BOTH = {
     "TELEGRAM_BOT_TOKEN": "t",
@@ -56,6 +57,23 @@ def test_telegram_delivers_while_matrix_is_down(gateway, mockbots, control_with,
     assert "hour by telegram:tester" in _reasons(gateway, port)
     time.sleep(0.5)
     assert any("allow (hour, by telegram:tester)" in m for m in mockbots.messages("tg.editMessageText"))
+
+
+def test_slow_matrix_reactions_do_not_delay_prompts(gateway, mockbots, control_with, outage):
+    """Matrix seeds 6 reactions per prompt; at 3 s each a burst used to hold every later prompt (#63)."""
+    outage["matrix"] = "slow-reactions"
+    mockbots.plan = {}
+    _both(control_with, mockbots)
+    before = len(mockbots.messages("tg.send"))
+    ports = [start_echo() for _ in range(3)]
+    threads = [in_thread(http_via_proxy, gateway["ports"]["http"], f"http://127.0.0.1:{p}/") for p in ports]
+    deadline = time.time() + 4
+    while len(mockbots.messages("tg.send")) - before < 3 and time.time() < deadline:
+        time.sleep(0.1)
+    assert len(mockbots.messages("tg.send")) - before == 3  # sequential seeding: > 18 s for the third
+    assert len(mockbots.messages("mx.msg")) >= 3
+    for t, _ in threads:
+        t.join(15)  # the asks time out (5 s) unanswered
 
 
 def test_grant_request_reaches_matrix_while_telegram_fails(gateway, mockbots, control_with, outage):

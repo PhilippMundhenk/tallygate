@@ -10,6 +10,29 @@ from pathlib import Path
 import yaml
 
 
+def unwritable(dirs: list[Path]) -> list[str]:
+    """The directories this process must write to but cannot, typically a bind mount owned by root."""
+    bad = []
+    for d in dirs:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            probe = d / f".write-test-{os.getpid()}"
+            probe.write_text("")
+            probe.unlink()
+        except OSError:
+            bad.append(str(d))
+    return bad
+
+
+def owner_hint(component: str, bad: list[str], uid: int, gid: int) -> str:
+    """One clear message instead of a PermissionError traceback (#95)."""
+    return (
+        f"{component} cannot write to {', '.join(bad)} (it runs as uid {uid}). If these are bind mounts, give the "
+        f"host directories to that user, e.g. `chown {uid}:{gid} <host directory>`. "
+        "See docs/operations.md#host-directories."
+    )
+
+
 def ensure_api_token(env: dict) -> str:
     """Management API token. Zero-config default: created on first start in a volume that only the gateway
     (read-write) and the control plane (read-only) mount - never the agent. GW_API_TOKEN wins when set."""
@@ -62,6 +85,19 @@ def build_args(env: dict, data: Path) -> list[str]:
 
 def main() -> None:  # pragma: no cover - process wrapper: exec()s mitmdump; the functions above are tested
     data = Path(os.environ.get("DATA_DIR", "/data"))
+    dirs = [data]
+    if not os.environ.get("GW_API_TOKEN"):
+        dirs.append(Path(os.environ.get("GW_API_TOKEN_FILE", "/run/tallygate/gw/api-token")).parent)
+    if bad := unwritable(dirs):
+        raise SystemExit(owner_hint("egress-gw", bad, os.getuid(), os.getgid()))
+    if bad := unwritable([Path(os.environ.get("CA_EXPORT_DIR", "/ca"))]):  # not fatal: only injection needs it
+        print(
+            "WARNING:",
+            owner_hint("egress-gw", bad, os.getuid(), os.getgid()),
+            "Continuing without exporting "
+            "the CA: the agent will not trust intercepted TLS (credential injection fails).",
+            flush=True,
+        )
     os.environ["GW_API_TOKEN"] = ensure_api_token(dict(os.environ))
     args = build_args(dict(os.environ), data)
     (data / "mitmproxy").mkdir(parents=True, exist_ok=True)

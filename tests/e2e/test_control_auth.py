@@ -58,12 +58,13 @@ def test_idle_expiry_and_activity_keeps_the_session(control_with):
 
 
 def test_absolute_expiry_despite_activity(control_with):
-    a, _ = login(control_with(SESSION_TTL="3", SESSION_IDLE="3600"))
-    t0 = time.time()
-    while time.time() - t0 < 2.5:
+    ctl = control_with(SESSION_TTL="6", SESSION_IDLE="3600")
+    t0 = time.time()  # the absolute lifetime starts at login; the (slow, scrypt) login itself counts
+    a, _ = login(ctl)
+    while time.time() - t0 < 4:  # stay well inside the 6 s, also on slow CI runners
         assert a.call("GET", "/api/meta")[0] == 200
         time.sleep(0.5)
-    time.sleep(1.5)
+    time.sleep(max(0.0, t0 + 7 - time.time()))  # 1 s past the lifetime
     assert a.call("GET", "/api/meta")[0] == 401
 
 

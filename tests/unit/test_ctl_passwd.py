@@ -31,6 +31,7 @@ def answers(monkeypatch, *replies):
 def passwd(tmp_path, monkeypatch):
     monkeypatch.delenv("CONTROL_PASSWORD_HASH", raising=False)
     monkeypatch.delenv("CONTROL_PASSWORD", raising=False)
+    monkeypatch.setattr(sys, "argv", ["app.passwd"])  # main() parses the command line, not pytest's
     import app.passwd
 
     mod = importlib.reload(app.passwd)
@@ -87,9 +88,26 @@ def test_passwd_stores_a_hash_the_login_accepts(passwd, monkeypatch, capsys):
     assert prompts == ["New password: ", "Repeat: "]
     stored = passwd.PASSWORD_FILE.read_text()
     assert stored.startswith("scrypt:16:") and "correct horse" not in stored
-    assert "password updated" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "password updated" in out and "Sessions opened with the old password end" in out
     assert check(monkeypatch, stored, "correct horse battery")
     assert not check(monkeypatch, stored, "correct horse batterx")
+
+
+def test_passwd_print_hash_writes_nothing_and_works_with_the_environment(passwd, monkeypatch, capsys):
+    monkeypatch.setenv("CONTROL_PASSWORD", "from-env-password")  # compose-only users set the hash there
+    answers(monkeypatch, "correct horse battery", "correct horse battery")
+    passwd.main(["--print-hash"])
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("scrypt:16:") and "\n" not in out
+    assert not passwd.PASSWORD_FILE.exists()
+    monkeypatch.delenv("CONTROL_PASSWORD")
+    assert check(monkeypatch, out, "correct horse battery")
+    answers(monkeypatch, "short")
+    with pytest.raises(SystemExit, match="at least 12"):
+        passwd.main(["--print-hash"])
+    with pytest.raises(SystemExit):
+        passwd.main(["--bogus"])
 
 
 # ---------------------------------------------------------------- control/hashpw.py
@@ -123,6 +141,7 @@ def test_hashpw_prints_a_hash_the_login_accepts(hashpw, monkeypatch, capsys):
 # ---------------------------------------------------------------- as scripts
 def test_scripts_run_main(monkeypatch, capsys):
     """`python control/hashpw.py` and `python -m app.passwd` run their main()."""
+    monkeypatch.setattr(sys, "argv", ["hashpw.py"])
     answers(monkeypatch, "short")
     with pytest.raises(SystemExit, match="at least 12"):
         runpy.run_path(str(ROOT / "control" / "hashpw.py"), run_name="__main__")

@@ -115,10 +115,18 @@ def _sign(payload: str) -> str:
 _sessions: dict[str, dict] = {}
 
 
-def make_session(user: str) -> str:
+def password_fingerprint() -> str:
+    """Identifies the password in effect (environment hash or plain password, else the stored hash), without
+    keeping it. A session remembers the fingerprint from its login and ends when it changes, so
+    `python -m app.passwd` logs out every session opened with the old password."""
+    secret = os.environ.get("CONTROL_PASSWORD_HASH") or os.environ.get("CONTROL_PASSWORD") or bootstrap.password_hash()
+    return hmac.new(SESSION_SECRET, b"password:" + secret.encode(), hashlib.sha256).hexdigest()
+
+
+def make_session(user: str, fingerprint: str | None = None) -> str:
     sid = secrets.token_urlsafe(32)
     now = time.time()
-    _sessions[sid] = {"user": user, "exp": now + SESSION_TTL, "seen": now}
+    _sessions[sid] = {"user": user, "exp": now + SESSION_TTL, "seen": now, "pw": fingerprint}
     return f"{sid}.{_sign(sid)}"
 
 
@@ -137,8 +145,8 @@ def read_session(request: web.Request, touch: bool = True) -> str | None:
     sid = _session_id(request)
     s = _sessions.get(sid) if sid else None
     now = time.time()
-    if not s or s["exp"] < now or now - s["seen"] > SESSION_IDLE:
-        _sessions.pop(sid, None)
+    if not s or s["exp"] < now or now - s["seen"] > SESSION_IDLE or s.get("pw") != password_fingerprint():
+        _sessions.pop(sid, None)  # expired, idle, or the password was changed since this login
         return None
     if touch:
         s["seen"] = now
@@ -268,14 +276,30 @@ def _security_headers(resp: web.StreamResponse, path: str) -> None:
         resp.headers.setdefault("Cache-Control", "no-store")
 
 
+def _request_scheme(request: web.Request) -> str:
+    """http or https as the browser sees it: X-Forwarded-Proto counts only from a trusted proxy."""
+    trusted = TRUST_FORWARDED and _peer_trusted(request)
+    return ((request.headers.get("X-Forwarded-Proto") if trusted else None) or request.scheme).lower()
+
+
+def cookie_secure(request: web.Request) -> bool:
+    """COOKIE_SECURE: 1 = always Secure, 0 = never, auto (default) = Secure exactly when the browser uses HTTPS.
+    `auto` makes plain HTTP on the LAN work out of the box and keeps the cookie Secure behind a TLS proxy (#97)."""
+    mode = os.environ.get("COOKIE_SECURE", "auto").strip().lower()
+    if mode in ("1", "true", "yes"):
+        return True
+    if mode in ("0", "false", "no"):
+        return False
+    return _request_scheme(request) == "https"
+
+
 def _expected_origin(request: web.Request) -> str:
     if PUBLIC_URL:
         u = urllib.parse.urlsplit(PUBLIC_URL)
         return f"{u.scheme}://{u.netloc}".lower()
     trusted = TRUST_FORWARDED and _peer_trusted(request)
     host = (request.headers.get("X-Forwarded-Host") if trusted else None) or request.host
-    scheme = (request.headers.get("X-Forwarded-Proto") if trusted else None) or request.scheme
-    return f"{scheme}://{host}".lower()
+    return f"{_request_scheme(request)}://{host}".lower()
 
 
 def _same_origin(request: web.Request) -> bool:
@@ -310,6 +334,8 @@ async def login_page(request: web.Request) -> web.StreamResponse:
             fails = _recent_failures(ip, now)
             if _per_ip_lockout() and len(fails) >= LOGIN_MAX_FAILURES:
                 return too_many
+            # taken before the check: a password change during the check can only end the new session
+            fingerprint = password_fingerprint()
             ok = await asyncio.get_running_loop().run_in_executor(None, check_password, pw)
             if not ok:
                 if _per_ip_lockout():  # meaningless and unbounded when every client shares one address
@@ -324,14 +350,14 @@ async def login_page(request: web.Request) -> web.StreamResponse:
         resp = web.HTTPFound("/")
         resp.set_cookie(
             COOKIE,
-            make_session("admin"),
+            make_session("admin", fingerprint),
             max_age=SESSION_TTL,
             httponly=True,
             # Lax, not Strict: the PUBLIC_URL link in a Telegram/Matrix message is a cross-site navigation
             # and must arrive logged in. Cross-site POSTs still carry no cookie, and every state-changing
             # API call additionally needs the X-Tallygate header and a same-origin Origin.
             samesite="Lax",
-            secure=os.environ.get("COOKIE_SECURE", "1") == "1",
+            secure=cookie_secure(request),
         )
         raise resp
     if len(_login_failures) > 10_000:  # bounded memory under address-spraying
@@ -582,6 +608,8 @@ async def on_startup(app: web.Application):
 async def on_cleanup(app: web.Application):
     for t in app["bg"]:
         t.cancel()
+    await asyncio.gather(*app["bg"], return_exceptions=True)  # finished before their HTTP session closes
+    await app["notifier"].close()
     await app["http"].close()
 
 
@@ -612,6 +640,7 @@ async def watch_gateway(app: web.Application):
 
 def build_app() -> web.Application:
     global GW_TOKEN, TTYD_AUTH, SESSION_SECRET
+    bootstrap.check_dirs(proxy_auth=bool(PROXY_AUTH_HEADER))
     GW_TOKEN = bootstrap.gw_token()
     TTYD_AUTH = bootstrap.ttyd_credential()
     SESSION_SECRET = bootstrap.session_secret()

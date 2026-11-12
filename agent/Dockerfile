@@ -35,7 +35,7 @@ RUN apt-get update -qq \
  && echo "${sum}  /usr/local/bin/ttyd" | sha256sum -c - \
  && chmod 755 /usr/local/bin/ttyd \
  # Claude Code
- && npm install -g --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
+ && npm install -g --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_VERSION:?CLAUDE_VERSION must not be empty}" \
  && npm cache clean --force \
  && apt-get purge -y gnupg && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/* /root/.npm \

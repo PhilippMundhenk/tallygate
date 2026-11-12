@@ -222,11 +222,47 @@ def test_login_page_and_expired_sessions_are_pruned(load):
             now = time.time()
             main._sessions["old"] = {"user": "admin", "exp": now - 1, "seen": now}
             main._sessions["idle"] = {"user": "admin", "exp": now + 999, "seen": now - main.SESSION_IDLE - 1}
-            main._sessions["live"] = {"user": "admin", "exp": now + 999, "seen": now}
+            main._sessions["live"] = {"user": "admin", "exp": now + 999, "seen": now, "pw": main.password_fingerprint()}
             assert (await c.post("/login", data={"password": PW})).status == 200
             assert "old" not in main._sessions and "idle" not in main._sessions and "live" in main._sessions
 
     run(body())
+
+
+def test_changing_the_stored_password_ends_existing_sessions(load, tmp_path, monkeypatch):
+    main = load(CONTROL_PASSWORD="")  # the zero-config case: the hash lives in the control volume
+    monkeypatch.delenv("CONTROL_PASSWORD")
+    import app.bootstrap
+
+    app.bootstrap._write(app.bootstrap.PASSWORD_FILE, app.bootstrap.hash_password(PW, log2n=4))
+
+    async def body():
+        async with started(main, World()) as c:
+            assert (await c.get("/api/meta")).status == 200
+            fp = main.password_fingerprint()
+            app.bootstrap._write(app.bootstrap.PASSWORD_FILE, app.bootstrap.hash_password("a new password!", log2n=4))
+            assert main.password_fingerprint() != fp
+            assert (await c.get("/api/meta")).status == 401  # the session from the old password is gone
+            assert not main._sessions
+            r = await c.post("/login", data={"password": PW})
+            assert str(r.url).endswith("/login?failed=1")
+            r = await c.post("/login", data={"password": "a new password!"})
+            assert r.status == 200 and str(r.url).endswith("/")
+            assert (await c.get("/api/meta")).status == 200
+
+    run(body())
+
+
+def test_the_fingerprint_follows_the_password_source(load, monkeypatch):
+    main = load()
+    main.SESSION_SECRET = b"s"
+    plain = main.password_fingerprint()
+    monkeypatch.setenv("CONTROL_PASSWORD", "another-password")
+    assert main.password_fingerprint() != plain
+    monkeypatch.setenv("CONTROL_PASSWORD_HASH", "scrypt:16:00:11")
+    by_hash = main.password_fingerprint()
+    assert by_hash != plain
+    assert "scrypt" not in by_hash and len(by_hash) == 64  # a digest, not the hash itself
 
 
 def test_failure_tracking_stays_bounded_under_address_spraying(load):

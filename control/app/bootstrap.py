@@ -6,7 +6,8 @@ Every value can still be given as an environment variable, which always wins. Ot
 - SESSION_SECRET     created in /data/session-secret
 - TTYD_CREDENTIAL    created in the console volume, shared read-only with the agent
 - UI password        scrypt hash in /data/password-hash; on first start a random password is
-                     generated and printed once to the log. Change it with `python -m app.passwd`.
+                     generated and printed to the log, where it stays readable until the log is
+                     rotated. Change it with `python -m app.passwd` (this ends all open sessions).
 """
 
 from __future__ import annotations
@@ -40,6 +41,43 @@ def _read_or_create(path: Path, factory, mode: int = 0o600) -> str:
         _write(path, factory(), mode)
         log.info("created %s", path)
     return path.read_text().strip()
+
+
+def unwritable(dirs: list[Path]) -> list[str]:
+    """The directories this process must write to but cannot, typically a bind mount owned by root."""
+    bad = []
+    for d in dirs:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            probe = d / f".write-test-{os.getpid()}"
+            probe.write_text("")
+            probe.unlink()
+        except OSError:
+            bad.append(str(d))
+    return bad
+
+
+def owner_hint(component: str, bad: list[str], uid: int, gid: int) -> str:
+    """One clear message instead of a PermissionError traceback (#95)."""
+    return (
+        f"{component} cannot write to {', '.join(bad)} (it runs as uid {uid}). If these are bind mounts, give the "
+        f"host directories to that user, e.g. `chown {uid}:{gid} <host directory>`. "
+        "See docs/operations.md#host-directories."
+    )
+
+
+def check_dirs(proxy_auth: bool = False) -> None:
+    """Refuse to start with a clear message when the state directories are not writable."""
+    dirs = []
+    needs_data = not os.environ.get("SESSION_SECRET") or not (
+        proxy_auth or os.environ.get("CONTROL_PASSWORD_HASH") or os.environ.get("CONTROL_PASSWORD")
+    )
+    if needs_data:
+        dirs.append(DATA)
+    if not os.environ.get("TTYD_CREDENTIAL"):
+        dirs.append(TTYD_FILE.parent)
+    if bad := unwritable(dirs):
+        raise SystemExit(owner_hint("control", bad, os.getuid(), os.getgid()))
 
 
 def hash_password(pw: str, log2n: int = LOG2N) -> str:
@@ -89,8 +127,9 @@ def ensure_password() -> None:
     _write(PASSWORD_FILE, hash_password(pw))
     bar = "=" * 72
     log.warning(
-        "\n%s\n  tallygate web UI password (shown only once): %s\n"
-        "  Change it:  docker compose exec control python -m app.passwd\n%s",
+        "\n%s\n  tallygate web UI password: %s\n"
+        "  It stays readable in this log until the log is rotated: change it after the first login with\n"
+        "  docker compose exec control python -m app.passwd\n%s",
         bar,
         pw,
         bar,

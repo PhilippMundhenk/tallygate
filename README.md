@@ -80,13 +80,15 @@ Claude Code. All you need is [`compose.yaml`](compose.yaml):
 
 ```bash
 mkdir tallygate && cd tallygate
-curl -fsSLO https://raw.githubusercontent.com/PhilippMundhenk/tallygate/main/compose.yaml
+curl -fsSLO https://github.com/PhilippMundhenk/tallygate/releases/latest/download/compose.yaml
 docker compose up -d
-docker compose logs control | grep -A1 password    # generated UI password, shown once
+docker compose logs control | grep -A1 password    # generated UI password (change it after login)
 ```
 
-Open <http://127.0.0.1:8080> and follow **Setup**: GitHub token → `claude auth login` → git identity →
-confirm Remote Control → self-test. Your session then appears in the Claude app under **Code**.
+Open `http://<host>:8080` from any machine on your network. Plain HTTP is fine for a first look on a
+trusted LAN (the UI says so); for real use put a TLS reverse proxy in front
+([details](docs/operations.md#reaching-the-ui)). The agent cannot reach the UI either way. Then follow **Setup**: GitHub token → `claude auth login` → git
+identity → confirm Remote Control → self-test. Your session then appears in the Claude app under **Code**.
 
 No configuration is needed to start: secrets are created on first start and kept in Docker volumes. Optional
 settings go into a `.env` file next to `compose.yaml`, for example:

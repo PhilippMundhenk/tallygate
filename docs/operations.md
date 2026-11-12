@@ -3,6 +3,7 @@
 - [Requirements](#requirements)
 - [Installation](#installation)
   - [With Docker Compose (recommended)](#with-docker-compose-recommended)
+  - [Host directories](#host-directories)
   - [From source](#from-source)
   - [Custom agent image](#custom-agent-image)
 - [Reverse proxy](#reverse-proxy)
@@ -34,13 +35,33 @@ Prebuilt images for amd64 and arm64 are published on GHCR: `tallygate-gateway`, 
 
 ```bash
 mkdir tallygate && cd tallygate
-curl -fsSLO https://raw.githubusercontent.com/PhilippMundhenk/tallygate/main/compose.yaml
+curl -fsSLO https://github.com/PhilippMundhenk/tallygate/releases/latest/download/compose.yaml
 docker compose up -d
-docker compose logs control | grep -A1 password    # the generated UI password, shown once
+docker compose logs control | grep -A1 password    # the generated UI password
 ```
 
-Open <http://127.0.0.1:8080> on the Docker host (from elsewhere through an SSH tunnel,
-`ssh -L 8080:127.0.0.1:8080 <host>`) and continue with [First-time setup](#first-time-setup).
+The generated password stays readable in the control log (`docker compose logs`) until the log is rotated,
+so change it after the first login, see [Changing the UI password](#changing-the-ui-password).
+
+Open `http://<host>:8080` and continue with [First-time setup](#first-time-setup). See
+[Reaching the UI](#reaching-the-ui) for HTTPS, a localhost-only setup and an SSH tunnel.
+
+### Reaching the UI
+
+| Setup | `CONTROL_PUBLISH` | How you open it |
+|---|---|---|
+| LAN, plain HTTP (default) | `0.0.0.0:8080` | `http://<host>:8080`. Password and session travel unencrypted: fine for a trusted home network or a first look; the UI shows a warning. |
+| TLS reverse proxy on the same host (recommended) | `127.0.0.1:8080` | `https://tallygate.example.org`, see [Reverse proxy](#reverse-proxy) |
+| Localhost only, SSH tunnel | `127.0.0.1:8080` | `ssh -L 8080:127.0.0.1:8080 <host>`, then `http://127.0.0.1:8080` |
+
+`CONTROL_PUBLISH` is a compose variable: set it in `.env` or as a stack variable (Portainer), or change the
+default in the `ports:` line. Under the service's `environment:` it has no effect.
+
+The session cookie follows the connection (`COOKIE_SECURE=auto`): `Secure` over HTTPS, so it is never sent
+unencrypted once you use a proxy, and a normal cookie over plain HTTP, so the LAN setup works without changes.
+
+None of these setups lets the agent reach the UI: control listens only on its `mgmt` address, the Docker host
+has no address on `agent-net`, and the gateway refuses private addresses (`bypass.sh` checks all three).
 
 On first start the containers create everything they need in Docker volumes:
 
@@ -58,9 +79,7 @@ Settings go into a `.env` file next to `compose.yaml`; all of them are optional.
 most likely want: `PUBLIC_URL` and `TRUSTED_PROXIES` for a [reverse proxy](#reverse-proxy), `RC_NAME`, and
 Telegram or Matrix for phone approvals. Apply changes with `docker compose up -d`.
 
-To keep state in host directories instead of volumes (for example to see the workspace from the host), set
-`GATEWAY_DATA`, `AGENT_HOME` and `WORKSPACE` to paths owned by uid 10001 (gateway) and 1000 (agent).
-`./setup.sh /srv/tallygate` from the repository does this for you.
+To keep state in host directories instead of volumes, see [Host directories](#host-directories).
 
 To change the static gateway configuration (grants, service ports, credential injection), save
 [`config/gateway.yaml`](../config/gateway.yaml) as `gateway.yaml` next to `compose.yaml`, edit it and
@@ -70,12 +89,45 @@ Check the isolation with the UI's **Setup → Self-test**. The authoritative tes
 separate probe container:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/PhilippMundhenk/tallygate/main/tests/integration/bypass.sh
+curl -fsSLO https://github.com/PhilippMundhenk/tallygate/releases/latest/download/bypass.sh
 bash bypass.sh                 # must end with ALL CHECKS PASSED
 ```
 
 Pin a version with `TALLYGATE_VERSION=0.4` (minor version, gets patches) or `0.4.0` in `.env`. Each release
 also attaches `compose.yaml`, `.env.example`, `gateway.yaml` and `bypass.sh` for that version.
+
+### Host directories
+
+Docker volumes get the right owners automatically. **Host directories do not**: Docker creates a missing
+directory as `root`, and the containers run as fixed unprivileged users without any capabilities, so they
+cannot write there. The container then stops with a message like `egress-gw cannot write to /data (it runs as
+uid 10001)`. Create the directories with these owners before the first start:
+
+| Volume | Container path | Owner (uid:gid) | Mode | `.env` variable | Contains |
+|---|---|---|---|---|---|
+| `gateway-data` | egress-gw `/data` | `10001:10001` | 700 | `GATEWAY_DATA` | policy, log, secrets, CA key |
+| `gw-token` | egress-gw `/run/tallygate/gw`, control (ro) | `10001:10001` | 755 | – | API token (recreated) |
+| `ca` | egress-gw `/ca`, agent (ro) | `10001:10001` | 755 | – | public CA certificate (recreated) |
+| `control-data` | control `/data` | `10002:10002` | 700 | `CONTROL_DATA` | UI password hash, session secret |
+| `ttyd` | control `/run/tallygate/ttyd`, agent (ro) | `10002:10002` | 755 | – | console credential (recreated) |
+| `agent-home` | agent `/home/agent` | `1000:1000` | 755 | `AGENT_HOME` | Claude login, settings |
+| `workspace` | agent `/workspace` | `1000:1000` | 755 | `WORKSPACE` | your repositories |
+
+The users don't need to exist on the host; `chown` takes the numbers. For all seven under one directory:
+
+```bash
+cd /srv/tallygate
+sudo mkdir -p gateway-data gw-token ca control-data ttyd agent-home workspace
+sudo chown 10001:10001 gateway-data gw-token ca
+sudo chown 10002:10002 control-data ttyd
+sudo chown 1000:1000 agent-home workspace
+sudo chmod 700 gateway-data control-data
+```
+
+The four with an `.env` variable hold everything worth keeping; set them to the host paths. `./setup.sh
+/srv/tallygate` from the repository prepares those four and writes the variables. `gw-token`, `ca` and `ttyd`
+are recreated on every start; keep them as volumes unless you replace them in `compose.yaml` yourself as above.
+Don't set `user:` in compose: the images are built for these uids.
 
 ### From source
 
@@ -118,8 +170,7 @@ All three services set `max-size: 10m` themselves. To rotate other containers to
 
 ## Reverse proxy
 
-Publish the UI only on localhost (`CONTROL_PUBLISH=127.0.0.1:8080`, the default) and terminate TLS in
-front. Set `PUBLIC_URL` (used for the origin check), `TRUST_FORWARDED_FOR=1` and `TRUSTED_PROXIES`, the
+Publish the UI only on localhost (`CONTROL_PUBLISH=127.0.0.1:8080`) and terminate TLS in front. Set `PUBLIC_URL` (used for the origin check), `TRUST_FORWARDED_FOR=1` and `TRUSTED_PROXIES`, the
 address control sees for your proxy. Forwarded headers from any other peer are ignored. WebSockets must be
 passed through (web consoles).
 
@@ -222,6 +273,27 @@ Open the UI → **Setup**:
 
 Then clone repositories in the *bash* console: `gh repo clone owner/repo /workspace/repo`.
 
+## Changing the UI password
+
+```bash
+docker compose exec control python -m app.passwd
+```
+
+It asks for the new password twice (at least 12 characters) and stores its scrypt hash in `control-data`.
+It applies at once, no restart needed: **every session opened with the old password ends** at its next
+request (each session remembers a fingerprint of the password it was opened with), so a leaked password
+cannot be used through a session that is already open.
+
+This has no effect while `CONTROL_PASSWORD_HASH` or `CONTROL_PASSWORD` are set; change those in `.env` or
+`compose.yaml` and recreate control (`docker compose up -d control`), which also ends all sessions. To create
+a value for `CONTROL_PASSWORD_HASH` without a checkout of the repository:
+
+```bash
+docker compose exec control python -m app.passwd --print-hash   # prints scrypt:16:..., writes nothing
+```
+
+`python3 control/hashpw.py` in a checkout does the same.
+
 ## Day-to-day
 
 | Task | How |
@@ -238,7 +310,7 @@ Then clone repositories in the *bash* console: `gh repo clone owner/repo /worksp
 
 | Component | Procedure |
 |---|---|
-| tallygate (Compose) | Read the [CHANGELOG](../CHANGELOG.md) → `docker compose pull && docker compose up -d` → self-test or `bash bypass.sh`. Download the new `compose.yaml` when the changelog says so. |
+| tallygate (Compose) | Read the [CHANGELOG](../CHANGELOG.md), including its *Upgrading* notes → `docker compose pull && docker compose up -d` → self-test or `bash bypass.sh`. Download the new `compose.yaml` when the changelog says so. When the networks changed (as in 0.4.0), run `docker compose down` first: a plain `up -d` keeps the running containers on the wrong addresses. |
 | tallygate (from source) | `git pull` → read `CHANGELOG.md` → `make up` → `make bypass-test`. |
 | Claude Code | Part of the agent image, which has no auto-updater by design. New Claude Code versions arrive as tallygate patch releases: update tallygate. From source, set `CLAUDE_VERSION` in `.env` and run `make up`. |
 | Base images / dependencies | Published images are rebuilt for every release. From source: `docker compose -f compose.yaml -f compose.build.yaml build --pull && make up`. |
@@ -264,6 +336,7 @@ on the host suffer too. On a host that runs more than tallygate:
 
 The gateway's event log is capped by `log_max_events` and `log_keep_days`, and identical events are coalesced.
 
+## Backup and restore
 
 Back up the volumes (or the directories in `GATEWAY_DATA`, `AGENT_HOME`, `WORKSPACE`), plus `.env` and your
 `gateway.yaml` if you have them:
@@ -309,16 +382,18 @@ to a new gateway, the CA changes. That's harmless: the agent re-reads the CA on 
 | `gh`/`git` 401 against GitHub | No token stored (Setup step 2), PAT expired, or PAT lacks access to that repository. |
 | TLS errors only for github.com | The agent doesn't trust the gateway CA: check `/ca/egress-gw-ca.pem` exists in the agent (`ls /ca`) and restart the agent after the gateway. |
 | `ENOSPC: no space left on device` | Host disk full. Free space (`docker system df`, logs) or grow the VM disk. |
-| UI login loops | `COOKIE_SECURE=1` while accessing via plain HTTP from another machine. Use HTTPS, or an SSH tunnel to `127.0.0.1` (localhost counts as secure); set `0` for tests only. |
-| Lost the UI password | `docker compose exec control python -m app.passwd` sets a new one. |
+| UI login loops | `COOKIE_SECURE=1` forces a Secure cookie, which browsers drop over plain HTTP from another machine. Use the default `auto`, or HTTPS. |
+| UI does not answer on `http://<host>:8080` | `docker port tallygate-control-1` must show `0.0.0.0:8080`. `127.0.0.1:8080` means `CONTROL_PUBLISH` is set to localhost (or was put under `environment:`, where it has no effect). Otherwise check the host firewall. |
+| Lost the UI password | `docker compose exec control python -m app.passwd` sets a new one and ends all open sessions. |
 | Self-test "Management endpoint … UNEXPECTEDLY SUCCEEDED" | Network wiring changed. Re-check `compose.yaml` and run `make bypass-test`. |
 
 ## Migrating from another Claude Code container
 
 1. Stop the old container.
-2. Copy skills into the agent home: `docker compose cp <old>/claude-home/skills agent:/home/agent/.claude/`,
-   then `docker compose exec -u 0 agent chown -R 1000:1000 /home/agent/.claude/skills`.
-3. Copy repositories into the workspace the same way (or re-clone).
+2. Copy skills into the agent home with a throwaway container (the agent itself has no capability to change
+   owners): `docker run --rm -v tallygate_agent-home:/h -v "<old>/claude-home/skills":/s:ro debian sh -c
+   'mkdir -p /h/.claude && cp -r /s /h/.claude/skills && chown -R 1000:1000 /h/.claude'`.
+3. Copy repositories into the `tallygate_workspace` volume the same way (or re-clone).
 4. **Log in again** instead of copying credentials, and create a new fine-grained PAT for the gateway.
 5. Revoke tokens that were stored in the old container.
 

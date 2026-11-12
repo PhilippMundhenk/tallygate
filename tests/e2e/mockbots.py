@@ -24,7 +24,7 @@ class MockBots:
         # telegram: {"scope_label": "Always (host)", "user_id": 4242, "chat_id": 777}
         # matrix:   {"actions": [("@user:hs", "reaction", "👎") | ("@user:hs", "text", "allow {n}")]}
         self.plan: dict = {}
-        # outages for sending: {"telegram" | "matrix": "error" | "slow"}
+        # outages for sending: {"telegram" | "matrix": "error" | "slow" | "slow-reactions"}
         self.fail: dict[str, str] = {}
         self._ids = itertools.count(100)
         self._tg_updates: list = []
@@ -180,6 +180,8 @@ class MockBots:
 
                 self._keep(asyncio.create_task(act()))
         elif request.match_info["type"] == "m.reaction":
+            if self.fail.get("matrix") == "slow-reactions":  # a slow homeserver, prompts still go through
+                await asyncio.sleep(3)
             self.log.append(("mx.reaction", body["m.relates_to"]["key"]))
         return web.json_response({"event_id": eid})
 

@@ -2,10 +2,14 @@
 #
 #   docker compose up -d
 #   docker compose logs control | grep -A1 password      # first start: the generated UI password
-#   open http://127.0.0.1:8080 and follow Setup
+#   open http://<this host>:8080 and follow Setup (behind a TLS reverse proxy for real use)
 #
 # Works without any configuration: secrets are created on first start and kept in volumes. Every
 # setting below can be changed in a `.env` file next to this file (see docs/configuration.md).
+#
+# ${NAME:-default} values are compose variables: set NAME in `.env` (or as a stack variable in
+# Portainer), or change the default here. Putting NAME under a service's `environment:` does NOT
+# set it; that block is what the container itself receives.
 #
 #   internet ── egress ── [egress-gw] ── agent-net (internal, no route out) ── [agent]
 #                              │                                                │ ttyd/status
@@ -67,9 +71,10 @@ services:
       CONTROL_PORT: "8080"
       # Empty: a password is generated on first start and printed to the log (shown once).
       CONTROL_PASSWORD_HASH: ${CONTROL_PASSWORD_HASH:-}
+      CONTROL_PASSWORD: ${CONTROL_PASSWORD:-}          # plain text, discouraged: prefer the hash
       TRUST_PROXY_AUTH_HEADER: ${TRUST_PROXY_AUTH_HEADER:-}
       SESSION_SECRET: ${SESSION_SECRET:-}             # empty: created in the control-data volume
-      COOKIE_SECURE: ${COOKIE_SECURE:-1}
+      COOKIE_SECURE: ${COOKIE_SECURE:-auto}           # auto: Secure cookie exactly when the browser uses HTTPS
       TRUST_FORWARDED_FOR: ${TRUST_FORWARDED_FOR:-0}  # 1 = behind a reverse proxy that sets X-Forwarded-*
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}           # CIDRs whose X-Forwarded-*/auth headers are believed
       TRUST_PROXY_SECRET: ${TRUST_PROXY_SECRET:-}     # empty: no secret; else required as X-Tallygate-Proxy-Secret
@@ -87,11 +92,13 @@ services:
       MATRIX_ROOM_ID: ${MATRIX_ROOM_ID:-}
       MATRIX_ALLOWED_USERS: ${MATRIX_ALLOWED_USERS:-}
     volumes:
-      - control-data:/data                         # session secret, UI password hash
+      - ${CONTROL_DATA:-control-data}:/data                         # session secret, UI password hash
       - gw-token:/run/tallygate/gw:ro
       - ttyd:/run/tallygate/ttyd                   # console credential, shared read-only with the agent
     ports:
-      - "${CONTROL_PUBLISH:-127.0.0.1:8080}:8080"   # put your reverse proxy (TLS + OIDC) in front
+      # The UI on all interfaces of this host (LAN). Behind a reverse proxy on this host, use
+      # CONTROL_PUBLISH=127.0.0.1:8080. The agent cannot reach it either way (control listens on mgmt only).
+      - "${CONTROL_PUBLISH:-0.0.0.0:8080}:8080"
     networks:
       mgmt: {ipv4_address: 172.31.12.3}
       control-net: {ipv4_address: 172.31.11.3}
