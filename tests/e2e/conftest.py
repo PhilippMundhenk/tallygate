@@ -101,9 +101,13 @@ class Echo(BaseHTTPRequestHandler):
         pass
 
 
-def start_echo(tls: tuple[Path, Path] | None = None, bind: str = "127.0.0.1") -> int:
+class KeepAliveEcho(Echo):
+    protocol_version = "HTTP/1.1"  # keeps the upstream connection open between requests
+
+
+def start_echo(tls: tuple[Path, Path] | None = None, bind: str = "127.0.0.1", handler=Echo) -> int:
     port = free_port()
-    srv = ThreadingHTTPServer((bind, port), Echo)
+    srv = ThreadingHTTPServer((bind, port), handler)
     if tls:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(str(tls[0]), str(tls[1]))
@@ -124,6 +128,7 @@ def upstream(tmp_path_factory):
         "lan": start_echo(bind="127.0.0.2"),
         "http": start_echo(),
         "http2": start_echo(),
+        "keepalive_tls": start_echo(cert, handler=KeepAliveEcho),
         "https": start_echo(cert),
         "cert": cert[0],
         "closed": free_port(),

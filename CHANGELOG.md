@@ -32,6 +32,10 @@ All notable changes to this project are documented here. The format follows
 - Rules reject null or non-integer ports (they matched every port; the UI produced them from typos such as
   `443,` or `https`), and IPv4-mapped IPv6 literals are matched like IPv4 by rules and approvals
   ([#13](https://github.com/PhilippMundhenk/tallygate/issues/13)).
+- Grant enforcement: plain HTTP to an `https` grant target is refused instead of skipping the per-request
+  checks; LAN grants also work while a rule (e.g. the `open` preset) allows the name; re-approving a grant
+  keeps its id, so open connections survive; agent credentials are stripped on inject hosts reached
+  through a grant ([#14](https://github.com/PhilippMundhenk/tallygate/issues/14)).
 ### Added
 - **Docker Compose with prebuilt images is the recommended installation.** Multi-arch images
   (`linux/amd64`, `linux/arm64`) `ghcr.io/philippmundhenk/tallygate-{gateway,control,agent}` are published

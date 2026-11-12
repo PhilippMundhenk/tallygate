@@ -397,9 +397,12 @@ class Grants:
         if level not in g.levels:
             raise ValueError(f"grant {name} has no level {level!r}")
         ttl = max(60, min(int(ttl), g.max_ttl))
-        for old in [a for a in self.active.values() if a.name == name]:
-            del self.active[old.id]  # one active instance per grant: re-approval replaces it
         now = time.time()
+        for a in self.active.values():
+            if a.name == name:  # one active instance per grant: re-approval updates it in place, keeping
+                a.level, a.created, a.expires = level, now, now + ttl  # its id, so open connections survive
+                a.reason, a.approved_by = clean_reason(reason), by[:64]
+                return a
         a = Active(_secrets.token_hex(5), name, level, now, now + ttl, clean_reason(reason), by[:64])
         self.active[a.id] = a
         return a
