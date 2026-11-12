@@ -5,6 +5,7 @@ decisions the e2e tests cannot provoke with the real gateway and ttyd."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import importlib
 import json
@@ -409,8 +410,9 @@ def test_console_filters_both_directions_and_adds_the_credential(load):
 
     assert run(body()) == [b"0hello", b"0world"]  # output only: title/preferences dropped
     hello = json.loads(world.ttyd_got[0])
-    assert hello == {"AuthToken": "YWdlbnQ6dHR5ZC1zZWNyZXQ=", "columns": 80, "rows": 24}
-    assert world.ttyd_auth == "Basic YWdlbnQ6dHR5ZC1zZWNyZXQ="
+    token = base64.b64encode(b"agent:ttyd-secret").decode()  # the test credential, as ttyd expects it
+    assert hello == {"AuthToken": token, "columns": 80, "rows": 24}
+    assert world.ttyd_auth == f"Basic {token}"
     assert b"2evil" not in world.ttyd_got and b"9x" not in world.ttyd_got
     assert b"0ls\r" in world.ttyd_got and b"1{}" in world.ttyd_got
 

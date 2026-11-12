@@ -1,0 +1,3 @@
+# Known false positives (gitleaks fingerprints: commit:file:rule:line). Explain each entry.
+# base64 of the test console credential "agent:ttyd-secret" in an assertion (fixed in a later commit)
+3db3c5568508a687b528d14057689521610e1e79:tests/unit/test_ctl_main.py:generic-api-key:412
