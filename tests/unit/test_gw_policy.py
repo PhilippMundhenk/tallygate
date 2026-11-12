@@ -142,3 +142,20 @@ def test_preset_metadata_defaults_and_category_check(tmp_path):
         load_preset(tmp_path / "bad.yaml")
     (tmp_path / "empty.yaml").write_text("")
     assert load_preset(tmp_path / "empty.yaml")[1].default == "ask"
+
+
+def test_template_host_lists():
+    """#59: hosts the tools really use, ids that namespace cleanly as <preset>:<id>."""
+    presets = Path(__file__).resolve().parents[2] / "gateway" / "presets"
+    hosts = {}
+    for p in presets.glob("*.yaml"):
+        _, pol = load_preset(p)
+        assert all(":" not in r.id for r in pol.rules), p.stem
+        hosts[p.stem] = {r.host: r.port for r in pol.rules}
+    assert {"pkg-containers.githubusercontent.com", "ghcr.io", "registry-1.docker.io"} <= set(hosts["containers"])
+    assert any(
+        h.endswith(".r2.cloudflarestorage.com") and h.startswith("docker-images-prod.") for h in hosts["containers"]
+    )
+    assert "repo.yarnpkg.com" in hosts["node"]
+    # port 80 stays: Debian images use http:// sources, and #57 ties the Host to the checked name
+    assert hosts["debian"]["deb.debian.org"] == [80, 443] and hosts["debian"]["security.debian.org"] == [80, 443]

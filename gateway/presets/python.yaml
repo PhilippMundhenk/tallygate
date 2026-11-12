@@ -4,5 +4,5 @@ title: "Python (PyPI)"
 category: template
 description: "pip, uv and poetry: the Python Package Index and its file host."
 rules:
-  - {id: py-pypi, action: allow, host: "pypi.org", port: 443}
-  - {id: py-files, action: allow, host: "files.pythonhosted.org", port: 443}
+  - {id: pypi, action: allow, host: "pypi.org", port: 443}
+  - {id: files, action: allow, host: "files.pythonhosted.org", port: 443}

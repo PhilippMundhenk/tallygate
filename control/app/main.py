@@ -65,7 +65,7 @@ GW_ALLOW = [
     ("GET", r"/policy"),
     ("PUT", r"/policy"),
     ("POST", r"/rules"),
-    ("DELETE", r"/rules/[A-Za-z0-9_-]+"),
+    ("DELETE", r"/rules/[A-Za-z0-9_:-]+"),  # template rules are <preset>:<id>
     ("GET", r"/pending"),
     ("POST", r"/pending/[a-f0-9]+/decide"),
     ("GET", r"/events"),

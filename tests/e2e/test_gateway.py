@@ -200,23 +200,50 @@ def test_dry_run_test_endpoint(gateway):
 
 def test_preset_with_ttl(gateway):
     status, data, _ = gateway["api"].call("POST", "/presets/open", {"ttl": 60})
-    assert status == 200 and data["added"] == ["open-https"]
+    assert status == 200 and data["added"] == ["open:web"] and data["expires"] - time.time() <= 61
     _, pol, _ = gateway["api"].call("GET", "/policy")
-    rule = next(r for r in pol["rules"] if r["id"] == "open-https")
-    assert rule["expires"] - time.time() <= 61
-    gateway["api"].call("DELETE", "/rules/open-https")
+    rule = next(r for r in pol["rules"] if r["id"] == "open:web")
+    assert rule["expires"] == data["expires"]
+    gateway["api"].call("DELETE", "/rules/open:web")
 
 
-def test_preset_ttl_does_not_demote_permanent_rules(gateway):
-    """#15: re-applying a preset with a TTL turned its permanent rules (e.g. `anthropic`) into expiring ones."""
+def test_policy_presets_cannot_be_merged_on_top(gateway):
+    """#59: POST merged a policy preset's rules (sharing ids with the baseline) and ignored its default."""
     api = gateway["api"]
-    api.call("POST", "/presets/lockdown", {})
-    api.call("POST", "/presets/lockdown", {"ttl": 60})
+    _, before, _ = api.call("GET", "/policy")
+    status, data, _ = api.call("POST", "/presets/lockdown", {})
+    assert status == 400 and "whole policy" in data["error"]
+    assert api.call("GET", "/policy")[1] == before
+
+
+def test_presets_never_take_over_or_remove_other_rules(gateway):
+    """#59: a preset replaced a rule with the same id and tagged it, so undo removed a rule it never added."""
+    api = gateway["api"]
+    mine = {"id": "pypi", "action": "allow", "host": "pypi.org", "port": 443}  # same id as the baseline rule
+    taken = {"id": "python:files", "action": "deny", "host": "files.pythonhosted.org", "port": 443}
+    for r in (mine, taken):
+        assert api.call("POST", "/rules", {**r, "top": False})[0] == 201
+    status, data, _ = api.call("POST", "/presets/python", {})
+    assert status == 409 and "python:files" in data["error"]
+    api.call("DELETE", "/rules/python:files")
+    assert api.call("POST", "/presets/python", {})[0] == 200
+    assert api.call("DELETE", "/presets/python")[1] == {"removed": ["python:pypi", "python:files"]}
     _, pol, _ = api.call("GET", "/policy")
-    rules = {r["id"]: r for r in pol["rules"]}
-    assert "expires" not in rules["anthropic"] and "expires" not in rules["claude-ai"]
-    for rid in ("anthropic", "claude-ai"):
-        api.call("DELETE", f"/rules/{rid}")
+    assert any(r["id"] == "pypi" and "source" not in r for r in pol["rules"])
+    api.call("DELETE", "/rules/pypi")
+
+
+def test_applying_again_with_a_ttl_limits_the_templates_own_rules(gateway):
+    """#59: "Apply again" for 1 h on a template applied "until undone" stayed permanent."""
+    api = gateway["api"]
+    assert api.call("POST", "/presets/go", {})[1]["expires"] is None
+    status, data, _ = api.call("POST", "/presets/go", {"ttl": 3600})
+    assert status == 200 and 3590 < data["expires"] - time.time() <= 3601
+    _, pol, _ = api.call("GET", "/policy")
+    rules = [r for r in pol["rules"] if r.get("source") == "preset:go"]
+    assert len(rules) == 3 and all(r["expires"] == data["expires"] for r in rules)
+    assert [r["id"] for r in pol["rules"][:3]] == ["go:proxy", "go:sum", "go:dl"]  # on top, once
+    api.call("DELETE", "/presets/go")
 
 
 # ---------------------------------------------------------------- security review regressions
@@ -377,12 +404,12 @@ def test_preset_details_and_undo(gateway):
     assert py["category"] == "template" and py["title"] and {r["host"] for r in py["rules"]} >= {"pypi.org"}
     _, before, _ = api.call("GET", "/policy")
     status, data, _ = api.call("POST", "/presets/python", {"ttl": 600})
-    assert status == 200 and set(data["added"]) == {"py-pypi", "py-files"}
+    assert status == 200 and set(data["added"]) == {"python:pypi", "python:files"}
     _, pol, _ = api.call("GET", "/policy")
     tagged = [r for r in pol["rules"] if r.get("source") == "preset:python"]
-    assert {r["id"] for r in tagged} == {"py-pypi", "py-files"} and all(r["expires"] for r in tagged)
+    assert {r["id"] for r in tagged} == {"python:pypi", "python:files"} and all(r["expires"] for r in tagged)
     status, data, _ = api.call("DELETE", "/presets/python")
-    assert status == 200 and set(data["removed"]) == {"py-pypi", "py-files"}
+    assert status == 200 and set(data["removed"]) == {"python:pypi", "python:files"}
     _, after, _ = api.call("GET", "/policy")
     assert [r["id"] for r in after["rules"]] == [r["id"] for r in before["rules"]]  # nothing else touched
     assert api.call("DELETE", "/presets/no-such")[0] == 400

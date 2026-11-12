@@ -70,7 +70,9 @@ def build_app(gw: Gateway) -> web.Application:
 
     @routes.post("/presets/{name}")
     async def apply_preset(request):
-        """Merge a preset's rules on top (e.g. 'setup' for temporary login access)."""
+        """Insert a template's rules on top, as `<preset>:<id>` tagged `preset:<name>`, optionally with a TTL.
+        Applying again replaces the template's own earlier rules (with the new TTL); rules from any other
+        source are never taken over."""
         name = request.match_info["name"]
         if not name.isidentifier():
             return _json({"error": "bad preset"}, 400)
@@ -79,20 +81,29 @@ def build_app(gw: Gateway) -> web.Application:
         path = PRESET_DIR / f"{name}.yaml"
         if not path.exists():
             return _json({"error": "unknown preset"}, 404)
-        _, preset = load_preset(path)
+        meta, preset = load_preset(path)
+        if meta["category"] == "policy":
+            return _json(
+                {
+                    "error": f"preset {name} is a whole policy (with its own default): replace the policy with it instead"
+                },
+                400,
+            )
         ttl = (await request.json()).get("ttl") if request.can_read_body else None
-        added = []
-        permanent = {r.id for r in gw.policy.rules if r.expires is None}
+        expires = int(time.time() + int(ttl)) if ttl else None  # stored as whole seconds
+        source = f"preset:{name}"
+        for r in preset.rules:
+            r.id, r.source, r.expires = f"{name}:{r.id}", source, expires
+        ids = {r.id for r in preset.rules}
+        taken = sorted(r.id for r in gw.policy.rules if r.id in ids and r.source != source)
+        if taken:
+            return _json({"error": f"rule ids already used by other rules: {', '.join(taken)}"}, 409)
+        gw.policy.rules = [r for r in gw.policy.rules if r.source != source]  # its own earlier rules
         for r in reversed(preset.rules):
-            r.source = f"preset:{name}"  # lets DELETE /presets/<name> undo exactly these rules
-            if ttl and r.id not in permanent:  # a TTL never turns a permanent rule into an expiring one
-                r.expires = time.time() + int(ttl)
-            gw.policy.remove_rule(r.id)
             gw.policy.add_rule(r, top=True)
-            added.append(r.id)
         gw.save_policy()
-        gw.record(kind="admin", action="preset", reason=f"preset {name} applied ({len(added)} rules, ttl={ttl})")
-        return _json({"added": added})
+        gw.record(kind="admin", action="preset", reason=f"preset {name} applied ({len(ids)} rules, ttl={ttl})")
+        return _json({"added": [r.id for r in preset.rules], "expires": expires})
 
     @routes.delete("/presets/{name}")
     async def undo_preset(request):

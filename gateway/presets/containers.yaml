@@ -5,8 +5,10 @@ title: "Container registries (pull only)"
 category: template
 description: "Pull images from Docker Hub, GitHub Container Registry and Quay (crane, skopeo). Pushing is refused: the registries are read-only in the gateway config."
 rules:
-  - {id: oci-dockerhub, action: allow, host: "registry-1.docker.io", port: 443}
-  - {id: oci-dockerhub-auth, action: allow, host: "auth.docker.io", port: 443}
-  - {id: oci-dockerhub-blobs, action: allow, host: "production.cloudflare.docker.com", port: 443}
-  - {id: oci-ghcr, action: allow, host: "ghcr.io", port: 443}
-  - {id: oci-quay, action: allow, host: "*.quay.io", port: 443}
+  - {id: dockerhub, action: allow, host: "registry-1.docker.io", port: 443}
+  - {id: dockerhub-auth, action: allow, host: "auth.docker.io", port: 443}
+  - {id: dockerhub-blobs, action: allow, host: "production.cloudflare.docker.com", port: 443}
+  - {id: dockerhub-r2, action: allow, host: "docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com", port: 443, note: Docker Hub blobs on Cloudflare R2}
+  - {id: ghcr, action: allow, host: "ghcr.io", port: 443}
+  - {id: ghcr-blobs, action: allow, host: "pkg-containers.githubusercontent.com", port: 443, note: GHCR blobs}
+  - {id: quay, action: allow, host: "*.quay.io", port: 443}

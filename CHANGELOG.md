@@ -77,6 +77,12 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 - `bypass.sh` works when downloaded next to `compose.yaml` (it no longer changes directory and runs the
   self-test with `docker exec`); the meaningless IPv6 link-local probe is gone (the sysctl checks remain) (#65).
+- Undoing a template could delete rules it never added (`lockdown` shares ids with the baseline, so undoing it
+  removed the Anthropic rules). Template rule ids are now `<preset>:<id>`, rules from another source are never
+  taken over (`409`), and `POST` refuses `policy` presets. "Apply again" with a time limit now limits the
+  template's own earlier rules, and the UI shows the expiry the gateway set. Templates: GHCR and Docker Hub
+  blob hosts, `repo.yarnpkg.com` for corepack, a correct Go note; the docs say that
+  template rules win over your own rules while active (#59).
 - The gateway's warnings never reached its log: mitmdump ran with `-q`, which overrides the log level (#27).
 - Agent status responses larger than one network read were cut off and reported as an error (#27).
 - The managed setting `skipDangerousModePermissionPrompt` was nested under `permissions`, where Claude Code

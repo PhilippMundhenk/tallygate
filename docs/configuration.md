@@ -217,22 +217,32 @@ that service port — not via the proxy or SOCKS) rather than shrinking the floo
 | Preset | Category | Content | Typical use |
 |---|---|---|---|
 | `baseline` | policy | default `ask`; allow Anthropic/Claude, GitHub, npm, PyPI | initial policy |
-| `lockdown` | policy | default `deny`; Anthropic only | emergency: replace the policy via raw editor/API |
+| `lockdown` | policy | default `deny`; Anthropic only | emergency: replace the policy via raw editor/API (`POST` refuses it) |
 | `open` | internet | any public host on 80/443 | temporary, **always with a TTL** (*Quick actions*) |
 | `internet` | internet | any public host on any port | temporary, **always with a TTL** |
 | `python`, `node`, `go`, `rust`, `debian`, `containers`, `huggingface` | template | the hosts a tool ecosystem needs | *Quick actions → Templates* |
 
-Presets are applied **on top**: their rules are inserted first, optionally with a TTL, and tagged
-`preset:<name>` so they can be removed again (`DELETE /presets/<name>`). A preset file is a policy file with three
-optional keys for the UI:
+Presets of the categories `internet` and `template` are applied **on top** (`POST /presets/<name>`):
+
+- Their rules are inserted at the top of the list, so **while active they win over your own rules, deny
+  rules included**. Undo them (or give them a time limit) when the task is done.
+- Rule ids are namespaced as `<preset>:<id>` (e.g. `python:pypi`) and tagged `source: preset:<name>`.
+  `DELETE /presets/<name>` removes exactly the rules with that tag.
+- A rule from another source is never taken over: if one already uses such an id, nothing is applied (`409`).
+- Applying again replaces the template's own earlier rules, with the new TTL (or none). The answer reports
+  the expiry that was set.
+- `policy` presets (`baseline`, `lockdown`) are whole policies with their own `default`. `POST` refuses them
+  (`400`); replace the policy with them instead (raw editor, `PUT /policy`).
+
+A preset file is a policy file with three optional keys for the UI:
 
 ```yaml
 title: "Python (PyPI)"            # shown in the UI
 category: template                # policy | internet | template (where the UI lists it)
 description: "pip, uv and poetry: the Python Package Index and its file host."
 rules:
-  - {id: py-pypi, action: allow, host: "pypi.org", port: 443}     # ids must be unique across presets
-  - {id: py-files, action: allow, host: "files.pythonhosted.org", port: 443}
+  - {id: pypi, action: allow, host: "pypi.org", port: 443}        # becomes python:pypi
+  - {id: files, action: allow, host: "files.pythonhosted.org", port: 443}
 ```
 
 Add your own templates by mounting YAML files into the gateway's `/app/presets/`, e.g.
