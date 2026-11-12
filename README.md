@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
+    <img alt="tallygate" src="docs/images/logo-light.svg" width="300">
+  </picture>
+</p>
+
 # tallygate
 
 **Run Claude Code unattended behind a policy-enforcing egress gateway, with you in the loop.**
