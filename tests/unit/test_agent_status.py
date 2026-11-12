@@ -258,6 +258,106 @@ def test_https_via_proxy_checks_the_certificate(st, proxy, tmp_path, monkeypatch
     assert set(p.requests) == {"CONNECT api.anthropic.com:443 HTTP/1.1"}
 
 
+# ---------------------------------------------------------------- new probe helpers
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({}, ("egress-gw", 1080)),  # no ALL_PROXY: host from the HTTPS proxy default, SOCKS port 1080
+        ({"ALL_PROXY": "socks5h://gw:1080"}, ("gw", 1080)),
+        ({"all_proxy": "socks5://s.local:9050"}, ("s.local", 9050)),
+        ({"ALL_PROXY": "socks5h://noport"}, ("noport", 1080)),
+    ],
+)
+def test_socks_from_environment(st, monkeypatch, env, expected):
+    for v in ("ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy"):
+        monkeypatch.delenv(v, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    assert st._socks() == expected
+
+
+def test_raw_socket_opens_or_is_denied(st, monkeypatch):
+    class Fake:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(st.socket, "socket", lambda *a, **k: Fake())
+    assert st.raw_socket() == "raw ICMP socket opened (CAP_NET_RAW present)"
+
+    def deny(*a, **k):
+        raise PermissionError("Operation not permitted")
+
+    monkeypatch.setattr(st.socket, "socket", deny)
+    with pytest.raises(PermissionError):
+        st.raw_socket()
+
+
+def test_http_get_via_proxy_blocked_then_reached(st, proxy):
+    proxy(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+    with pytest.raises(ConnectionRefusedError):
+        st.http_get_via_proxy("169.254.169.254", 80, "/latest/")
+    p = proxy(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+    assert st.http_get_via_proxy("169.254.169.254").startswith("reached 169.254.169.254")
+    assert any("GET http://169.254.169.254:80/" in r for r in p.requests)
+
+
+class FakeSocks:
+    """Minimal SOCKS5 endpoint: greets with `greet`, then answers one CONNECT with reply code `rep`."""
+
+    def __init__(self, greet: bytes = b"\x05\x00", rep: int = 0x00) -> None:
+        self.greet, self.rep, self.atyp = greet, rep, None
+        self.sock = socket.create_server(("127.0.0.1", 0))
+        self.port = self.sock.getsockname()[1]
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self):
+        try:
+            conn, _ = self.sock.accept()
+        except OSError:
+            return
+        with conn:
+            conn.recv(3)  # version + methods
+            conn.sendall(self.greet)
+            if self.greet != b"\x05\x00":
+                return
+            hdr = conn.recv(4)  # VER CMD RSV ATYP
+            self.atyp = hdr[3]
+            n = {1: 4, 4: 16}.get(self.atyp)
+            if n is None:  # domain name: one length byte, then that many bytes
+                n = conn.recv(1)[0]
+            conn.recv(n)  # address
+            conn.recv(2)  # port
+            conn.sendall(bytes([0x05, self.rep, 0x00, 0x01]) + b"\x00" * 6)
+
+    def close(self):
+        self.sock.close()
+
+
+def _socks_env(monkeypatch, srv):
+    monkeypatch.setenv("ALL_PROXY", f"socks5h://127.0.0.1:{srv.port}")
+
+
+def test_socks5_connect_success_v4_v6_and_domain(st, monkeypatch):
+    for host in ("169.254.169.254", "[::1]", "example.test"):
+        srv = FakeSocks()
+        _socks_env(monkeypatch, srv)
+        assert st.socks5_connect(host, 80) == f"SOCKS5 connected to {host}:80"
+        srv.close()
+
+
+def test_socks5_connect_refused_and_no_auth(st, monkeypatch):
+    srv = FakeSocks(rep=0x02)  # connection not allowed
+    _socks_env(monkeypatch, srv)
+    with pytest.raises(ConnectionRefusedError, match="reply code 2"):
+        st.socks5_connect("192.168.1.1", 80)
+    srv.close()
+    noauth = FakeSocks(greet=b"\x05\xff")  # no acceptable methods
+    _socks_env(monkeypatch, noauth)
+    with pytest.raises(ConnectionRefusedError, match="no-auth refused"):
+        st.socks5_connect("192.168.1.1", 80)
+    noauth.close()
+
+
 # ---------------------------------------------------------------- selftest
 def isolated(st, monkeypatch, leak: str = ""):
     """Patch the probes: everything blocked (as in a correct setup), except `leak`."""
@@ -283,6 +383,18 @@ def isolated(st, monkeypatch, leak: str = ""):
             raise ConnectionRefusedError("HTTP/1.1 502 Bad Gateway")
         return "HTTP/1.1 200 / TLS ok, HTTP/1.1 404 Not Found"
 
+    def raw_socket():
+        calls.append(("raw",))
+        raise PermissionError("Operation not permitted")
+
+    def http_get(host, port=80, path="/"):
+        calls.append(("http", host, port))
+        raise ConnectionRefusedError("HTTP/1.1 502 Bad Gateway")
+
+    def socks(host, port):
+        calls.append(("socks", host, port))
+        raise ConnectionRefusedError("SOCKS5 reply code 2")
+
     real = socket.getaddrinfo
 
     def getaddrinfo(host, *a, **k):
@@ -294,6 +406,9 @@ def isolated(st, monkeypatch, leak: str = ""):
     monkeypatch.setattr(st, "udp_dns", udp)
     monkeypatch.setattr(st, "connect_via_proxy", connect)
     monkeypatch.setattr(st, "https_via_proxy", https)
+    monkeypatch.setattr(st, "raw_socket", raw_socket)
+    monkeypatch.setattr(st, "http_get_via_proxy", http_get)
+    monkeypatch.setattr(st, "socks5_connect", socks)
     monkeypatch.setattr(st.socket, "getaddrinfo", getaddrinfo)
     return calls
 
@@ -315,7 +430,7 @@ def test_selftest_all_blocked_passes(st, monkeypatch):
     ("leak", "failing"),
     [
         ("tcp", "Direct TCP to the internet (1.1.1.1:443)"),
-        ("lan", "LAN via proxy (192.168.1.1:80, hard-deny)"),
+        ("lan", "LAN via proxy (CONNECT 192.168.1.1:80)"),
         ("no-api", "Allowed path: api.anthropic.com via proxy"),
     ],
 )
@@ -332,7 +447,7 @@ def test_main_selftest_prints_and_sets_the_exit_code(st, monkeypatch, capsys):
     assert out[0].startswith("PASS Direct TCP to the internet") and all(line.startswith("PASS ") for line in out)
     isolated(st, monkeypatch, "lan")
     assert st.main(["--selftest"]) == 1
-    assert "FAIL LAN via proxy (192.168.1.1:80, hard-deny)  -- UNEXPECTEDLY SUCCEEDED" in capsys.readouterr().out
+    assert "FAIL LAN via proxy (CONNECT 192.168.1.1:80)  -- UNEXPECTEDLY SUCCEEDED" in capsys.readouterr().out
 
 
 def test_main_serves_on_all_interfaces_of_the_agent_network(st, monkeypatch):

@@ -5,6 +5,7 @@ decisions the e2e tests cannot provoke with the real gateway and ttyd."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import importlib
 import json
@@ -267,7 +268,8 @@ def test_the_fingerprint_follows_the_password_source(load, monkeypatch):
 
 
 def test_failure_tracking_stays_bounded_under_address_spraying(load):
-    main = load()
+    # the per-IP lockout (and thus its memory) only applies with trusted per-client addresses (#101)
+    main = load(TRUST_FORWARDED_FOR="1", TRUSTED_PROXIES="127.0.0.1/32")
 
     async def body():
         async with started(main, login=False) as c:
@@ -509,8 +511,9 @@ def test_console_filters_both_directions_and_adds_the_credential(load):
 
     assert run(body()) == [b"0hello", b"0world"]  # output only: title/preferences dropped
     hello = json.loads(world.ttyd_got[0])
-    assert hello == {"AuthToken": "YWdlbnQ6dHR5ZC1zZWNyZXQ=", "columns": 80, "rows": 24}
-    assert world.ttyd_auth == "Basic YWdlbnQ6dHR5ZC1zZWNyZXQ="
+    token = base64.b64encode(b"agent:ttyd-secret").decode()  # the test credential, as ttyd expects it
+    assert hello == {"AuthToken": token, "columns": 80, "rows": 24}
+    assert world.ttyd_auth == f"Basic {token}"
     assert b"2evil" not in world.ttyd_got and b"9x" not in world.ttyd_got
     assert b"0ls\r" in world.ttyd_got and b"1{}" in world.ttyd_got
 
