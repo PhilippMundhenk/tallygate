@@ -43,12 +43,25 @@ docker compose logs control | grep -A1 password    # the generated UI password
 The generated password stays readable in the control log (`docker compose logs`) until the log is rotated,
 so change it after the first login, see [Changing the UI password](#changing-the-ui-password).
 
-The UI is published **only on localhost of the Docker host** (`CONTROL_PUBLISH=127.0.0.1:8080`). Open
-<http://127.0.0.1:8080> on the host, or from elsewhere through an SSH tunnel (`ssh -L 8080:127.0.0.1:8080 <host>`,
-then the same address), or through a [reverse proxy](#reverse-proxy). For a short test on a trusted network you
-can publish it on the LAN with `CONTROL_PUBLISH=0.0.0.0:8080` **and** `COOKIE_SECURE=0` (browsers drop the
-secure session cookie over plain HTTP from another machine, so the login would loop); password and session
-then travel unencrypted. Continue with [First-time setup](#first-time-setup).
+Open `http://<host>:8080` and continue with [First-time setup](#first-time-setup). See
+[Reaching the UI](#reaching-the-ui) for HTTPS, a localhost-only setup and an SSH tunnel.
+
+### Reaching the UI
+
+| Setup | `CONTROL_PUBLISH` | How you open it |
+|---|---|---|
+| LAN, plain HTTP (default) | `0.0.0.0:8080` | `http://<host>:8080`. Password and session travel unencrypted: fine for a trusted home network or a first look; the UI shows a warning. |
+| TLS reverse proxy on the same host (recommended) | `127.0.0.1:8080` | `https://tallygate.example.org`, see [Reverse proxy](#reverse-proxy) |
+| Localhost only, SSH tunnel | `127.0.0.1:8080` | `ssh -L 8080:127.0.0.1:8080 <host>`, then `http://127.0.0.1:8080` |
+
+`CONTROL_PUBLISH` is a compose variable: set it in `.env` or as a stack variable (Portainer), or change the
+default in the `ports:` line. Under the service's `environment:` it has no effect.
+
+The session cookie follows the connection (`COOKIE_SECURE=auto`): `Secure` over HTTPS, so it is never sent
+unencrypted once you use a proxy, and a normal cookie over plain HTTP, so the LAN setup works without changes.
+
+None of these setups lets the agent reach the UI: control listens only on its `mgmt` address, the Docker host
+has no address on `agent-net`, and the gateway refuses private addresses (`bypass.sh` checks all three).
 
 On first start the containers create everything they need in Docker volumes:
 
@@ -157,8 +170,7 @@ All three services set `max-size: 10m` themselves. To rotate other containers to
 
 ## Reverse proxy
 
-Publish the UI only on localhost (`CONTROL_PUBLISH=127.0.0.1:8080`, the default) and terminate TLS in
-front. Set `PUBLIC_URL` (used for the origin check), `TRUST_FORWARDED_FOR=1` and `TRUSTED_PROXIES`, the
+Publish the UI only on localhost (`CONTROL_PUBLISH=127.0.0.1:8080`) and terminate TLS in front. Set `PUBLIC_URL` (used for the origin check), `TRUST_FORWARDED_FOR=1` and `TRUSTED_PROXIES`, the
 address control sees for your proxy. Forwarded headers from any other peer are ignored. WebSockets must be
 passed through (web consoles).
 
@@ -370,7 +382,8 @@ to a new gateway, the CA changes. That's harmless: the agent re-reads the CA on 
 | `gh`/`git` 401 against GitHub | No token stored (Setup step 2), PAT expired, or PAT lacks access to that repository. |
 | TLS errors only for github.com | The agent doesn't trust the gateway CA: check `/ca/egress-gw-ca.pem` exists in the agent (`ls /ca`) and restart the agent after the gateway. |
 | `ENOSPC: no space left on device` | Host disk full. Free space (`docker system df`, logs) or grow the VM disk. |
-| UI login loops | `COOKIE_SECURE=1` while accessing via plain HTTP from another machine. Use HTTPS, or an SSH tunnel to `127.0.0.1` (localhost counts as secure); set `0` for tests only. |
+| UI login loops | `COOKIE_SECURE=1` forces a Secure cookie, which browsers drop over plain HTTP from another machine. Use the default `auto`, or HTTPS. |
+| UI does not answer on `http://<host>:8080` | `docker port tallygate-control-1` must show `0.0.0.0:8080`. `127.0.0.1:8080` means `CONTROL_PUBLISH` is set to localhost (or was put under `environment:`, where it has no effect). Otherwise check the host firewall. |
 | Lost the UI password | `docker compose exec control python -m app.passwd` sets a new one and ends all open sessions. |
 | Self-test "Management endpoint … UNEXPECTEDLY SUCCEEDED" | Network wiring changed. Re-check `compose.yaml` and run `make bypass-test`. |
 
