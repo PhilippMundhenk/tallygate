@@ -9,6 +9,7 @@
 - [First-time setup](#first-time-setup)
 - [Day-to-day](#day-to-day)
 - [Upgrades](#upgrades)
+- [Resource limits](#resource-limits)
 - [Backup and restore](#backup-and-restore)
 - [Monitoring](#monitoring)
 - [Troubleshooting](#troubleshooting)
@@ -18,8 +19,8 @@
 ## Requirements
 
 - Linux host or VM with Docker Engine ≥ 25 and the Compose plugin (amd64 or arm64).
-- ~6 GB free disk for images plus your workspace. Keep an eye on the root filesystem: a full disk makes
-  Claude Code fail with `ENOSPC` in confusing places.
+- ~6 GB free disk for images plus your workspace. Keep an eye on the disk: see
+  [resource limits](#resource-limits).
 - A claude.ai subscription (Pro/Max/Team/Enterprise) for Remote Control. API keys don't work with Remote
   Control.
 - Recommended: a reverse proxy with TLS and SSO (Caddy, Traefik, nginx + Authelia/Authentik/oauth2-proxy).
@@ -126,10 +127,17 @@ With a proxy on the host talking to the published port, control sees the `mgmt` 
 `172.31.12.1` (check with `docker compose logs control` after a failed login). Every other process on the
 host that connects to the published port arrives from that address too, so trusting it means trusting the
 whole host. That is acceptable for `X-Forwarded-For` on a single-user host, but **not** together with
-`TRUST_PROXY_AUTH_HEADER`: then let the proxy container join the `mgmt` network with a fixed address and
-trust only that address.
+`TRUST_PROXY_AUTH_HEADER`: then use the [safe setup for an authenticating proxy](#authenticating-proxy) below.
 
-Caddy example with forward-auth:
+If the Docker host has a public IP (VPS), add it to `hard_deny_floor` in `config/gateway.yaml` so the agent
+cannot reach host services through the egress path. Entries there are added to the built-in list
+(RFC 1918, loopback, metadata, ...), which always stays in force:
+
+```yaml
+hard_deny_floor: [203.0.113.7/32]   # your host's public IP; the built-in ranges still apply
+```
+
+Caddy on the host, with SSO in front of the built-in password:
 
 ```caddy
 tallygate.example.org {
@@ -141,12 +149,62 @@ tallygate.example.org {
 }
 ```
 
-With an authenticating proxy you may set `TRUST_PROXY_AUTH_HEADER=Remote-User` to skip the built-in
-password. It is honoured only from `TRUSTED_PROXIES` (control refuses to start without it); still keep port
-8080 unreachable except through the proxy.
+### Authenticating proxy
 
-If the Docker host has a public IP (VPS), add it to `hard_deny_floor` in `config/gateway.yaml` so the agent
-cannot reach host services through the egress path.
+With an authenticating proxy you may set `TRUST_PROXY_AUTH_HEADER=Remote-User` to skip the built-in
+password. It is honoured only from `TRUSTED_PROXIES` (control refuses to start without it). Anyone who can
+send requests from a trusted address can log in as anyone, so:
+
+1. Run the proxy as a container on the `mgmt` network with a **fixed address**.
+2. Publish **nothing** of control: only the proxy publishes a port.
+3. Trust only the proxy's address, and let the proxy send a shared secret.
+
+A `compose.override.yaml` next to `compose.yaml` (Compose ≥ 2.24 for `!reset`):
+
+```yaml
+services:
+  control:
+    ports: !reset []                # no published UI port: reachable only through the proxy
+  proxy:
+    image: caddy:2
+    ports: ["443:443"]
+    environment:
+      TRUST_PROXY_SECRET: ${TRUST_PROXY_SECRET}
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro"]
+    networks:
+      mgmt: {ipv4_address: 172.31.12.10}
+```
+
+`.env`:
+
+```sh
+PUBLIC_URL=https://tallygate.example.org
+TRUST_PROXY_AUTH_HEADER=Remote-User
+TRUSTED_PROXIES=172.31.12.10/32
+TRUST_PROXY_SECRET=<openssl rand -hex 24>
+TRUST_FORWARDED_FOR=1
+```
+
+The proxy forwards to `172.31.12.3:8080`, must never pass on a `Remote-User` sent by the client, and adds the
+secret:
+
+```caddy
+tallygate.example.org {
+    forward_auth authelia:9091 {
+        uri /api/authz/forward-auth
+        copy_headers Remote-User
+    }
+    reverse_proxy 172.31.12.3:8080 {
+        header_up X-Tallygate-Proxy-Secret {$TRUST_PROXY_SECRET}
+    }
+}
+```
+
+With `TRUST_PROXY_SECRET` set, control ignores the auth and forwarded headers of any request that lacks the
+secret, even from the trusted address; the secret is compared in constant time. Give the proxy container
+the same value (the override above does). Your authentication service (here `authelia`) must be reachable
+from the proxy, for example on a second network of the proxy.
+
 
 ## First-time setup
 
@@ -182,12 +240,30 @@ Then clone repositories in the *bash* console: `gh repo clone owner/repo /worksp
 |---|---|
 | tallygate (Compose) | Read the [CHANGELOG](../CHANGELOG.md) → `docker compose pull && docker compose up -d` → self-test or `bash bypass.sh`. Download the new `compose.yaml` when the changelog says so. |
 | tallygate (from source) | `git pull` → read `CHANGELOG.md` → `make up` → `make bypass-test`. |
-| Claude Code | Part of the agent image, which has no auto-updater by design: update tallygate. From source, set `CLAUDE_VERSION` in `.env` and run `make up`. |
+| Claude Code | Part of the agent image, which has no auto-updater by design. New Claude Code versions arrive as tallygate patch releases: update tallygate. From source, set `CLAUDE_VERSION` in `.env` and run `make up`. |
 | Base images / dependencies | Published images are rebuilt for every release. From source: `docker compose -f compose.yaml -f compose.build.yaml build --pull && make up`. |
 
 Running sessions are reconnected by Remote Control after a restart if you're back within about 4 hours.
 
-## Backup and restore
+## Resource limits
+
+The agent is limited to `AGENT_MEM_LIMIT` (6 GB) of memory, 1024 processes and a 1 GB `/tmp`. CPU is unlimited
+by default; set `AGENT_CPUS` (e.g. `2`) so a busy or looping agent leaves CPU for the gateway, the UI and the
+host.
+
+Disk is the limit Docker does not enforce. The workspace and the agent home grow without bound, and by default
+they share a filesystem with Docker itself (`/var/lib/docker`) and the gateway's event log. A runaway or
+hostile agent can fill it, and then Claude Code fails with `ENOSPC` in confusing places and other containers
+on the host suffer too. On a host that runs more than tallygate:
+
+- Put the workspace on its own filesystem or a dataset with a quota (LVM volume, ZFS/btrfs dataset, a loop
+  file) and point `WORKSPACE` (and `AGENT_HOME`) there. Keep `GATEWAY_DATA` on a different filesystem, so the
+  gateway can still log and decide while the agent's disk is full.
+- Alternatively give Docker's data root its own filesystem.
+- Monitor free space; `docker system df` shows what Docker uses.
+
+The gateway's event log is capped by `log_max_events` and `log_keep_days`, and identical events are coalesced.
+
 
 Back up the volumes (or the directories in `GATEWAY_DATA`, `AGENT_HOME`, `WORKSPACE`), plus `.env` and your
 `gateway.yaml` if you have them:
