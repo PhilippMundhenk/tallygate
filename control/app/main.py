@@ -169,6 +169,15 @@ def check_password(pw: str) -> bool:
 
 _login_failures: dict[str, list[float]] = {}
 _login_lock = asyncio.Lock()  # one password check at a time: caps guessing rate globally, bounds memory
+_login_waiting = 0  # requests holding or queued on _login_lock
+LOGIN_MAX_BODY = 4096  # a password form is tiny; bigger bodies are refused before they are read
+LOGIN_MAX_WAITING = 5  # more queued checks get 429 at once instead of piling up (memory, operator lockout)
+LOGIN_MAX_FAILURES = 10  # per client address within LOGIN_WINDOW
+LOGIN_WINDOW = 900
+
+
+def _recent_failures(ip: str, now: float) -> list[float]:
+    return [t for t in _login_failures.get(ip, []) if now - t < LOGIN_WINDOW]
 
 
 @web.middleware
@@ -232,21 +241,36 @@ def _same_origin(request: web.Request) -> bool:
 
 # ------------------------------------------------------------------ pages
 async def login_page(request: web.Request) -> web.StreamResponse:
+    global _login_waiting
     if request.method == "GET":
         return web.FileResponse(STATIC / "login.html")
     if not _same_origin(request):
         return web.Response(status=403, text="bad origin")
+    if request.content_length is None or request.content_length > LOGIN_MAX_BODY:
+        return web.Response(status=413, text="Request too large.")  # also refuses chunked bodies, unread
     ip = client_ip(request)
-    now = time.time()
-    fails = [t for t in _login_failures.get(ip, []) if now - t < 900]
-    if len(fails) >= 10:
-        return web.Response(status=429, text="Too many attempts, try again later.")
-    form = await request.post()
-    pw = str(form.get("password", ""))[:1024]
-    async with _login_lock:  # serialised + 1 s penalty on failure -> ~1 guess/s globally
-        ok = await asyncio.get_running_loop().run_in_executor(None, check_password, pw)
-        if not ok:
-            await asyncio.sleep(1)
+    too_many = web.Response(status=429, text="Too many attempts, try again later.")
+    if len(_recent_failures(ip, time.time())) >= LOGIN_MAX_FAILURES:
+        return too_many
+    if _login_waiting >= LOGIN_MAX_WAITING:
+        return web.Response(status=429, text="Too many login attempts in progress, try again shortly.")
+    _login_waiting += 1
+    try:
+        form = await request.post()
+        pw = str(form.get("password", ""))[:1024]
+        async with _login_lock:  # serialised + 1 s penalty on failure -> ~1 guess/s globally
+            # re-check inside the lock: requests that queued together must not exceed the limit
+            now = time.time()
+            fails = _recent_failures(ip, now)
+            if len(fails) >= LOGIN_MAX_FAILURES:
+                return too_many
+            ok = await asyncio.get_running_loop().run_in_executor(None, check_password, pw)
+            if not ok:
+                fails.append(now)
+                _login_failures[ip] = fails
+                await asyncio.sleep(1)
+    finally:
+        _login_waiting -= 1
     if ok:
         _login_failures.pop(ip, None)
         _prune_sessions()
@@ -260,8 +284,6 @@ async def login_page(request: web.Request) -> web.StreamResponse:
             secure=os.environ.get("COOKIE_SECURE", "1") == "1",
         )
         raise resp
-    fails.append(now)
-    _login_failures[ip] = fails
     if len(_login_failures) > 10_000:  # bounded memory under address-spraying
         for k in sorted(_login_failures, key=lambda k: _login_failures[k][-1])[:5_000]:
             del _login_failures[k]

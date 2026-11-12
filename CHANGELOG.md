@@ -72,6 +72,8 @@ All notable changes to this project are documented here. The format follows
 - `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
 
 ### Security
+- Login flood: bodies over 4 KiB are refused unread (413), more than 5 queued password checks get 429 at once,
+  and the per-address failure limit is re-checked and recorded inside the password lock (#20).
 - `TRUST_PROXY_SECRET`: forwarded and auth headers are believed only when the proxy also sends the
   shared secret in `X-Tallygate-Proxy-Secret`. The docs describe the safe proxy-auth setup (proxy container
   on `mgmt` with a fixed address, nothing else published) (#19).
