@@ -14,6 +14,7 @@
     <button data-tab="files" id="tabbtn-files" role="tab" aria-selected="false" aria-controls="tab-files">Files</button>
     <button data-tab="setup" id="tabbtn-setup" role="tab" aria-selected="false" aria-controls="tab-setup">Setup</button>
   </nav>
+  <button id="learnBadge" type="button" class="learnbadge hidden" aria-live="polite"></button>
   <span class="conn" role="status"><span id="conn" class="dot" aria-hidden="true"></span><span id="connText">connecting</span></span>
   <button id="updateNotice" class="small update-notice" hidden></button>
   <form method="post" action="/logout" class="logout"><button>Log out</button></form>
@@ -70,6 +71,7 @@
 
   <!-- LOG -->
   <section id="tab-log" role="tabpanel" aria-labelledby="tabbtn-log" class="hidden">
+    <details class="card" id="searchCard"><summary>Search, time ranges and export</summary><div id="searchBox"></div></details>
     <div class="toolbar">
       <input id="logFilter" type="search" aria-label="Filter log" placeholder="filter host / action / reason">
       <label><input type="checkbox" id="logHideDns"> hide DNS</label>
@@ -115,6 +117,7 @@
         template's rules.</p>
       <div id="qaTemplates" class="templates"></div>
     </div>
+    <div class="card" id="learnCard" tabindex="-1"><h3>Learning mode</h3><div id="learnBox"></div></div>
     <div class="grid2">
       <div class="card">
         <h3>Mode</h3>
@@ -158,6 +161,7 @@
           <a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/rules.md" target="_blank" rel="noopener">Rules by example</a></p>
       </details>
     </div>
+    <details class="card" id="usageCard"><summary>Rule usage and suggestions <span id="usageBadge" class="badge hidden"></span></summary><div id="usageBox"></div></details>
     <div class="table-wrap"><table class="rules"><thead><tr><th>#</th><th>Action</th><th>Match</th><th>Port</th><th>Note</th><th>Expires</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="rulesBody"></tbody></table></div>
     <details class="card"><summary>Hard deny (never reachable, never asked)</summary>
       <p class="hint">Floor (read-only): the built-in list plus <code>hard_deny_floor</code> from the gateway config file:</p>
@@ -168,6 +172,7 @@
     <details class="card"><summary>Advanced: raw policy JSON</summary>
       <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><div class="row"><button id="saveRaw">Replace policy</button>
         <button id="reloadRaw" class="secondary">Reload from the gateway</button></div></details>
+    <details class="card" id="historyCard"><summary>History, export and import</summary><div id="historyBox"></div></details>
   </section>
 
   <!-- GRANTS -->
@@ -326,4 +331,8 @@
 <script src="/static/keys.js"></script>
 <script src="/static/update.js"></script>
 <script src="/static/files.js"></script>
+<script src="/static/history.js"></script>
+<script src="/static/usage.js"></script>
+<script src="/static/logsearch.js"></script>
+<script src="/static/learning.js"></script>
 </body></html>

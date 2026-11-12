@@ -96,6 +96,19 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   `..`, symlinks that leave it are refused), uploads are size-limited (`FILES_MAX_UPLOAD`, 50 MiB) and never
   replace a file unasked or write through a link, downloads are attachments that are never rendered in the
   UI (`FILES_MAX_DOWNLOAD`, 200 MiB) (#76).
+- **Policy history:** every change to the policy is a version with time, author and what changed. The Rules
+  tab shows a diff between any two versions and restores one; the policy and the UI grants can be exported
+  as one YAML file and imported again, validated like any policy change (#71).
+- **Rule usage:** hit counters and the last match per rule, sortable and filterable in the Rules tab; permanent
+  rules that did not match for `rule_stale_days` are offered for removal, and destinations you keep approving
+  for a limited time are offered as a permanent rule (#70).
+- **Log search:** server-side search of the event log by host (`*.domain` too), kind, action and time range,
+  saved filters, a destinations view with new destinations, a page per destination with the rule that decides
+  it, and CSV or JSON export (#80).
+- **Learning mode:** for a limited time, destinations no rule covers are allowed on the chosen ports and
+  recorded; afterwards they are proposed as rules, grouped by domain, to save in one go. The hard deny, deny
+  and ask rules, grants and name-first decisions stay in force; it is shown in the header and ends by itself,
+  on the emergency stop and on restart (#69).
 
 ### Changed
 - **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie

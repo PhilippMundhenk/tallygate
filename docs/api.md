@@ -4,7 +4,11 @@
 
 Base URL: `http://172.31.11.2:8081` (control-net only). All endpoints except `/health` require
 `Authorization: Bearer $GW_API_TOKEN`. Request and response bodies are JSON. Validation errors return
-`400 {"error": "..."}`.
+`400 {"error": "..."}`. An optional `X-Tallygate-By` header (at most 64 characters) names who made a change in
+the policy history; without it the change is attributed to `api`. The control plane sets it to `web:<user>`.
+
+Every write to the policy (`PUT`/`PATCH /policy`, rules, presets, approvals, the emergency stop, restores,
+imports, removal of expired rules) stores a version in the policy history, unless the policy did not change.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
@@ -12,6 +16,22 @@ Base URL: `http://172.31.11.2:8081` (control-net only). All endpoints except `/h
 | GET | `/policy` | – | Full policy (`default`, `ask_timeout`, `hard_deny` = extras, `rules`) plus read-only `hard_deny_floor` |
 | PUT | `/policy` | Full policy | Validated and replaced; returns the new policy. Replaces **every** rule: send only a policy you have just read |
 | PATCH | `/policy` | `{"default": "ask"\|"deny"\|"allow", "ask_timeout": 5..3600}` (either or both) | Changes only the mode and/or the approval timeout; the rules stay as they are. Any other key, a non-integer timeout or an empty body is a `400` |
+| GET | `/learning` | – | `{"active": {id, started, until, ports, by} \| null, "ports_allowed", "max_minutes", "sessions": [last 10 with ended, end_reason]}` |
+| POST | `/learning` | `{"minutes": 30, "ports": [443]}` | Starts learning mode (`201`, the state as above); replaces a running session. `minutes` 1..`learning_max_minutes`, `ports` a subset of `learning_ports` |
+| DELETE | `/learning` | – | Ends learning mode; the state |
+| GET | `/learning/{id}` | – | `{"session", "groups": [{domain, port, hosts: [{host, count, learned, denied}], count, learned, denied, proposal: {host, port} \| null}]}`: the destinations used during that session; `proposal` only for what learning mode allowed and no permanent rule allows now |
+| POST | `/learning/apply` | `{"rules": [{host, port}]}` | Adds allow rules at the **bottom** (tagged `source: learning`). Only exact host names or `*.<registrable domain>`, no `*`, no public suffixes, no IPs |
+| GET | `/rules/stats` | – | `{"rules": [{...rule, pos, hits, last, since, stale}], "stale_days"}`: every rule in order with its hit count, last match (`null` = never) and since when it is counted; `stale` = permanent and unused for `rule_stale_days` |
+| POST | `/rules/cleanup` | `{"ids": [...]}` | Removes those of the rules that are unused right now, keeps the others: `{"removed", "kept"}` |
+| GET | `/suggestions` | – | `{"suggestions": [{key, rule: {action, host, port}, count, hosts, last}], "min_approvals", "window_days"}`: destinations approved for a limited time at least `suggest_min_approvals` times in `suggest_window_days`, not covered by a permanent rule and not dismissed |
+| POST | `/suggestions/accept` | `{"key": "..."}` | Adds the suggested permanent rule (built by the gateway, tagged `source: suggestion`): `201` rule; `404` if there is no such suggestion now |
+| POST | `/suggestions/dismiss` | `{"key": "..."}` | Hides the suggestion for `log_keep_days` |
+| GET | `/policy/history?limit=100&before=<id>` | – | `{"versions": [{id, ts, by, what, default, rules}], "keep"}`, newest first; `rules` is the number of rules |
+| GET | `/policy/history/{id}` | – | `{id, ts, by, what, policy}`: the policy as stored in `policy.yaml` (no floor); `404` if unknown or no longer kept |
+| GET | `/policy/diff?from=<id>&to=<id>\|current` | – | Changes from one version to another (default `to=current`): `default`/`ask_timeout` as `[old, new]`, `hard_deny` `{added, removed}`, `rules` `{added, removed, changed: [{id, before, after}]}`, `reordered`, `identical`. Only what changed is present |
+| POST | `/policy/history/{id}/restore` | – | Replaces the policy with that version (validated like `PUT /policy`; the floor stays as configured); returns the new policy |
+| GET | `/policy/export` | – | `{"filename", "yaml"}`: the policy and the UI grants as one YAML document (`tallygate_export: 1`). No secrets, no config-file grants, no floor |
+| POST | `/policy/import` | `{"yaml": "...", "apply": false}` | Validates the document (policy like `PUT /policy`, each grant like `PUT /grants/{name}`) and returns `{diff, grants: {added, changed}, warnings, applied}`. With `"apply": true` it replaces the policy and adds or replaces those UI grants, all or nothing. A `hard_deny_floor` in the file is ignored with a warning |
 | POST | `/emergency-stop` | optional `{"by": "who"}` | Best-effort stop, see below: `{"ok": bool, "steps": [{"step", "ok", "errors"?, ...}]}` |
 | POST | `/rules` | Rule (+ optional `"top": false` to append) | `201` created rule |
 | DELETE | `/rules/{id}` | – | `{"ok": true}` or `404` |
@@ -23,6 +43,9 @@ Base URL: `http://172.31.11.2:8081` (control-net only). All endpoints except `/h
 | POST | `/test` | `{"host": "...", "port": 443}` | Dry run: `{"action", "reason", "rule_id", "ips"}` |
 | GET | `/events?limit=200&before=<id>&q=<text>` | – | Newest-first event log entries |
 | GET | `/events/summary?since=<ts>` | – | Connection events since `since` (default: one hour ago, at most 7 days back): `{"since", "counts": {"allow", "deny", "ask"}, "top": [{"host", "port", "count", "allow", "deny", "ask", "last"}] (10), "new": [{"host", "port", "first", "count"}] (20)}`. `new` = first seen within the kept log. Counts are log rows: identical events within a few seconds are coalesced |
+| GET | `/events?limit=200&before=<id>&q=<text>` | – | Newest-first event log entries (`limit` at most 2000). Filters, all optional and combined: `host` (exact name or IP, or `*.domain` for the domain and its subdomains), `port`, `kind` and `action` (comma-separated lists), `since`/`until` (unix time, `until` exclusive). Invalid values are a `400` |
+| GET | `/destinations?since=&until=&q=&new=1&limit=200` | – | Connection destinations (`conn` and `ask` events) in the range, most recent first: `[{host, port, events, first, last, allowed, denied, asked, first_seen, new}]`. `first_seen` is the first event in the whole log; `new=1` returns only those first seen inside the range |
+| GET | `/destinations/detail?host=&port=443` | – | One destination: `stats` (as above, or `null`), `decision` `{action, reason, rule_id, rule}` = what the policy decides for it now on the name (not resolved; for an IP including the hard deny), and its latest `events` |
 | GET | `/stream` | – | Server-sent events (see below) |
 | GET | `/secrets` | – | `{"names": [...]}` — values are never returned |
 | PUT | `/secrets/{name}` | `{"value": "..."}` (empty removes) | `{"names": [...]}` |
@@ -46,6 +69,7 @@ reports `ok` and, if it failed, `errors`:
 | `deny_pending` | Denies every connection waiting for approval | `denied` (`host:port`) |
 | `deny_grant_requests` | Denies every pending grant request | `denied` (grant names) |
 | `remove_internet_presets` | Removes the rules of every `category: internet` preset (`open`, `internet`) | `removed` (rule ids) |
+| `end_learning` | Ends learning mode | `ended` (session ids) |
 | `mode_deny` | Sets the mode to `deny` | `previous` (the mode before) |
 
 The suspension is stored in `grants-state.yaml` in the gateway's data volume, so it survives a restart (an
@@ -106,6 +130,7 @@ Used by the bundled web UI; documented for scripting and review.
 | GET | `/api/version` | session | `{"tallygate", "claude_code", "check": "ok"\|"error"\|"off", "latest": {"version", "url", "published"} \| null, "update_available": bool \| null, "error"?, "changelog", "upgrade"}`. `tallygate` is the gateway's VERSION; the latest release comes from GitHub's releases API (control's network, cached 6 h, `UPDATE_CHECK=0` switches it off); the release URL is built by control |
 | GET | `/api/stream` | session | Relayed gateway SSE stream |
 | * | `/api/gw/{path}` | session + CSRF | Relay to an **allowlisted** subset of the gateway API: `GET`/`PUT`/`PATCH /policy`, `POST /emergency-stop`, `POST /rules`, `DELETE /rules/{id}`, `GET /pending`, `POST /pending/{id}/decide`, `GET /events`, `GET /events/summary`, `POST /test`, `GET`/`POST`/`DELETE /presets…`, `GET /secrets`, `PUT /secrets/{name}`, `GET`/`PUT`/`DELETE /grants/{name}`, `POST /grants/{name}/activate`, `DELETE /active-grants/{id}`, `POST /grant-requests/{id}/decide`, `GET /info`. Everything else is refused (404). For decisions and the emergency stop, `by` is set to `web:<user>`. |
+| * | `/api/gw/{path}` | session + CSRF | Relay to an **allowlisted** subset of the gateway API: `GET`/`PUT`/`PATCH /policy`, `GET /policy/history…`, `POST /policy/history/{id}/restore`, `GET /policy/diff`, `GET /policy/export`, `POST /policy/import`, `POST /emergency-stop`, `POST /rules`, `DELETE /rules/{id}`, `GET /rules/stats`, `POST /rules/cleanup`, `GET`/`POST`/`DELETE /learning`, `GET /learning/{id}`, `POST /learning/apply`, `GET /suggestions`, `POST /suggestions/accept`, `POST /suggestions/dismiss`, `GET /pending`, `POST /pending/{id}/decide`, `GET /events`, `GET /destinations`, `GET /destinations/detail`, `POST /test`, `GET`/`POST`/`DELETE /presets…`, `GET /secrets`, `PUT /secrets/{name}`, `GET`/`PUT`/`DELETE /grants/{name}`, `POST /grants/{name}/activate`, `DELETE /active-grants/{id}`, `POST /grant-requests/{id}/decide`, `GET /info`. Everything else is refused (404). For decisions and the emergency stop, `by` is set to `web:<user>`; every relayed call carries `X-Tallygate-By: web:<user>` for the policy history. |
 | POST | `/api/github/check` | session + CSRF | `{"token": "...", "store": true}` — validate a token against GitHub from the control plane and store it in the gateway |
 | GET | `/api/agent/status` | session | Agent status (Claude login, git identity, Remote Control running, versions) |
 | GET | `/api/agent/selftest` | session | Run the in-agent isolation self-test |

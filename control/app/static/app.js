@@ -72,6 +72,7 @@ function showTab(name) {
   if (name === "grants") { guard(loadGrants)(); guard(loadSecrets)(); }
   if (tabHooks[name]) guard(tabHooks[name])();
   if (name === "log" && !logLoaded) guard(loadLog)();
+  document.dispatchEvent(new CustomEvent("tg:tab", { detail: name }));  // hook for the feature scripts
 }
 $$("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 $("#tabs").addEventListener("keydown", (e) => {  // arrow keys move between tabs (WAI-ARIA tabs pattern)
@@ -387,7 +388,7 @@ $$("#quick [data-mode]").forEach((b) => {
 const STOP_STEPS = {
   suspend_auto_approval: "Automatic grant approval suspended", revoke_grants: "Active grants revoked",
   deny_pending: "Waiting connections denied", deny_grant_requests: "Grant requests denied",
-  remove_internet_presets: "Internet shortcuts removed", mode_deny: "Unknown destinations blocked",
+  remove_internet_presets: "Internet shortcuts removed", end_learning: "Learning mode ended", mode_deny: "Unknown destinations blocked",
 };
 function showStopResult(r) {
   const box = $("#qaStopResult"); box.classList.remove("hidden");
@@ -598,6 +599,7 @@ function connectStream() {
   es.onmessage = (m) => {
     const ev = JSON.parse(m.data);
     window.dispatchEvent(new CustomEvent("tg:event", { detail: ev }));  // for feature scripts (overview.js, ...)
+    document.dispatchEvent(new CustomEvent("tg:event", { detail: ev }));  // hook for the feature scripts
     if (ev.type === "event") addLogRow(ev.event);
     if (ev.type === "ask" || ev.type === "resolved") loadPending().catch(() => {});
     if (ev.type === "ask" && document.hidden && Notification?.permission === "granted") new Notification("tallygate: approval needed", { body: `${ev.pending.host}:${ev.pending.port}` });
