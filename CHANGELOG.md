@@ -72,6 +72,8 @@ All notable changes to this project are documented here. The format follows
 - `gateway/config.example.yaml` (a stale duplicate of `config/gateway.yaml`).
 
 ### Security
+- The event stream and the web console end within 10 s of logout or session expiry, and console input is
+  checked before it reaches the agent (#21).
 - Login flood: bodies over 4 KiB are refused unread (413), more than 5 queued password checks get 429 at once,
   and the per-address failure limit is re-checked and recorded inside the password lock (#20).
 - `TRUST_PROXY_SECRET`: forwarded and auth headers are believed only when the proxy also sends the
