@@ -17,3 +17,4 @@ Format: [MADR](https://adr.github.io/madr/)-style, one decision per file. Status
 | [0010](0010-notifications-via-outbound-polling-bots.md) | Notifications via outbound-polling Telegram/Matrix bots | Accepted |
 | [0011](0011-decide-on-names-before-resolving.md) | Decide on names before resolving them | Accepted |
 | [0012](0012-grants-for-scoped-temporary-access.md) | Grants for scoped, temporary access | Accepted |
+| [0013](0013-sni-and-host-bound-to-the-checked-name.md) | TLS SNI and HTTP Host are bound to the checked name | Accepted |

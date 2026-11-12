@@ -5,9 +5,9 @@ ports) passes through `server_connect`, where the policy is evaluated on the req
 host:port *and* its resolved IPs. Hostnames are decided on the name first and only resolved
 once the policy (or a human) allows them, so denied/pending names never leak through DNS.
 Allowed hostnames are pinned to the checked IP to defeat DNS rebinding. TLS is passed through
-untouched, except for hosts configured for credential injection or read-only access, which are
-intercepted (the agent never sees injected secrets; its own credentials for those hosts are
-stripped).
+untouched when its SNI matches the checked name, except for hosts configured for credential injection
+or read-only access, which are intercepted (the agent never sees injected secrets; its own credentials
+for those hosts are stripped). HTTP requests must name the checked target in their Host header.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ from egressgw.policy import (
     Decision,
     Exception_,
     Policy,
+    ip_addr,
     is_ip,
     load_preset,
     parse_cidrs,
@@ -65,12 +66,14 @@ def fail_closed(hook):
     """mitmproxy only logs an exception raised in an addon hook and then carries on, i.e. the connection
     would go out unchecked. Every hook is therefore wrapped: any error refuses the connection or flow."""
 
-    def refuse(data) -> None:
+    def refuse(self, data) -> None:
         log.exception("%s failed - refusing the connection (fail closed)", hook.__name__)
         if isinstance(data, server_hooks.ServerConnectionHookData):
             data.server.error = "egress policy: internal error (fail closed)"
         elif isinstance(data, tls.ClientHelloData):
-            data.ignore_connection = False  # intercept: the per-request checks still apply
+            data.ignore_connection = False  # no passthrough; the TLS handshakes are then failed on purpose
+            with contextlib.suppress(Exception):
+                self.tls_refused.add(data.context.server.id)
         elif getattr(data, "killable", False):
             data.kill()  # http/tcp/websocket/dns flows
 
@@ -81,7 +84,7 @@ def fail_closed(hook):
             try:
                 return await hook(self, data)
             except Exception:  # noqa: BLE001 - any error must refuse, never pass traffic through
-                refuse(data)
+                refuse(self, data)
 
     else:
 
@@ -90,9 +93,22 @@ def fail_closed(hook):
             try:
                 return hook(self, data)
             except Exception:  # noqa: BLE001 - any error must refuse, never pass traffic through
-                refuse(data)
+                refuse(self, data)
 
     return wrapper
+
+
+def _refusing_tls(server_side: bool):
+    """A TLS connection object that cannot complete a handshake (no certificate, no SNI): used to refuse
+    a TLS connection from the TLS hooks, which offer no other way to close it."""
+    from OpenSSL import SSL
+
+    conn = SSL.Connection(SSL.Context(SSL.TLS_METHOD))
+    if server_side:
+        conn.set_accept_state()
+    else:
+        conn.set_connect_state()
+    return conn
 
 
 def _body_buffered(req: http.Request) -> bool:
@@ -174,6 +190,8 @@ class Gateway:
         self.pending: dict[tuple[str, int], Pending] = {}
         self.neg_cache: dict[tuple[str, int], float] = {}
         self.orig_host: dict[str, str] = {}
+        # server connection ids whose TLS is refused (SNI does not match the checked name): both handshakes fail
+        self.tls_refused: set[str] = set()
         self.subscribers: set[asyncio.Queue] = set()
         self.api_token = os.environ.get("GW_API_TOKEN", "")
         self._tasks: list[asyncio.Task] = []
@@ -580,6 +598,7 @@ class Gateway:
     def server_disconnected(self, data: server_hooks.ServerConnectionHookData) -> None:
         self.orig_host.pop(data.server.id, None)
         self.conn_grant.pop(data.server.id, None)
+        self.tls_refused.discard(data.server.id)
 
     @fail_closed
     def server_connect_error(self, data: server_hooks.ServerConnectionHookData) -> None:
@@ -598,14 +617,50 @@ class Gateway:
         orig = self.orig_host.get(data.context.server.id)
         if orig in self.intercept_hosts:
             # Always intercept, whatever the SNI says (none, trailing dot, another name): a passthrough would
-            # skip credential stripping and the read-only check. Injection stays gated by the Host header.
+            # skip credential stripping and the read-only check. The upstream SNI is the checked name, and
+            # the Host header must match it too.
+            return
+        sni = (data.client_hello.sni or "").lower().rstrip(".")
+        if why := self._sni_problem(orig, sni, data.context.server.address):
+            # No passthrough: on a shared CDN, the SNI picks the site (domain fronting). Both TLS handshakes
+            # are failed on purpose in tls_start_client/tls_start_server.
+            self.tls_refused.add(data.context.server.id)
+            client = data.context.client.peername[0] if data.context.client.peername else "?"
+            port = data.context.server.address[1] if data.context.server.address else 0
+            self.record(kind="conn", proto="tls", client=client, host=orig or "?", port=port, action="deny", reason=why)
             return
         data.ignore_connection = True  # end-to-end TLS, untouched
+
+    def _sni_problem(self, orig: str | None, sni: str, address) -> str | None:
+        """Why a TLS passthrough to the checked name `orig` must be refused for this SNI, or None.
+        - name: the SNI must be that name. A missing SNI, another name or an ECH outer name is refused.
+        - IP literal: no SNI is normal. An SNI name is passed through only if the rules allow that name by
+          itself on this port: it then reaches nothing that the rules do not allow anyway."""
+        if not orig:
+            return "TLS without a checked destination"
+        if not is_ip(orig):
+            if sni == orig:
+                return None
+            return f"TLS SNI {sni or '(none)'} does not match the checked name {orig}"
+        if not sni or (is_ip(sni) and ip_addr(sni) == ip_addr(orig)):
+            return None
+        port = address[1] if address else 0
+        if valid_hostname(sni) and self.policy.evaluate_name(sni, port).action == "allow":
+            return None
+        return f"TLS SNI {sni} on IP {orig} is not allowed by the rules"
+
+    @fail_closed
+    def tls_start_client(self, data: tls.TlsData) -> None:
+        if data.context.server.id in self.tls_refused:
+            data.ssl_conn = _refusing_tls(server_side=True)
 
     @fail_closed
     def tls_start_server(self, data: tls.TlsData) -> None:
         """Per-target upstream TLS for grant targets: pinned leaf fingerprint (self-signed LAN services)
         or, if explicitly configured, no verification."""
+        if data.context.server.id in self.tls_refused:
+            data.ssl_conn = _refusing_tls(server_side=False)  # no SNI, no data: the handshake cannot succeed
+            return
         b = self.conn_grant.get(data.context.server.id)
         if not b or (not b[2].tls_fingerprint and b[2].tls_verify):
             return
@@ -696,6 +751,17 @@ class Gateway:
                     req.headers[i["header"]] = value
         return None
 
+    @staticmethod
+    def _host_binding(req: http.Request, target: str) -> str | None:
+        """The Host header (or :authority) must name the checked target: on a shared CDN or virtual-host
+        server it picks the site, so another name would reach a destination nobody checked (#57)."""
+        if not req.host_header:
+            return None  # no Host: the upstream serves its default site, not one the agent picked
+        host = req.pretty_host.lower().rstrip(".").strip("[]")
+        if host == target.strip("[]") or (is_ip(host) and is_ip(target) and ip_addr(host) == ip_addr(target)):
+            return None
+        return "Host header does not match the checked target"
+
     def _host_checks(self, flow: http.HTTPFlow, target: str) -> str | None:
         """Read-only hosts and credential injection. Returns the reason to refuse the request, or None."""
         if target in self.readonly_hosts and flow.request.method.upper() in WRITE_METHODS:
@@ -729,7 +795,7 @@ class Gateway:
         # The real destination: the connection's checked target (TLS) or the absolute-form URL host
         # (plain HTTP proxy requests, whose server connection is opened after these hooks).
         target = (self.orig_host.get(flow.server_conn.id) or flow.request.host or "").lower().rstrip(".")
-        why = self._host_checks(flow, target)
+        why = self._host_binding(flow.request, target) or self._host_checks(flow, target)
         return (target, flow.request.port, why) if why else None
 
     def _enforce(self, flow: http.HTTPFlow, early: bool) -> None:

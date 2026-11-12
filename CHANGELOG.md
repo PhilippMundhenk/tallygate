@@ -92,6 +92,10 @@ All notable changes to this project are documented here. The format follows
 - Request bodies over 1 MB were streamed upstream before the per-request checks ran, so a large `PUT` to a
   read-only host, the agent's own credentials on an injection host, or a write on a read-only grant went
   through. The checks now run on the request headers, before anything is forwarded (#56).
+- Domain fronting: the TLS SNI and the HTTP `Host` were not compared with the checked name, so on a shared
+  CDN an allowed name gave access to other sites. TLS is now passed through only when the SNI matches the
+  CONNECT name (a missing SNI is refused; for an IP literal an SNI name must be allowed by the rules), and
+  HTTP requests with another `Host` get `403` (#57).
 - The agent could reach services on the Docker host that listen on all interfaces through the host's
   address on `agent-net` (`172.31.10.1`), bypassing the gateway. `agent-net` and `control-net` no longer
   give the host an address (`com.docker.network.bridge.inhibit_ipv4`), and `bypass.sh` checks it with a
