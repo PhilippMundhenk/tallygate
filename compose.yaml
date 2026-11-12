@@ -67,6 +67,7 @@ services:
       CONTROL_PORT: "8080"
       # Empty: a password is generated on first start and printed to the log (shown once).
       CONTROL_PASSWORD_HASH: ${CONTROL_PASSWORD_HASH:-}
+      CONTROL_PASSWORD: ${CONTROL_PASSWORD:-}          # plain text, discouraged: prefer the hash
       TRUST_PROXY_AUTH_HEADER: ${TRUST_PROXY_AUTH_HEADER:-}
       SESSION_SECRET: ${SESSION_SECRET:-}             # empty: created in the control-data volume
       COOKIE_SECURE: ${COOKIE_SECURE:-1}

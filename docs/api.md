@@ -103,7 +103,7 @@ Used by the bundled web UI; documented for scripting and review.
 | GET | `/` | session | Single-page UI |
 | GET | `/api/meta` | session | Current user, terminal names, notification status |
 | GET | `/api/stream` | session | Relayed gateway SSE stream |
-| * | `/api/gw/{path}` | session + CSRF | Relay to an **allowlisted** subset of the gateway API (policy, rules, pending/decide, events, test, presets, secrets, info). For `decide`, `by` is overwritten with `web:<user>`. |
+| * | `/api/gw/{path}` | session + CSRF | Relay to an **allowlisted** subset of the gateway API: `GET`/`PUT`/`PATCH /policy`, `POST /emergency-stop`, `POST /rules`, `DELETE /rules/{id}`, `GET /pending`, `POST /pending/{id}/decide`, `GET /events`, `POST /test`, `GET`/`POST`/`DELETE /presets…`, `GET /secrets`, `PUT /secrets/{name}`, `GET`/`PUT`/`DELETE /grants/{name}`, `POST /grants/{name}/activate`, `DELETE /active-grants/{id}`, `POST /grant-requests/{id}/decide`, `GET /info`. Everything else is refused (404). For decisions and the emergency stop, `by` is set to `web:<user>`. |
 | POST | `/api/github/check` | session + CSRF | `{"token": "...", "store": true}` — validate a token against GitHub from the control plane and store it in the gateway |
 | GET | `/api/agent/status` | session | Agent status (Claude login, git identity, Remote Control running, versions) |
 | GET | `/api/agent/selftest` | session | Run the in-agent isolation self-test |

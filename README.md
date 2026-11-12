@@ -73,7 +73,7 @@ Claude Code. All you need is [`compose.yaml`](compose.yaml):
 
 ```bash
 mkdir tallygate && cd tallygate
-curl -fsSLO https://raw.githubusercontent.com/PhilippMundhenk/tallygate/main/compose.yaml
+curl -fsSLO https://github.com/PhilippMundhenk/tallygate/releases/latest/download/compose.yaml
 docker compose up -d
 docker compose logs control | grep -A1 password    # generated UI password (change it after login)
 ```

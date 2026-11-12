@@ -34,7 +34,7 @@ Prebuilt images for amd64 and arm64 are published on GHCR: `tallygate-gateway`, 
 
 ```bash
 mkdir tallygate && cd tallygate
-curl -fsSLO https://raw.githubusercontent.com/PhilippMundhenk/tallygate/main/compose.yaml
+curl -fsSLO https://github.com/PhilippMundhenk/tallygate/releases/latest/download/compose.yaml
 docker compose up -d
 docker compose logs control | grep -A1 password    # the generated UI password
 ```
@@ -73,7 +73,7 @@ Check the isolation with the UI's **Setup → Self-test**. The authoritative tes
 separate probe container:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/PhilippMundhenk/tallygate/main/tests/integration/bypass.sh
+curl -fsSLO https://github.com/PhilippMundhenk/tallygate/releases/latest/download/bypass.sh
 bash bypass.sh                 # must end with ALL CHECKS PASSED
 ```
 
@@ -262,7 +262,7 @@ docker compose exec control python -m app.passwd --print-hash   # prints scrypt:
 
 | Component | Procedure |
 |---|---|
-| tallygate (Compose) | Read the [CHANGELOG](../CHANGELOG.md) → `docker compose pull && docker compose up -d` → self-test or `bash bypass.sh`. Download the new `compose.yaml` when the changelog says so. |
+| tallygate (Compose) | Read the [CHANGELOG](../CHANGELOG.md), including its *Upgrading* notes → `docker compose pull && docker compose up -d` → self-test or `bash bypass.sh`. Download the new `compose.yaml` when the changelog says so. When the networks changed (as in 0.4.0), run `docker compose down` first: a plain `up -d` keeps the running containers on the wrong addresses. |
 | tallygate (from source) | `git pull` → read `CHANGELOG.md` → `make up` → `make bypass-test`. |
 | Claude Code | Part of the agent image, which has no auto-updater by design. New Claude Code versions arrive as tallygate patch releases: update tallygate. From source, set `CLAUDE_VERSION` in `.env` and run `make up`. |
 | Base images / dependencies | Published images are rebuilt for every release. From source: `docker compose -f compose.yaml -f compose.build.yaml build --pull && make up`. |
@@ -288,6 +288,7 @@ on the host suffer too. On a host that runs more than tallygate:
 
 The gateway's event log is capped by `log_max_events` and `log_keep_days`, and identical events are coalesced.
 
+## Backup and restore
 
 Back up the volumes (or the directories in `GATEWAY_DATA`, `AGENT_HOME`, `WORKSPACE`), plus `.env` and your
 `gateway.yaml` if you have them:
@@ -340,9 +341,10 @@ to a new gateway, the CA changes. That's harmless: the agent re-reads the CA on 
 ## Migrating from another Claude Code container
 
 1. Stop the old container.
-2. Copy skills into the agent home: `docker compose cp <old>/claude-home/skills agent:/home/agent/.claude/`,
-   then `docker compose exec -u 0 agent chown -R 1000:1000 /home/agent/.claude/skills`.
-3. Copy repositories into the workspace the same way (or re-clone).
+2. Copy skills into the agent home with a throwaway container (the agent itself has no capability to change
+   owners): `docker run --rm -v tallygate_agent-home:/h -v "<old>/claude-home/skills":/s:ro debian sh -c
+   'mkdir -p /h/.claude && cp -r /s /h/.claude/skills && chown -R 1000:1000 /h/.claude'`.
+3. Copy repositories into the `tallygate_workspace` volume the same way (or re-clone).
 4. **Log in again** instead of copying credentials, and create a new fine-grained PAT for the gateway.
 5. Revoke tokens that were stored in the old container.
 

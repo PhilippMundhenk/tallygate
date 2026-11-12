@@ -46,7 +46,7 @@
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 make dev-setup
-make lint test
+make lint coverage
 ```
 
 The e2e suite (`tests/e2e`) needs no Docker and no root:
@@ -121,7 +121,8 @@ Measured on 2026-11-11 (424 tests):
 
 ## Releases
 
-1. Update `VERSION`, `pyproject.toml` and `CHANGELOG.md` (date the release section).
+1. Update `VERSION`, `pyproject.toml`, the version badge in `README.md` and `CHANGELOG.md` (date the release
+   section).
 2. Commit, tag `vX.Y.Z`, push the tag.
 3. CI builds and pushes the images (`linux/amd64`, `linux/arm64`) to GHCR as `X.Y.Z`, `X.Y` and `latest`,
    and creates the GitHub release with `compose.yaml`, `.env.example`, `gateway.yaml` and `bypass.sh`
