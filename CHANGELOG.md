@@ -89,6 +89,20 @@ All notable changes to this project are documented here. The format follows
 - A `CONTROL_PASSWORD_HASH` that is not an scrypt hash refuses every login instead of falling back to
   `CONTROL_PASSWORD` (#27).
 
+- Request bodies over 1 MB were streamed upstream before the per-request checks ran, so a large `PUT` to a
+  read-only host, the agent's own credentials on an injection host, or a write on a read-only grant went
+  through. The checks now run on the request headers, before anything is forwarded (#56).
+- The agent could reach services on the Docker host that listen on all interfaces through the host's
+  address on `agent-net` (`172.31.10.1`), bypassing the gateway. `agent-net` and `control-net` no longer
+  give the host an address (`com.docker.network.bridge.inhibit_ipv4`), and `bypass.sh` checks it with a
+  listener on the host (#7).
+- `TRUST_PROXY_SECRET`: forwarded and auth headers are believed only when the proxy also sends the
+  shared secret in `X-Tallygate-Proxy-Secret`. The docs describe the safe proxy-auth setup (proxy container
+  on `mgmt` with a fixed address, nothing else published) (#19).
+- Login flood: bodies over 4 KiB are refused unread (413), more than 5 queued password checks get 429 at once,
+  and the per-address failure limit is re-checked and recorded inside the password lock (#20).
+- The event stream and the web console end within 10 s of logout or session expiry, and console input is
+  checked before it reaches the agent (#21).
 ### Fixed
 - e2e tests skip instead of erroring without aiohttp, and cover password hash formats, idle and absolute
   session expiry, dropped console frames, grant deny and revoke through Telegram and Matrix (#27).

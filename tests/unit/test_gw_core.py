@@ -81,7 +81,7 @@ def test_error_in_tls_clienthello_falls_back_to_interception(make):
 
 def test_error_in_request_kills_the_flow(make, monkeypatch):
     gw = make()
-    monkeypatch.setattr(gw, "_grant_request", lambda f: 1 / 0)
+    monkeypatch.setattr(gw, "_checks", lambda f: 1 / 0)
     flow = tflow.tflow()
     gw.request(flow)
     assert not flow.killable  # killed
@@ -451,6 +451,58 @@ def test_injection_without_a_configured_secret_sends_no_credentials(make):
     flow = agent_flow("https", "api.example")
     gw.request(flow)
     assert "Authorization" not in flow.request.headers
+
+
+# ------------------------------------------------------------------ requestheaders (#56)
+def ro_flow(method=b"PUT", http_version=b"HTTP/1.1", **headers):
+    flow = tflow.tflow(
+        req=tutils.treq(method=method, host="ro.example", port=443, path="/pkg", http_version=http_version)
+    )
+    flow.request.headers.clear()
+    flow.request.headers["Host"] = "ro.example"
+    for k, v in headers.items():
+        flow.request.headers[k.replace("_", "-")] = v
+    return flow
+
+
+def test_requestheaders_refuses_small_bodies_with_a_403(make):
+    gw = make({"readonly": ["ro.example"]})
+    for flow in (ro_flow(content_length="2"), ro_flow()):  # sized body, HTTP/1 without a body
+        gw.requestheaders(flow)
+        assert flow.response.status_code == 403 and flow.killable
+        assert last_event(gw)["reason"] == "read-only host: PUT /pkg"
+        refused = flow.response
+        gw.request(flow)  # already refused: the second line leaves it alone
+        assert flow.response is refused
+
+
+def test_requestheaders_kills_streamed_or_unsized_bodies(make):
+    """mitmproxy streams bodies over stream_large_bodies right after requestheaders: a 403 cannot replace them."""
+    gw = make({"readonly": ["ro.example"]})
+    streamed = ro_flow(content_length="2000000")
+    streamed.request.stream = True
+    flows = (streamed, ro_flow(transfer_encoding="chunked"), ro_flow(http_version=b"HTTP/2.0"))
+    for flow in flows:
+        gw.requestheaders(flow)
+        assert flow.response is None and not flow.killable
+    assert last_event(gw)["action"] == "deny"
+
+
+def test_request_kills_a_refused_flow_whose_body_was_already_streamed(make):
+    gw = make({"readonly": ["ro.example"]})
+    flow = ro_flow(content_length="2000000")
+    flow.request.stream = True
+    gw.request(flow)
+    assert flow.response is None and not flow.killable
+
+
+def test_requestheaders_strips_agent_credentials_before_streaming(make):
+    gw = inject_gw(make)
+    flow = agent_flow("https", "api.example")
+    flow.request.stream = True
+    gw.requestheaders(flow)
+    assert flow.request.headers["Authorization"] == "Bearer s3cret" and "Cookie" not in flow.request.headers
+    assert flow.killable
 
 
 def test_dns_requests_are_answered_nxdomain_and_logged(make):
