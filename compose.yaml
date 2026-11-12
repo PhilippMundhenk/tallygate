@@ -91,6 +91,9 @@ services:
       MATRIX_ACCESS_TOKEN: ${MATRIX_ACCESS_TOKEN:-}
       MATRIX_ROOM_ID: ${MATRIX_ROOM_ID:-}
       MATRIX_ALLOWED_USERS: ${MATRIX_ALLOWED_USERS:-}
+      UPDATE_CHECK: ${UPDATE_CHECK:-1}                 # 0: never ask GitHub for new releases
+      FILES_MAX_UPLOAD: ${FILES_MAX_UPLOAD:-52428800}       # Files tab: largest upload into the workspace (bytes)
+      FILES_MAX_DOWNLOAD: ${FILES_MAX_DOWNLOAD:-209715200}  # Files tab: largest download (bytes)
     volumes:
       - ${CONTROL_DATA:-control-data}:/data                         # session secret, UI password hash
       - gw-token:/run/tallygate/gw:ro

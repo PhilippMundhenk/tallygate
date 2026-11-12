@@ -30,6 +30,7 @@ def atomic_write(path: Path, text: str, mode: int = 0o644) -> None:
 
 class EventLog:
     def __init__(self, path: Path, keep_days: int = 30, max_events: int = 500_000) -> None:
+        self.path = path
         self.db = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute(
@@ -228,6 +229,43 @@ def _filters(host=None, port=None, kind=None, action=None, since=None, until=Non
         cond.append("ts < ?")
         args.append(float(until))
     return cond, args
+
+
+def summarize(path: Path, since: float, top: int = 10, new: int = 20) -> dict:
+    """Connection events since `since`: counts per action, the most frequent destinations and the destinations
+    seen for the first time (within the retained log). Opens its own read-only connection, so it can run in a
+    thread without touching the writer's connection (WAL allows concurrent readers)."""
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        counts = dict(
+            db.execute(
+                "SELECT action, COUNT(*) FROM events WHERE kind = 'conn' AND host IS NOT NULL AND ts >= ? GROUP BY action",
+                (since,),
+            )
+        )
+        top_rows = db.execute(
+            "SELECT host, port, COUNT(*), SUM(action = 'allow'), SUM(action = 'deny'), SUM(action = 'ask'), MAX(ts) "
+            "FROM events WHERE kind = 'conn' AND host IS NOT NULL AND ts >= ? "
+            "GROUP BY host, port ORDER BY COUNT(*) DESC, MAX(ts) DESC LIMIT ?",
+            (since, top),
+        ).fetchall()
+        new_rows = db.execute(
+            "SELECT host, port, MIN(ts) AS first, COUNT(*) FROM events WHERE kind = 'conn' AND host IS NOT NULL "
+            "AND (host, port) IN (SELECT host, port FROM events WHERE kind = 'conn' AND host IS NOT NULL AND ts >= ?) "
+            "GROUP BY host, port HAVING first >= ? ORDER BY first DESC LIMIT ?",
+            (since, since, new),
+        ).fetchall()
+    finally:
+        db.close()
+    return {
+        "since": since,
+        "counts": {a: counts.get(a, 0) for a in ("allow", "deny", "ask")},
+        "top": [
+            {"host": h, "port": p, "count": n, "allow": a, "deny": d, "ask": q, "last": last}
+            for h, p, n, a, d, q, last in top_rows
+        ],
+        "new": [{"host": h, "port": p, "first": first, "count": n} for h, p, first, n in new_rows],
+    }
 
 
 class Secrets:

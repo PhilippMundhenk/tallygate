@@ -46,8 +46,10 @@ only then let through, turned back, or held for you to decide.
 - **Secrets stay out of the agent.** The GitHub token lives in the gateway and is injected in flight, only when
   the CONNECT target and Host match. The agent's own credentials for those hosts are stripped, and
   read-only hosts (e.g. the npm registry) refuse uploads.
-- **Operator UI.** Approvals, live log, rules editor with dry-run test, presets, browser consoles (Remote
-  Control, bash, claude), and a setup wizard for GitHub, Claude login, git and Remote Control.
+- **Operator UI.** An overview of what the agent is doing and what needs you, approvals (with keyboard
+  shortcuts), live log, rules editor with dry-run test, presets, workspace files, browser consoles (Remote
+  Control, bash, claude), and a guided first start that logs in to Claude, takes the git identity from GitHub
+  and enables Remote Control without a console. It tells you when a new release is out.
 - **Learning mode.** Let a new task run for 30 minutes with public HTTPS allowed and recorded, then save the
   destinations it used as rules in one go. The LAN stays blocked; it ends by itself.
 - **Rule usage.** Hit counters per rule, unused rules offered for removal, and a permanent rule suggested when

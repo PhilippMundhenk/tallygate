@@ -4,15 +4,30 @@ The control UI is the operator's cockpit: approve connections, watch traffic, ed
 consoles into the agent, and run the setup wizard. Remote Control itself is used from the
 [Claude app](https://claude.ai/download) or [claude.ai/code](https://claude.ai/code) as usual.
 
+- [Overview](#overview)
 - [Approvals](#approvals)
 - [Log](#log)
 - [Rules](#rules)
 - [Console](#console)
+- [Files](#files)
 - [Setup wizard](#setup-wizard)
 - [Telegram approvals](#telegram-approvals)
 - [Matrix approvals](#matrix-approvals)
 - [Rule cookbook](#rule-cookbook)
 - [Working with the agent](#working-with-the-agent)
+
+## Overview
+
+The start page: what the agent is doing and whether anything needs you soon. It refreshes every 30 seconds
+while it is open and at once when a request arrives or is decided.
+
+| Part | Shows |
+|---|---|
+| Status | Claude logged in; Remote Control running, with the session name (or the question it waits for); Claude Code version; disk use of the workspace's file system; gateway health and the disk use of its state, with the size of the event log. 90 % or more is marked. |
+| Needs attention | Waiting connection and grant requests; rules and grants that end within the hour; a missing GitHub token, one GitHub refuses, or one that expires within 7 days (checked once per page load through the agent, so it appears in the log). |
+| Last hour | Connections allowed, denied and asked; the 10 most frequent destinations; destinations seen for the first time in the kept log (`log_keep_days`). |
+| Versions | tallygate (the release the gateway runs) and Claude Code, and the latest tallygate release. When a newer one exists, the header shows **Update: X.Y.Z**; the card links to the changelog and the release and shows the upgrade command (click to copy). Claude Code has no auto-updater in the agent: new versions come with tallygate releases. Control asks GitHub itself, at most every 6 hours; `UPDATE_CHECK=0` switches it off ([configuration](configuration.md)). |
+| Shortcuts | *Emergency stop* (click twice), *Allow web for 15 min* (the `open` preset), *Open the console* (rc). |
 
 ## Approvals
 
@@ -38,6 +53,27 @@ has the domain `evil.example`. Punycode names (`xn--…`) are flagged. Names are
 approval, so IPs show as "not resolved yet". A destination you approve can still be refused by the hard
 deny (LAN, host, metadata…). At most `max_pending` (10) requests wait at once; further unknown destinations
 are denied immediately until you have answered.
+
+### Keyboard shortcuts, compact list and sound
+
+For approving a lot. The switches above the list are kept in this browser.
+
+| Key | Effect (Approvals tab, outside text fields) |
+|---|---|
+| `j` / `k` | Select the next / previous request |
+| `a` | Allow 2 min; approve a grant request |
+| `h` | Allow 1 h |
+| `d` | Deny |
+| `?` | List the keys (anywhere; `Esc` closes) |
+
+`a`, `h` and `d` act on the selected request; without a selection the first press selects the first request,
+so a stray key never decides anything. After a decision the next request is selected. Single-key shortcuts
+can be switched off with **Keyboard shortcuts** (for screen readers and voice control).
+
+**Compact list** shows one line per connection request: destination, the registrable domain when it differs,
+the punycode warning and the buttons (the countdown and IPs are hidden). Grant requests keep their full card,
+because the agent's reason matters. **Sound** plays a short tone when a request arrives while the tab is in
+the background; turn it on with a click, as browsers allow sound only after one.
 
 ## Grants
 
@@ -216,12 +252,40 @@ The gateway keeps the last `policy_history_keep` (500) versions in `policy-histo
 
 Sessions persist when you close the tab. tmux basics: `Ctrl-b d` detaches, scroll with `Ctrl-b [`.
 
+## Files
+
+The agent's `/workspace` in the browser: open folders, upload files into the open folder (a spec, a dataset,
+a patch) and download results, without `docker cp` or a shell.
+
+- Uploads go into the folder you are in. An existing file is only replaced with **replace existing files**;
+  folders and links are never replaced. Up to `FILES_MAX_UPLOAD` (default 50 MiB) per file.
+- **Download** saves the file (up to `FILES_MAX_DOWNLOAD`, default 200 MiB). Files are always sent as
+  downloads (`application/octet-stream`, `Content-Disposition: attachment`), never shown in the UI, so a
+  file the agent wrote (HTML, SVG, a script) cannot run on the UI's address.
+- Everything stays inside `/workspace`: no `..`, no absolute paths, and links that point outside are refused
+  (they are listed as *link*, but cannot be opened or written through).
+- Uploads are logged by control (`workspace upload: <path> (<bytes>) by <user>`).
+
 ## Setup wizard
 
 ![Setup](images/setup.png)
 
-Walks through gateway status, GitHub token (stored in the gateway only), Claude login, git identity,
-Remote Control, and the isolation self-test. The status lines refresh whenever you open the tab.
+The **Setup** tab is the first start in one flow. Every step shows *done*, *to do*, *check* or *optional*; the
+summary at the top counts the steps and its *Next* button jumps to the first one still to do. The states are
+checked again whenever you open the tab or finish a step. No step needs a console.
+
+| Step | What it does |
+|---|---|
+| Access to this UI | Checks how your browser reaches the UI: HTTPS (or localhost), the session cookie's `Secure` flag, whether a reverse proxy sends forwarded headers and whether they are trusted, whether `PUBLIC_URL` matches the address you use, and how other machines reach the UI. Each line says what to change. |
+| UI password | *To do* while it is still the password generated on first start; change it with `docker compose exec control python -m app.passwd`. |
+| Gateway | The gateway's CA is exported and which hosts get credentials injected. |
+| GitHub token | *Validate & store* checks a token against GitHub (from control) and stores it in the gateway only. |
+| Log in to Claude | *Start login* runs `claude auth login` in the agent (tmux session `tg-login`) and shows the link to Anthropic's login page. Sign in there and paste the code it shows. Only links to Anthropic's login pages are shown. |
+| Git identity | *Use my GitHub identity* asks GitHub, through the gateway with the stored token, who you are (`gh api user`) and shows the name and the noreply address `<id>+<login>@users.noreply.github.com`; *Apply* sets them. Without a stored token, or when GitHub refuses it or cannot be reached, it says so and links to the token step. *Enter it yourself* is the fallback. Empty values are never written; a name or address that is set but empty (for example from a `git config` whose `$(…)` failed) is reported as such. |
+| Remote Control | *Enable Remote Control* answers Claude Code's one-time question `Enable Remote Control? (y/n)` with yes, trusts `/workspace` and restarts Remote Control. The step is done when it runs; it also tells you when Remote Control waits for an answer in the *rc* console. Switched off with `RC_ENABLE=0`. |
+| Starting policy | *Ask me* or *Strict* sets what happens with unknown destinations; *Templates* opens them in the Rules tab. |
+| Phone notifications | Telegram and Matrix status; browser notifications. |
+| Isolation self-test | Runs the in-agent self-test. |
 
 ## Telegram approvals
 

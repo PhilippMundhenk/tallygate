@@ -24,6 +24,9 @@ All variables are optional. Secrets are created on first start when they are not
 | `COOKIE_SECURE` | `auto` | `auto`: the session cookie is `Secure` exactly when the browser uses HTTPS (directly, or `X-Forwarded-Proto` from a trusted proxy). `1` / `0` force it on or off. |
 | `TRUST_FORWARDED_FOR` | `0` | `1` when the UI sits behind your reverse proxy: trust `X-Forwarded-For`/`-Host`/`-Proto` for rate limiting and origin checks — **only** from peers in `TRUSTED_PROXIES`. |
 | `TRUSTED_PROXIES` | – | Comma-separated CIDRs of your reverse/auth proxy as seen by control. Forwarded and auth headers from any other peer are ignored. With a published port this is the `mgmt` bridge gateway `172.31.12.1/32`, which every local process shares: see [reverse proxy](operations.md#reverse-proxy). |
+| `FILES_MAX_UPLOAD` | `52428800` (50 MiB) | Largest file the *Files* tab uploads into the workspace (bytes). |
+| `FILES_MAX_DOWNLOAD` | `209715200` (200 MiB) | Largest workspace file the *Files* tab downloads (bytes). |
+| `UPDATE_CHECK` | `1` | Control asks GitHub's releases API (`api.github.com`, from control's own network, never through the agent) whether a newer tallygate release exists, at most every 6 h (30 min after a failure), and shows it in the UI. `0` switches it off. |
 | `SESSION_IDLE` | `7200` | UI session idle timeout in seconds (absolute lifetime: `SESSION_TTL`, 12 h). Sessions are server-side: logout and restarts end them, and open event streams and consoles are closed within 10 s. |
 | `GW_API_TOKEN` | *(created in the `gw-token` volume)* | Bearer token between control and gateway (≥ 24 chars). |
 | `SESSION_SECRET` | *(created in `control-data`)* | HMAC key that signs session ids in the cookie. |

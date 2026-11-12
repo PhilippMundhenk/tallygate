@@ -25,6 +25,8 @@ DATA = Path(os.environ.get("CONTROL_DATA", "/data"))
 GW_TOKEN_FILE = Path(os.environ.get("GW_API_TOKEN_FILE", "/run/tallygate/gw/api-token"))
 TTYD_FILE = Path(os.environ.get("TTYD_CREDENTIAL_FILE", "/run/tallygate/ttyd/credential"))
 PASSWORD_FILE = DATA / "password-hash"
+# Present while the password is still the one generated on first start (the setup wizard asks to change it).
+GENERATED_MARK = DATA / "password-generated"
 LOG2N = 16
 
 
@@ -119,12 +121,18 @@ def password_hash() -> str:
         return ""
 
 
+def password_generated() -> bool:
+    """True while the stored password is still the one generated on first start."""
+    return GENERATED_MARK.exists()
+
+
 def ensure_password() -> None:
     """Generate a UI password on first start when nothing else is configured."""
     if os.environ.get("CONTROL_PASSWORD_HASH") or os.environ.get("CONTROL_PASSWORD") or password_hash():
         return
     pw = secrets.token_urlsafe(15)
     _write(PASSWORD_FILE, hash_password(pw))
+    _write(GENERATED_MARK, "")
     bar = "=" * 72
     log.warning(
         "\n%s\n  tallygate web UI password: %s\n"

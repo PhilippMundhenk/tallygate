@@ -6,6 +6,7 @@ No Docker and no root needed. Runs in CI and on a laptop:  pytest tests/e2e
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import json
 import os
@@ -356,6 +357,54 @@ def control(tmp_path_factory, gateway, ttyd_port):
     tmp = tmp_path_factory.mktemp("control")
     proc, port = start_control(tmp, gateway, {}, ttyd_port)
     yield {"port": port, "base": f"http://127.0.0.1:{port}", "ttyd": ttyd_port}
+    proc.terminate()
+    proc.wait(10)
+
+
+# ------------------------------------------------------------------ agent status server
+@pytest.fixture(scope="session")
+def fake_agent(tmp_path_factory):
+    """The real agent/status.py on localhost, with fakes for tmux, claude, gh and git on its PATH
+    (tests/e2e/fake_agent_tools.py) and a temporary home and workspace."""
+    tmp = tmp_path_factory.mktemp("agent")
+    state, home, ws, bin_dir = (tmp / n for n in ("state", "home", "workspace", "bin"))
+    for d in (state, home, ws, bin_dir):
+        d.mkdir()
+    tools = Path(__file__).with_name("fake_agent_tools.py")
+    for tool in ("tmux", "claude", "gh", "git"):
+        w = bin_dir / tool
+        w.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{tools}" {tool} "$@"\n')
+        w.chmod(0o755)
+    port = free_port()
+    env = clean_env(
+        PATH=f"{bin_dir}:{os.environ.get('PATH', '')}",
+        HOME=home,
+        WORKSPACE=ws,
+        FAKE_STATE=state,
+        STATUS_PORT=port,
+        RC_NAME="e2e-session",
+    )
+    log = open(tmp / "status.log", "w")
+    proc = subprocess.Popen(
+        [sys.executable, str(ROOT / "agent" / "status.py")], env=env, stdout=log, stderr=subprocess.STDOUT
+    )
+    wait_http(f"http://127.0.0.1:{port}/status")
+    try:
+        yield {"port": port, "state": state, "home": home, "workspace": ws, "base": f"http://127.0.0.1:{port}"}
+    finally:
+        proc.terminate()
+        proc.wait(10)
+        for d in (state / "tmux").glob("*"):
+            with contextlib.suppress(OSError, ValueError):
+                os.killpg(int((d / "pid").read_text()), 9)
+
+
+@pytest.fixture(scope="session")
+def agent_control(tmp_path_factory, gateway, fake_agent):
+    """A control process whose agent is fake_agent."""
+    tmp = tmp_path_factory.mktemp("control-agent")
+    proc, port = start_control(tmp, gateway, {"AGENT_STATUS_PORT": fake_agent["port"]})
+    yield {"port": port, "base": f"http://127.0.0.1:{port}"}
     proc.terminate()
     proc.wait(10)
 

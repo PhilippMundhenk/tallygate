@@ -7,13 +7,16 @@ import contextlib
 import hmac
 import json
 import re
+import shutil
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from aiohttp import web
 
 from egressgw import history, learning, usage
 from egressgw.policy import ACTIONS, SCOPES, Decision, Policy, Rule, is_ip, load_preset, valid_hostname
+from egressgw.store import summarize
 
 if TYPE_CHECKING:
     from egressgw.core import Gateway
@@ -236,6 +239,13 @@ def build_app(gw: Gateway) -> web.Application:
                 "events": gw.events.recent(int(q.get("limit", 100)), host=host, port=port),
             }
         )
+
+    @routes.get("/events/summary")
+    async def events_summary(request):
+        """What happened since `since` (default: the last hour, at most 7 days back) for the Overview tab."""
+        now = time.time()
+        since = min(now, max(now - 7 * 86400, float(request.query.get("since", now - 3600))))
+        return _json(await asyncio.to_thread(summarize, gw.events.path, since))
 
     @routes.get("/stream")
     async def stream(request):
@@ -533,12 +543,41 @@ def build_app(gw: Gateway) -> web.Application:
                 "services": gw.config.get("services") or [],
                 "ca_pem": ca.read_text() if ca.exists() else None,
                 "pending": len(gw.pending),
+                "version": version(),
+                "data_disk": _disk(gw.events.path.parent),
+                "events_db_bytes": _size(gw.events.path),
             }
         )
 
     app = web.Application(middlewares=[auth], client_max_size=1024 * 1024)
     app.add_routes(routes)
     return app
+
+
+def version() -> str | None:
+    """The tallygate release (VERSION, copied into the image next to the package; the repository root in a checkout)."""
+    here = Path(__file__).resolve().parent
+    for p in (here.parent / "VERSION", here.parents[1] / "VERSION"):
+        with contextlib.suppress(OSError):
+            return p.read_text(encoding="utf-8").strip()[:20] or None
+    return None
+
+
+def _disk(path) -> dict | None:
+    try:
+        d = shutil.disk_usage(path)
+    except OSError:
+        return None
+    return {"total": d.total, "used": d.used, "free": d.free}
+
+
+def _size(path) -> int:
+    """Size of the SQLite file with its WAL."""
+    total = 0
+    for p in (path, path.with_name(path.name + "-wal")):
+        with contextlib.suppress(OSError):
+            total += p.stat().st_size
+    return total
 
 
 def _search(q) -> dict:
