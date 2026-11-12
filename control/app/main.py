@@ -583,6 +583,8 @@ async def on_startup(app: web.Application):
 async def on_cleanup(app: web.Application):
     for t in app["bg"]:
         t.cancel()
+    await asyncio.gather(*app["bg"], return_exceptions=True)  # finished before their HTTP session closes
+    await app["notifier"].close()
     await app["http"].close()
 
 
