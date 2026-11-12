@@ -1,7 +1,8 @@
 # tallygate agent: minimal Claude Code workspace. No route to the internet - all egress via egress-gw.
-FROM docker.io/library/debian:trixie-slim
+FROM docker.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
-# Bump deliberately; there is no auto-updater inside the agent.
+# The single source of the Claude Code version. Bump deliberately: there is no auto-updater inside the agent.
+# .github/workflows/claude-code.yml opens a PR when a new version is published.
 ARG CLAUDE_VERSION=2.1.304
 # Extra Debian packages for your toolchains, e.g. "build-essential golang-go"
 ARG EXTRA_PACKAGES=""
@@ -52,4 +53,6 @@ RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/status.py /usr/local/b
 ENV HOME=/home/agent DISABLE_AUTOUPDATER=1 TERM=xterm-256color
 USER 1000:1000
 WORKDIR /workspace
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --start-interval=3s \
+  CMD python3 -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:7680/status', timeout=4)" || exit 1
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

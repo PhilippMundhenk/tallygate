@@ -26,22 +26,22 @@ from pathlib import Path
 import aiohttp
 from aiohttp import WSMsgType, web
 
-from app import notify
+from app import bootstrap, notify
 
 log = logging.getLogger("control")
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 STATIC = Path(__file__).parent / "static"
 GW_URL = os.environ.get("GW_URL", "http://egress-gw:8081").rstrip("/")
-GW_TOKEN = os.environ.get("GW_API_TOKEN", "")
+GW_TOKEN = ""  # set in build_app() (environment or the gateway's token volume)
 AGENT_HOST = os.environ.get("AGENT_HOST", "agent")
 AGENT_STATUS_PORT = int(os.environ.get("AGENT_STATUS_PORT", "7680"))
-TTYD_AUTH = os.environ.get("TTYD_CREDENTIAL", "")  # user:pass shared with the agent's ttyd
+TTYD_AUTH = ""  # user:pass shared with the agent's ttyd; set in build_app()
 TERMINALS = dict(
     (n, int(p))
     for n, p in (t.split(":") for t in os.environ.get("TERMINALS", "rc:7681,bash:7682,claude:7683").split(","))
 )
-SESSION_SECRET = (os.environ.get("SESSION_SECRET") or secrets.token_hex(32)).encode()
+SESSION_SECRET = b""  # set in build_app()
 SESSION_TTL = int(os.environ.get("SESSION_TTL", str(12 * 3600)))  # absolute lifetime
 SESSION_IDLE = int(os.environ.get("SESSION_IDLE", str(2 * 3600)))  # idle timeout
 PROXY_AUTH_HEADER = os.environ.get("TRUST_PROXY_AUTH_HEADER", "")  # e.g. Remote-User (only behind a trusted proxy!)
@@ -137,17 +137,12 @@ def _prune_sessions() -> None:
             del _sessions[sid]
 
 
-def hash_password(pw: str, log2n: int = 16) -> str:
-    salt = os.urandom(16)
-    n = 2**log2n
-    digest = hashlib.scrypt(pw.encode(), salt=salt, n=n, r=8, p=1, maxmem=256 * n * 8 + 1024 * 1024).hex()
-    return f"scrypt:{log2n}:{salt.hex()}:{digest}"
-
-
 def check_password(pw: str) -> bool:
     """CONTROL_PASSWORD_HASH = "scrypt:<log2N>:<salt-hex>:<hash-hex>" (legacy "scrypt:<salt>:<hash>" = N 2^14),
-    or CONTROL_PASSWORD (plain, discouraged)."""
+    or CONTROL_PASSWORD (plain, discouraged), or the hash stored in the control volume (zero-config default)."""
     h = os.environ.get("CONTROL_PASSWORD_HASH", "")
+    if not h and not os.environ.get("CONTROL_PASSWORD"):
+        h = bootstrap.password_hash()  # read per attempt: `python -m app.passwd` applies without a restart
     if h.startswith("scrypt:"):
         parts = h.split(":")
         try:
@@ -504,8 +499,12 @@ async def watch_gateway(app: web.Application):
 
 
 def build_app() -> web.Application:
-    if not (os.environ.get("CONTROL_PASSWORD") or os.environ.get("CONTROL_PASSWORD_HASH") or PROXY_AUTH_HEADER):
-        raise SystemExit("Set CONTROL_PASSWORD_HASH (or CONTROL_PASSWORD, or TRUST_PROXY_AUTH_HEADER)")
+    global GW_TOKEN, TTYD_AUTH, SESSION_SECRET
+    GW_TOKEN = bootstrap.gw_token()
+    TTYD_AUTH = bootstrap.ttyd_credential()
+    SESSION_SECRET = bootstrap.session_secret()
+    if not PROXY_AUTH_HEADER:
+        bootstrap.ensure_password()
     if PROXY_AUTH_HEADER and not TRUSTED_PROXIES:
         raise SystemExit("TRUST_PROXY_AUTH_HEADER requires TRUSTED_PROXIES (CIDRs of your auth proxy)")
     if TRUST_FORWARDED and not TRUSTED_PROXIES:
