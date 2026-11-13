@@ -37,8 +37,9 @@ def test_repeat_count_survives_an_event_replacing_it_before_the_flush(gw):
 def test_failed_upstream_connect_releases_connection_state(gw):
     gw.orig_host["s1"] = "x.example"
     gw.conn_grant["s1"] = ("g", "x.example", None)
+    gw.verdicts["s1"] = "verdict"
     gw.server_connect_error(SimpleNamespace(server=SimpleNamespace(id="s1")))
-    assert "s1" not in gw.orig_host and "s1" not in gw.conn_grant
+    assert "s1" not in gw.orig_host and "s1" not in gw.conn_grant and "s1" not in gw.verdicts
 
 
 def test_state_files_are_fsynced_before_the_rename(tmp_path, monkeypatch):

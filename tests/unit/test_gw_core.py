@@ -23,6 +23,7 @@ from mitmproxy.test import tflow, tutils
 
 from egressgw import core
 from egressgw.grants import Target
+from egressgw.model import Verdict
 
 
 @pytest.fixture
@@ -303,6 +304,7 @@ def grant_conn(gw, target: Target, level="write", name="nas") -> str:
     a = gw.grants.activate(name, level, 600, "", "t")
     sid = "srv-1"
     gw.conn_grant[sid] = (a.id, target.host, target)
+    gw.verdicts[sid] = Verdict(target.host, target.port, a.id, target)
     return sid
 
 
@@ -383,6 +385,7 @@ def test_tls_verify_false_disables_verification_only_for_that_target(make):
 def hello(gw, orig, sni, sid="srv-9", port=443):
     if orig is not None:
         gw.orig_host[sid] = orig
+        gw.verdicts[sid] = Verdict(orig, port)
     ctx = SimpleNamespace(
         server=SimpleNamespace(id=sid, address=("192.0.2.1", port)), client=SimpleNamespace(peername=("10.0.0.5", 1))
     )
@@ -501,6 +504,7 @@ def test_websocket_refused_on_read_grants_only(make):
         flow = tflow.twebsocketflow()
         a = gw.grants.activate("nas", level, 600, "", "t")
         gw.conn_grant[flow.server_conn.id] = (a.id, "nas.example", t)
+        gw.verdicts[flow.server_conn.id] = Verdict("nas.example", 443, a.id, t)
         gw.websocket_start(flow)
         assert (not flow.killable) is killed
     ev = gw.events.recent(5)
@@ -511,7 +515,9 @@ def grant_flow(gw, level="read", **req):
     flow = tflow.tflow(req=tutils.treq(scheme="https", host="nas.example", port=443, path="/x", **req))
     flow.request.headers["Host"] = "nas.example"
     a = gw.grants.activate("nas", level, 600, "", "t")
-    gw.conn_grant[flow.server_conn.id] = (a.id, "nas.example", Target(host="nas.example", port=443))
+    t = Target(host="nas.example", port=443)
+    gw.conn_grant[flow.server_conn.id] = (a.id, "nas.example", t)
+    gw.verdicts[flow.server_conn.id] = Verdict("nas.example", 443, a.id, t)
     return flow, a
 
 
