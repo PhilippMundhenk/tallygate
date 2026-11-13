@@ -22,7 +22,7 @@ agent:  granted: homeassistant (read) for 30 min
 | **paths** | HTTP path patterns (`/api/*`). Paths are matched after rejecting traversal tricks (`..`, `//`, `%2e`, `%2f`, backslashes, NUL). |
 | **levels** | `read` = `GET`/`HEAD`/`OPTIONS` only, no WebSocket upgrades. `write` = every method. A grant can offer one or both. `tcp` targets are only usable at `write`. |
 | **approval** | Per level: `ask` (a human decides) or `auto` (granted at once, still logged and shown). A common choice is `read: auto, write: ask`. |
-| **lan** | Exempts **exactly this target** from the hard deny, so it may resolve to a private address. Loopback, link-local/metadata and multicast stay unreachable (`grants_never`). |
+| **lan** | Exempts **exactly this target** from the hard deny, so it may resolve to a private address. Loopback, link-local/metadata and multicast stay unreachable (`grants_never`), and so does the tallygate stack itself (`GW_INTERNAL_NETS`). |
 | **address** | Fixed IP for the target (no DNS lookup), handy when the gateway cannot resolve your local names. |
 | **tls_fingerprint** | SHA-256 of the service's certificate: lets the gateway trust a self-signed cert (Proxmox, a NAS, a router) **without** turning verification off. `tls_verify: false` exists (config-file grants only), but avoid it. |
 | **inject** | Header templates such as `Authorization: Bearer ${ha_token}`. The secret lives in the gateway, and the agent never sees it. The agent's own `Authorization`/`Cookie` are stripped. **Config-file grants only.** |
@@ -101,7 +101,8 @@ time out after `grant_request_timeout` (300 s). At most `grant_max_pending` (3) 
 
 1. A connection to a target of an **active** grant is checked before the normal rules. Names are resolved
    (or `address` is used) and the resolved IPs are checked: `grants_never` always applies, the hard deny
-   applies unless `lan: true`, and for UI grants `grants_lan_allow` applies. The connection is then pinned
+   applies unless `lan: true`, and for UI grants `grants_lan_allow` applies. The stack's own networks
+   (`GW_INTERNAL_NETS`) and the gateway's own listeners are refused for every grant. The connection is then pinned
    to the checked IP.
 2. `https`/`http` targets are **always intercepted**, so every request is checked:
    - the `Host` header must equal the granted host;

@@ -47,6 +47,8 @@ services:
       GW_API_HOST: 172.31.11.2           # management API: control network only
       GW_API_PORT: "8081"
       GW_GRANTS_PORT: "8079"             # grant request API for the agent (agent network)
+      # The stack's own networks (see `networks:` below): never reachable through a grant, not even a LAN one.
+      GW_INTERNAL_NETS: 172.31.10.0/24,172.31.11.0/24,172.31.12.0/24,172.31.13.0/24
       GW_API_TOKEN: ${GW_API_TOKEN:-}    # empty: created on first start in the gw-token volume
       TZ: ${TZ:-}                        # time zone for quiet hours, e.g. Europe/Berlin (empty: UTC)
     volumes:

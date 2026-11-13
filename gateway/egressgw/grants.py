@@ -15,6 +15,7 @@ from __future__ import annotations
 import fnmatch
 import ipaddress
 import logging
+import os
 import re
 import secrets as _secrets
 import time
@@ -305,6 +306,33 @@ class GrantRequest:
         return d
 
 
+def internal_nets(value: str) -> list:
+    """GW_INTERNAL_NETS: the stack's own networks as comma-separated CIDRs (set in compose.yaml). A broken
+    entry stops the gateway (fail closed)."""
+    nets = []
+    for c in (v.strip() for v in value.split(",")):
+        if not c:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(c, strict=False))
+        except ValueError as e:
+            raise ValueError(f"GW_INTERNAL_NETS: invalid CIDR {c!r} ({e})") from None
+    return nets
+
+
+def own_sockets(env) -> set:
+    """(address, port) of the gateway's own listeners: management API, grant API, HTTP and SOCKS proxy."""
+    own = set()
+    for host_var, ports in (
+        ("GW_API_HOST", (("GW_API_PORT", "8081"),)),
+        ("GW_LISTEN_HOST", (("GW_GRANTS_PORT", "8079"), ("GW_HTTP_PORT", "3128"), ("GW_SOCKS_PORT", "1080"))),
+    ):
+        host = env.get(host_var, "")
+        if is_ip(host):
+            own.update((ip_addr(host), int(env.get(var, default))) for var, default in ports)
+    return own
+
+
 def clean_reason(text: str) -> str:
     """Agent-written text shown to humans: printable, single line, bounded."""
     text = "".join(c if c.isprintable() else " " for c in str(text or ""))
@@ -315,6 +343,11 @@ class Grants:
     def __init__(self, config: dict, data_dir: Path) -> None:
         self.ui_path = data_dir / "grants.yaml"
         self.never = [ipaddress.ip_network(c, strict=False) for c in config.get("grants_never") or DEFAULT_NEVER]
+        # The stack's own networks and the gateway's own listeners are never reachable through a grant,
+        # whatever `grants_never` and `lan: true` say: a LAN target skips the hard deny, which is what keeps
+        # the agent away from the management API and the control UI on the normal path (#112).
+        self.internal = internal_nets(os.environ.get("GW_INTERNAL_NETS", ""))
+        self.own = own_sockets(os.environ)
         # LAN ranges that grants defined in the UI may reach (config-file grants are not limited).
         self.ui_lan_allow = [ipaddress.ip_network(c, strict=False) for c in config.get("grants_lan_allow") or []]
         self.request_timeout = int(config.get("grant_request_timeout", 300))
@@ -374,6 +407,8 @@ class Grants:
             raise ValueError(f"grant {name} is defined in the config file and cannot be changed in the UI")
         g = GrantDef.from_dict(name, d, "ui")
         for t in g.targets:
+            if t.address and self._in(t.address, self.internal):
+                raise ValueError(f"{t.address} belongs to the tallygate stack itself")
             if t.lan and not self.ui_lan_allow:
                 raise ValueError("LAN targets in UI grants need grants_lan_allow in the gateway config file")
             if t.lan and t.address and not self._in(t.address, self.ui_lan_allow):
@@ -431,6 +466,10 @@ class Grants:
         for ip in ips:
             if self._in(ip, self.never):
                 return f"grant {g.name}: {ip} is never reachable"
+            if self._in(ip, self.internal):
+                return f"grant {g.name}: {ip} belongs to the tallygate stack itself"
+            if (ip_addr(ip), t.port) in self.own:
+                return f"grant {g.name}: {ip}:{t.port} is the gateway itself"
             if t.lan and g.source == "ui" and not self._in(ip, self.ui_lan_allow):
                 return f"grant {g.name}: {ip} is outside grants_lan_allow"
         return None

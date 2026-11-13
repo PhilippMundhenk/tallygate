@@ -49,6 +49,29 @@ def test_lan_grant_works_while_a_rule_allows_the_name(make_gateway, upstream):
     assert proxy_request(gw["ports"]["http"], f"lanecho.test:{port}", "/", "POST")[0] == 403  # read-only
 
 
+def test_a_lan_grant_never_reaches_the_stack_itself(make_gateway, upstream):
+    """#112: a LAN target skips the hard deny. The stack's own networks (GW_INTERNAL_NETS) stay unreachable
+    through a grant, whatever `grants_never` says."""
+    port = upstream["lan"]
+    target = {"host": "lanecho.test", "port": port, "scheme": "http", "lan": True}
+    gw = make_gateway(
+        {
+            "hard_deny_floor": ["127.0.0.2/32"],
+            "grants_never": ["169.254.0.0/16"],
+            "grants": {"lan": {"targets": [target], "levels": ["read"], "approval": "auto"}},
+        },
+        {"default": "ask", "ask_timeout": 5, "rules": []},
+        GW_TEST_FLOOR_REPLACE="1",
+        GW_TEST_STATIC_HOSTS="lanecho.test=127.0.0.2",
+        GW_INTERNAL_NETS="127.0.0.2/32",  # 127.0.0.2 plays a container of the stack
+    )
+    request_grant(gw, "lan", "read")
+    assert proxy_request(gw["ports"]["http"], f"lanecho.test:{port}", "/")[0] in (403, 502)
+    _, events, _ = gw["api"].call("GET", "/events?limit=20")
+    denied = next(e for e in events if e.get("host") == "lanecho.test" and e["action"] == "deny")
+    assert denied["reason"] == "grant lan: 127.0.0.2 belongs to the tallygate stack itself"
+
+
 def _send(sock, host, path) -> int:
     """One keep-alive request; reads exactly one response."""
     sock.sendall(f"GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n".encode())
