@@ -310,13 +310,16 @@ that service port — not via the proxy or SOCKS) rather than shrinking the floo
 
 ### Presets (`gateway/presets/*.yaml`)
 
+The UI calls these **shortcuts** (*Rules → Shortcuts*). "Preset" is the name of the file and of the API route
+behind a shortcut; `category` decides where the UI lists it.
+
 | Preset | Category | Content | Typical use |
 |---|---|---|---|
 | `baseline` | policy | default `ask`; allow Anthropic/Claude, GitHub, npm, PyPI | initial policy |
 | `lockdown` | policy | default `deny`; Anthropic only | emergency: replace the policy via raw editor/API (`POST` refuses it) |
-| `open` | internet | any public host on 80/443 | temporary, **always with a TTL** (*Quick actions*) |
+| `open` | internet | any public host on 80/443 | temporary, **always with a TTL** (*Shortcuts → Internet*) |
 | `internet` | internet | any public host on any port | temporary, **always with a TTL** |
-| `python`, `node`, `go`, `rust`, `debian`, `containers`, `huggingface` | template | the hosts a tool ecosystem needs | *Quick actions → Templates* |
+| `python`, `node`, `go`, `rust`, `debian`, `containers`, `huggingface` | template | the hosts a tool ecosystem needs | *Shortcuts → Tool ecosystems* |
 
 Presets of the categories `internet` and `template` are applied **on top** (`POST /presets/<name>`):
 
@@ -341,7 +344,7 @@ rules:
   - {id: files, action: allow, host: "files.pythonhosted.org", port: 443}
 ```
 
-Add your own templates by mounting YAML files into the gateway's `/app/presets/`, e.g.
+Add your own shortcuts by mounting YAML files into the gateway's `/app/presets/`, e.g.
 `./presets/company.yaml:/app/presets/company.yaml:ro` in `compose.yaml`. The file name (without `.yaml`) is
 the preset name and may only contain letters, digits and `_` (no `-`). Without `category` a file is a
 `template`.

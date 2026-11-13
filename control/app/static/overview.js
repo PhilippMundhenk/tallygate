@@ -104,7 +104,7 @@ $("#ovWeb").onclick = guard(async () => {
 });
 $("#ovStop").onclick = confirmClick($("#ovStop"), "Revoke all grants, deny everything pending, undo the internet shortcuts and block everything unknown?", async () => {
   const r = await gw("POST", "/emergency-stop", {});
-  toast(r.ok ? "Emergency stop: unknown destinations are blocked" : "Emergency stop incomplete: see Rules → Quick actions", !r.ok);
+  toast(r.ok ? "Emergency stop: unknown destinations are blocked" : "Emergency stop incomplete: see Rules → Shortcuts", !r.ok);
   if (typeof showStopResult === "function") showStopResult(r);
   await Promise.allSettled([loadPending(), loadGrants(), loadOverview()]);
 });

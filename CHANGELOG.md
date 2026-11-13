@@ -138,6 +138,10 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   on the emergency stop and on restart (#69).
 
 ### Changed
+- **One name for one-click rule sets:** the UI and the docs say **Shortcuts** (*Rules → Shortcuts*, with the
+  groups *Internet* and *Tool ecosystems*) where they said quick actions, templates, internet shortcuts and
+  presets. "Preset" remains the name of the files in `gateway/presets/` and of the `/presets` API routes; nothing
+  about them changes (#121).
 - **Approval prompts are shorter:** *Allow once*, *Always allow* and *Deny* come first; *Allow 1 h*,
   *Always (\*.domain)* and *Block forever* are behind **More** — in the web UI, in Telegram (*More…* adds them to
   the same message) and in Matrix (three reactions are pre-seeded, the others still work). *Allow 2 min* is now

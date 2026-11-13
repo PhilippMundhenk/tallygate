@@ -311,9 +311,9 @@ docker compose exec control python -m app.passwd --print-hash   # prints scrypt:
 |---|---|
 | Approve/deny connections | UI → Approvals, Telegram buttons, Matrix reactions/replies |
 | Review traffic | UI → Log (filter, "only blocked", one-click allow/deny rule) |
-| Tighten/loosen policy | UI → Rules (quick actions and templates, mode, add/delete rules, dry-run test, history) |
-| Temporarily open the internet | Rules → Quick actions → *Allow web (HTTP/HTTPS) for 15 min* (or Overview → *Allow web for 15 min*) |
-| Emergency stop | Rules → Quick actions → *Emergency stop* (revokes grants, denies what is pending, removes the internet shortcuts, ends learning mode, mode `deny`, suspends auto-approved grants), or `docker compose stop agent` |
+| Tighten/loosen policy | UI → Rules (shortcuts, mode, add/delete rules, dry-run test, history) |
+| Temporarily open the internet | Rules → Shortcuts → *Allow web (HTTP/HTTPS) for 15 min* (or Overview → *Allow web for 15 min*) |
+| Emergency stop | Rules → Shortcuts → *Emergency stop* (revokes grants, denies what is pending, removes the internet shortcuts, ends learning mode, mode `deny`, suspends auto-approved grants), or `docker compose stop agent` |
 | Several sessions in parallel | New session in the Claude app on the same environment; `RC_ARGS=--spawn worktree` for isolated worktrees |
 | Files into or out of the workspace | UI → Files (upload into the open folder, download results) |
 | Shell in the agent | UI → Console → bash (or `docker compose exec agent bash`) |
