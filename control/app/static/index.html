@@ -204,6 +204,27 @@
         <label>Description <input id="geDesc" placeholder="Home Assistant REST API">
           <small>Shown to you in every request.</small></label>
       </div>
+      <div class="grid2" id="geSimple">
+        <label>Address <input id="geAddr" placeholder="ha.lan:8123 or https://api.example.com/v1/">
+          <small>Host and port, or a URL. A path in a URL limits the grant to that path.</small></label>
+        <label>Type <select id="geKind">
+            <option value="https">Web or API (HTTPS)</option>
+            <option value="http">Web or API without TLS (HTTP)</option>
+            <option value="tcp">Something else: SSH, a database (TCP)</option></select>
+          <small>For web and API targets every request is checked. Other protocols are passed through as they are.</small></label>
+        <label>Access <select id="geAccess">
+            <option value="read">Read-only</option>
+            <option value="full">Full access</option></select>
+          <small id="geAccessHint">Read-only: the agent can look but not change anything.</small></label>
+        <label>For how long <select id="geDur">
+            <option value="30m">30 minutes</option><option value="1h" selected>1 hour</option>
+            <option value="4h">4 hours</option><option value="1d">1 day</option></select>
+          <small>Every approval ends by itself after this time. You approve each request.</small></label>
+      </div>
+      <label class="check ge-lan"><input type="checkbox" id="geLan"> This is a device on my local network</label>
+      <p id="geSimpleNote" class="hint hidden" role="status">This grant uses settings that only <b>Advanced</b> shows
+        (several targets, paths, automatic approval, a fixed IP or a pinned certificate). They are kept as they are.</p>
+      <details id="geAdvanced" class="help"><summary>Advanced: levels, automatic approval, paths, several targets</summary>
       <div class="grid4">
         <label class="check"><input type="checkbox" id="geRead" checked> read level</label>
         <label>approval <select id="geApprRead"><option>ask</option><option>auto</option></select></label>
@@ -236,6 +257,7 @@
       <button id="geAddTarget" class="small secondary">+ target</button>
       <p class="hint">Credential injection and disabling TLS verification are only available for grants in the
         gateway config file: a UI session must not be able to send stored secrets to a host of its choosing.</p>
+      </details>
       <div class="btns">
         <button id="geSave">Save grant</button><button id="geCancel" class="secondary">Cancel</button>
       </div>

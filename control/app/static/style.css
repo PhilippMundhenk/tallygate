@@ -57,7 +57,7 @@ h4{font-size:13px;margin:14px 0 4px}
 .target-row .t-host{flex:2;min-width:160px}.target-row .t-port{width:90px}.target-row .t-paths{flex:2;min-width:140px}
 .target-row .t-address{width:150px}.target-row .t-fp{flex:2;min-width:200px}.target-row label{margin:0;display:flex;gap:4px;align-items:center}
 #secretList .row-between{padding:4px 0;border-bottom:1px solid var(--line)}
-label.check{display:flex;gap:6px;align-items:center;margin-top:30px;color:var(--fg)}
+label.check{display:flex;gap:6px;align-items:center;margin-top:30px;color:var(--fg)}label.check.ge-lan{margin:10px 0}
 label.check input,.grid4 label.check input{display:inline-block;width:auto;margin:0}
 label.inline{display:flex;gap:6px;align-items:center;margin:0;flex:1;min-width:180px}label.inline input{flex:1;min-width:0;margin:0}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}

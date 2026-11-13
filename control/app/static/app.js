@@ -427,6 +427,7 @@ $("#qaLan").onclick = guard(async () => {
   openGrantEditor(null);
   $("#geTargets").innerHTML = "";
   $("#geTargets").appendChild(targetRow({ scheme: "http", host: "", port: 80, lan: true }));
+  $("#geLan").dataset.touched = "1"; grantAdvancedToSimple();  // the simple form starts as "HTTP, local network"
   $("#geDesc").value = "Device on the local network";
   toast(`Local targets must be inside ${g.lan_allow_ui.join(", ")}`);
 });
@@ -526,6 +527,67 @@ function targetRow(t = { scheme: "https", host: "", port: 443, paths: ["/*"] }) 
   $(".t-del", row).onclick = () => row.remove();
   return row;
 }
+// The simple form (#121): address, type, access, duration, local network. It writes into the controls under
+// "Advanced", which are what is saved; changes made there are shown back in the simple form.
+const GE_PORTS = { https: 443, http: 80 };
+const GE_LOCAL = /(\.(lan|local|home\.arpa|internal|fritz\.box)$)|^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
+function parseGrantAddress(value) {
+  let v = value.trim(), scheme = null, path = null;
+  const m = v.match(/^([a-z][a-z0-9+.-]*):\/\/(.*)$/i);
+  if (m) { scheme = m[1].toLowerCase(); v = m[2]; }
+  const slash = v.indexOf("/");
+  if (slash >= 0) { path = v.slice(slash).split(/[?#]/)[0]; v = v.slice(0, slash); }
+  let host = v, port = null;
+  const bracket = v.match(/^\[([^\]]+)\](?::(\d+))?$/);  // [IPv6]:port
+  if (bracket) { host = bracket[1]; port = bracket[2]; } else if (v.indexOf(":") > 0 && v.indexOf(":") === v.lastIndexOf(":")) {
+    host = v.slice(0, v.indexOf(":")); port = v.slice(v.indexOf(":") + 1);
+  }
+  return { scheme, host: host.toLowerCase(), port: port ? Number(port) : null, path };
+}
+function grantSimpleToAdvanced() {
+  const a = parseGrantAddress($("#geAddr").value);
+  if (a.scheme) $("#geKind").value = a.scheme in GE_PORTS ? a.scheme : "tcp";  // ssh://, postgres://, ...
+  const kind = $("#geKind").value;
+  if (!$("#geTargets .target-row")) $("#geTargets").appendChild(targetRow());
+  const row = $("#geTargets .target-row");
+  $(".t-scheme", row).value = kind; $(".t-host", row).value = a.host;
+  $(".t-port", row).value = a.port || GE_PORTS[kind] || (a.scheme === "ssh" ? 22 : "");
+  if (kind !== "tcp" && a.path && a.path !== "/") $(".t-paths", row).value = a.path.endsWith("/") ? `${a.path}*` : `${a.path}, ${a.path}/*`;
+  if (!$("#geLan").dataset.touched) $("#geLan").checked = GE_LOCAL.test(a.host);
+  $(".t-lan", row).checked = $("#geLan").checked;
+  if (kind === "tcp") $("#geAccess").value = "full";  // no protocol visibility: read-only cannot be enforced
+  $("#geAccess").options[0].disabled = kind === "tcp";
+  const full = $("#geAccess").value === "full";
+  $("#geRead").checked = kind !== "tcp"; $("#geWrite").checked = full;
+  $("#geAccessHint").textContent = kind === "tcp" ? "Other protocols cannot be limited to reading."
+    : full ? "Full access: the agent can change things. You can still approve read-only each time."
+      : "Read-only: the agent can look but not change anything.";
+  $("#geTtl").value = $("#geDur").value; $("#geMaxTtl").value = $("#geDur").value;
+}
+function grantAdvancedToSimple() {
+  const rows = $$("#geTargets .target-row"), row = rows[0];
+  const kind = row ? $(".t-scheme", row).value : "https";
+  $("#geKind").value = kind;
+  const host = row ? $(".t-host", row).value.trim() : "", port = row ? $(".t-port", row).value : "";
+  $("#geAddr").value = host ? `${host.includes(":") ? `[${host}]` : host}${port ? `:${port}` : ""}` : "";
+  $("#geLan").checked = !!row && $(".t-lan", row).checked;
+  $("#geAccess").options[0].disabled = kind === "tcp";
+  $("#geAccess").value = $("#geWrite").checked ? "full" : "read";
+  const dur = $("#geTtl").value.trim();
+  if (dur && ![...$("#geDur").options].some((o) => o.value === dur)) $("#geDur").add(new Option(dur, dur));
+  if (dur) $("#geDur").value = dur;
+  const special = rows.length > 1 || $("#geApprRead").value === "auto" || $("#geApprWrite").value === "auto"
+    || $("#geTtl").value.trim() !== $("#geMaxTtl").value.trim()
+    || rows.some((r) => $(".t-address", r).value.trim() || $(".t-fp", r).value.trim()
+      || ($(".t-scheme", r).value !== "tcp" && $(".t-paths", r).value.trim() !== "/*"));
+  $("#geSimpleNote").classList.toggle("hidden", !special);
+  return special;
+}
+["#geAddr", "#geKind", "#geAccess", "#geDur"].forEach((id) => { $(id).oninput = grantSimpleToAdvanced; $(id).onchange = grantSimpleToAdvanced; });
+$("#geLan").onchange = () => { $("#geLan").dataset.touched = "1"; grantSimpleToAdvanced(); };
+$("#geAdvanced").addEventListener("change", grantAdvancedToSimple);
+$("#geAdvanced").addEventListener("click", (e) => { if (e.target.closest(".t-del, #geAddTarget")) setTimeout(grantAdvancedToSimple); });
+
 function openGrantEditor(d) {
   const ed = $("#grantEditor"); ed.classList.remove("hidden");
   $("#geTitle").textContent = d ? `Edit grant ${d.name}` : "New grant";
@@ -535,6 +597,9 @@ function openGrantEditor(d) {
   $("#geApprRead").value = d?.approval?.read || "ask"; $("#geApprWrite").value = d?.approval?.write || "ask";
   $("#geTtl").value = d ? d.default_ttl : "1h"; $("#geMaxTtl").value = d ? d.max_ttl : "4h";
   $("#geTargets").innerHTML = ""; (d ? d.targets : [undefined]).forEach((t) => $("#geTargets").appendChild(targetRow(t)));
+  delete $("#geLan").dataset.touched; if (d) $("#geLan").dataset.touched = "1";  // an existing grant keeps its LAN setting
+  if (!d) { $("#geAddr").value = ""; $("#geKind").value = "https"; $("#geAccess").value = "read"; $("#geDur").value = "1h"; grantSimpleToAdvanced(); }
+  $("#geAdvanced").open = grantAdvancedToSimple();  // open "Advanced" when the grant uses more than the simple form shows
   ed.scrollIntoView({ behavior: "smooth" });
 }
 $("#grantNew").onclick = () => openGrantEditor(null);
