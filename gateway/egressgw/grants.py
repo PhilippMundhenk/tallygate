@@ -342,7 +342,13 @@ def clean_reason(text: str) -> str:
 class Grants:
     def __init__(self, config: dict, data_dir: Path) -> None:
         self.ui_path = data_dir / "grants.yaml"
-        self.never = [ipaddress.ip_network(c, strict=False) for c in config.get("grants_never") or DEFAULT_NEVER]
+        # The built-in list always applies; `grants_never` adds to it (as hard_deny_floor does to its list).
+        # TEST ONLY: with GW_TEST_FLOOR_REPLACE a configured list replaces it (the e2e upstreams are on loopback).
+        configured = [ipaddress.ip_network(c, strict=False) for c in config.get("grants_never") or []]
+        replace = os.environ.get("GW_TEST_FLOOR_REPLACE") == "1" and configured
+        builtin = [] if replace else [ipaddress.ip_network(c, strict=False) for c in DEFAULT_NEVER]
+        self.never_configured = [n for n in configured if n not in builtin]
+        self.never = [*builtin, *self.never_configured]
         # The stack's own networks and the gateway's own listeners are never reachable through a grant,
         # whatever `grants_never` and `lan: true` say: a LAN target skips the hard deny, which is what keeps
         # the agent away from the management API and the control UI on the normal path (#112).

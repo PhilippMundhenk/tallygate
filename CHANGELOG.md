@@ -11,6 +11,11 @@ set of security fixes from two review rounds, quick actions and templates, help 
 coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you update.
 
 ### Security
+- **A CIDR `deny` rule always wins for names:** a name that resolves into the range of a `deny` rule on a CIDR
+  is refused wherever that rule stands. Before, a host `allow` rule above it won, and approvals and shortcuts
+  are added on top, so an *Always allow* or *Allow web for 15 min* silently switched the deny off (#119).
+- **`grants_never` adds to the built-in list** instead of replacing it: loopback, link-local, multicast and
+  unspecified addresses stay closed for every grant, whatever the config lists.
 - **Grants and the stack itself:** a `lan: true` grant target skips the hard deny, and `grants_never` did not
   cover the stack's own networks, so a LAN grant pointing there could reach the gateway's management API or
   the control UI. The stack's networks (`GW_INTERNAL_NETS`, set in `compose.yaml`) and the gateway's own

@@ -24,7 +24,7 @@ For every connection the agent makes (`host:port`), in this order:
 3. **Resolution**, only once the name is allowed: by a rule, by mode `allow`, by your approval (it adds a rule)
    or by learning mode.
 4. **The same check again with the resolved IPs**: the hard deny first (a public name that resolves to
-   `192.168.x.x` is still refused), then the rules top to bottom, now including `deny` rules on CIDRs, then the
+   `192.168.x.x` is still refused), then `deny` rules on CIDRs (wherever they stand), then the rules top to bottom, then the
    mode. The connection is pinned to the checked IP.
 
 Two things come before the rules. A destination covered by an **active** [grant](grants.md) is handled by the
@@ -77,15 +77,16 @@ range as a string (`"8000-8100"`), `"*"` or a list of those (`[22, "8000-8100"]`
 | # | Goal | Rule | Effect |
 |---|---|---|---|
 | 13 | One public IP | `allow 203.0.113.10/32:443` | the agent may connect to `203.0.113.10:443` **by IP**. A name that resolves to this IP is *not* allowed by it (step 2 decides names). |
-| 14 | Block a hosting provider's range | `deny 198.51.100.0/24` | refuses IPs in the range, **and** names that resolve into it, as long as the rule is **above** the rule that allows the name (first match wins) |
+| 14 | Block a hosting provider's range | `deny 198.51.100.0/24` | refuses IPs in the range, **and** every name that resolves into it, wherever the rule stands in the list |
 | 15 | The same IP written as IPv6 | (nothing to do) | IPv4-mapped forms like `[::ffff:203.0.113.10]` are treated as the IPv4 address, so rule 13 and 14 cover them. tallygate has no IPv6 egress. |
 
 The addresses in these examples are placeholders from the documentation ranges. Those ranges are part of the
 built-in hard deny, so the rules do nothing as written: put a real public address or range in their place.
 
-A CIDR `deny` rule is a normal rule in the list. Approvals are added at the top, so an *Always* approval for a
-name given later sits above it and wins. For a block that no rule can override, add the range to `hard_deny`
-in the policy instead.
+For names, a CIDR `deny` rule does not depend on its position: a name that resolves into the range is refused
+even if an approval, a shortcut or one of your own rules above it allows the name. For IP literals it is a
+normal rule in the list (a CIDR `allow` above it wins). To close a range for good, including for grants, add
+it under *Rules → Never reachable*.
 
 Why CIDR *allow* rules only cover IP literals: if they also covered names, the gateway would have to resolve
 every name to check them, and an unknown name like `<secret>.attacker.example` would leak through DNS before you

@@ -240,7 +240,7 @@ const NEVER_SOURCE = {
   builtin: ["Built in", "Cannot be changed"],
   config: ["hard_deny_floor", "Gateway config file (gateway.yaml)"],
   policy: ["Added here", "The field below"],
-  grants_builtin: ["Built in, for grants", "grants_never in the gateway config file replaces this list"],
+  grants_builtin: ["Built in, for grants", "Cannot be changed"],
   grants_config: ["grants_never", "Gateway config file (gateway.yaml)"],
   stack: ["The tallygate stack itself", "GW_INTERNAL_NETS in compose.yaml, together with the networks there"],
   listener: ["The gateway itself", "Cannot be changed"],

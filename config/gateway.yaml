@@ -83,9 +83,9 @@ services: []
 
 # Grants: named, time-limited access the agent can request and you approve (docs/grants.md).
 # grants_lan_allow: [192.168.1.0/24]   # LAN ranges that grants defined in the UI may reach (default: none)
-# Never reachable through any grant. This is the default (loopback, link-local, multicast, unspecified);
-# a list here REPLACES it, so keep the entries you still want:
-# grants_never: [0.0.0.0/8, 127.0.0.0/8, 169.254.0.0/16, 224.0.0.0/4, "::/96", "fe80::/10", "ff00::/8"]
+# Never reachable through any grant: loopback, link-local, multicast and unspecified addresses are built in;
+# ranges listed here are ADDED to them.
+# grants_never: [192.168.1.1/32]      # e.g. your router
 # grant_request_timeout: 300          # seconds a grant request waits for your decision
 # grant_max_pending: 3                # open grant requests at once
 # grant_api_rate: 30                  # requests per minute the agent may send to the grant API
