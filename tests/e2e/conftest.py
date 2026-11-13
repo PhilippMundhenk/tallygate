@@ -233,7 +233,30 @@ def gateway(tmp_path_factory, upstream):
 
 
 def start_gateway(data: Path, upstream: dict, ports: dict | None = None, wait: bool = True, **env):
-    """Start egress-gw (mitmdump) on localhost with the config/policy already written to `data`."""
+    """Start egress-gw (mitmdump) on localhost with the config/policy already written to `data`.
+
+    The ports are picked as free and bound by mitmdump a moment later, so now and then one is taken in
+    between and the gateway exits at once. That start is repeated once with new ports; any other start that
+    does not come up fails with the end of the gateway's log, so the cause is in the test output."""
+    if ports is not None or not wait:
+        return _start_gateway(data, upstream, ports, wait, **env)
+    try:
+        return _start_gateway(data, upstream, None, wait, **env)
+    except GatewayStartError as e:
+        if not e.exited:
+            raise
+        return _start_gateway(data, upstream, None, wait, **env)
+
+
+class GatewayStartError(TimeoutError):
+    def __init__(self, url: str, proc: subprocess.Popen, log: Path) -> None:
+        self.exited = proc.poll() is not None
+        how = f"exited with code {proc.returncode}" if self.exited else "is still running"
+        tail = "\n".join(log.read_text(errors="replace").splitlines()[-25:])
+        super().__init__(f"{url} did not come up; the gateway process {how}. End of {log.name}:\n{tail}")
+
+
+def _start_gateway(data: Path, upstream: dict, ports: dict | None, wait: bool, **env):
     ports = ports or {k: free_port() for k in ("http", "socks", "dns", "api", "grants")}
     ca_dir = data / "ca"
     env = clean_env(
@@ -265,11 +288,14 @@ def start_gateway(data: Path, upstream: dict, ports: dict | None = None, wait: b
         "data": data,
     }
     if wait:
+        url = f"http://127.0.0.1:{ports['api']}/health"
         try:
-            wait_http(f"http://127.0.0.1:{ports['api']}/health")
+            wait_http(url, proc=proc)
         except TimeoutError:
+            log.flush()
+            err = GatewayStartError(url, proc, data / "gateway.log")
             proc.terminate()
-            raise
+            raise err from None
         for _ in range(50):  # CA export happens in `running`
             if (ca_dir / "egress-gw-ca.pem").exists():
                 break

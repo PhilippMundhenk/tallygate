@@ -15,13 +15,16 @@ import urllib.request
 TIMEOUT = 20
 
 
-def wait_http(url: str, timeout: float = 20) -> None:
+def wait_http(url: str, timeout: float = 20, proc=None) -> None:
+    """Wait until `url` answers. With `proc`, give up as soon as that process has exited."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             urllib.request.build_opener(urllib.request.ProxyHandler({})).open(url, timeout=2)
             return
         except Exception:
+            if proc is not None and proc.poll() is not None:
+                break
             time.sleep(0.2)
     raise TimeoutError(f"{url} did not come up")
 
