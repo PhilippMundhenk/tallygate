@@ -138,6 +138,9 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   on the emergency stop and on restart (#69).
 
 ### Changed
+- **Simple grant form:** *New grant* asks for a name, an address (host and port, or a URL), the type, read-only
+  or full access, and a duration. The other settings are under *Advanced* with their defaults. Grants saved from
+  the simple form use the chosen duration as default and maximum, and ask for approval each time (#121).
 - **One name for one-click rule sets:** the UI and the docs say **Shortcuts** (*Rules → Shortcuts*, with the
   groups *Internet* and *Tool ecosystems*) where they said quick actions, templates, internet shortcuts and
   presets. "Preset" remains the name of the files in `gateway/presets/` and of the `/presets` API routes; nothing

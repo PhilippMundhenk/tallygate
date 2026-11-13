@@ -113,6 +113,21 @@ def test_web_console_roundtrip(ui, control):
     assert b"tally-42" in asyncio.run(run())
 
 
+def test_grant_editor_has_the_simple_form_and_keeps_every_setting_under_advanced(ui):
+    """#121: name, address, type, access, duration and "local network"; the full editor is under Advanced."""
+    page = ui.call("GET", "/")[1].decode()
+    simple = page.index('id="geSimple"')
+    advanced = page.index('<details id="geAdvanced"')
+    end = page.index('id="geSave"')
+    for field in ('id="geAddr"', 'id="geKind"', 'id="geAccess"', 'id="geDur"', 'id="geLan"'):
+        assert simple < page.index(field) < advanced, field
+    for field in ('id="geRead"', 'id="geApprWrite"', 'id="geMaxTtl"', 'id="geTargets"', 'id="geAddTarget"'):
+        assert advanced < page.index(field) < end, field
+    assert page.index("</details>", advanced) < end  # Save stays outside the folded part
+    app = ui.call("GET", "/static/app.js")[1]
+    assert b"function grantSimpleToAdvanced()" in app and b"function grantAdvancedToSimple()" in app
+
+
 def test_console_page_is_served_by_control_not_the_agent(ui):
     """TG-01: no agent-supplied HTML/JS may be served on the control origin."""
     status, body, headers = ui.call("GET", "/term/bash/")
