@@ -112,6 +112,7 @@ GW_ALLOW = [
     ("DELETE", r"/active-grants/[a-f0-9]+"),
     ("POST", r"/grant-requests/[a-f0-9]+/decide"),
     ("GET", r"/info"),
+    ("GET", r"/never-reachable"),
     ("GET", r"/availability"),
     ("PATCH", r"/availability"),
     ("DELETE", r"/availability/missed"),

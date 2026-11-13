@@ -169,12 +169,15 @@
     </div>
     <details class="card" id="usageCard"><summary>Rule usage and suggestions <span id="usageBadge" class="badge hidden"></span></summary><div id="usageBox"></div></details>
     <div class="table-wrap"><table class="rules"><thead><tr><th>#</th><th>Action</th><th>Match</th><th>Port</th><th>Note</th><th>Expires</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="rulesBody"></tbody></table></div>
-    <details class="card"><summary>Hard deny (never reachable, never asked)</summary>
-      <p class="hint">Floor (read-only): the built-in list plus <code>hard_deny_floor</code> from the gateway config file:</p>
-      <p><code id="hardDenyFloor" class="muted"></code></p>
-      <p class="hint" id="hardDenyHint">Additional CIDRs (one per line), e.g. your Docker host's public IP
-        <code>203.0.113.7/32</code> or a provider range <code>198.51.100.0/24</code>. These can only add to the floor.</p>
-      <textarea id="hardDeny" rows="5" aria-labelledby="hardDenyHint"></textarea><button id="saveHard">Save additional hard deny</button></details>
+    <details class="card" id="neverCard"><summary>Never reachable <span id="neverCount" class="muted"></span></summary>
+      <p class="hint">Every range that can never be reached, from every place that defines one. <b>All connections</b>:
+        never asked about, and no rule can open it; only a grant for one device on the local network is exempt.
+        <b>Grants</b>: closed for every grant too, local-network ones included.</p>
+      <div class="table-wrap"><table class="never"><thead><tr><th>Range</th><th>Applies to</th><th>Comes from</th><th>To change it</th></tr></thead>
+        <tbody id="neverBody"></tbody></table></div>
+      <p class="hint" id="hardDenyHint"><b>Add your own</b> (one range per line), e.g. your Docker host's public IP as
+        <code>&lt;address&gt;/32</code> or a provider range. They apply to all connections and can only add to the list.</p>
+      <textarea id="hardDeny" rows="5" aria-labelledby="hardDenyHint"></textarea><button id="saveHard">Save my additions</button></details>
     <details class="card"><summary>Advanced: raw policy JSON</summary>
       <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><div class="row"><button id="saveRaw">Replace policy</button>
         <button id="reloadRaw" class="secondary">Reload from the gateway</button></div></details>

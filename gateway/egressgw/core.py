@@ -207,6 +207,7 @@ class Gateway:
         configured = parse_cidrs(self.config.get("hard_deny_floor") or [], "hard_deny_floor")
         builtin = [] if FLOOR_REPLACE and configured else DEFAULT_HARD_DENY
         self.hard_deny_floor = parse_cidrs([*builtin, *configured], "hard_deny_floor")
+        self.floor_configured = [c for c in configured if c not in builtin]  # for the "never reachable" view
         self.history = PolicyHistory(DATA_DIR / "policy-history.db", int(self.config.get("policy_history_keep", 500)))
         if not self.policy_path.exists():
             initial = self.config.get("initial_preset", "baseline")
@@ -273,6 +274,22 @@ class Gateway:
         self.policy = policy
         self._apply_service_exceptions()
         return policy
+
+    def never_reachable(self) -> list[dict]:
+        """Every range that is never reachable, from all the places that define one, for one view in the UI
+        (#121). `scope` is "all" (every connection; only a LAN grant target is exempt) or "grants" (every
+        grant, LAN targets included). Read-only: this reports what is enforced, it decides nothing."""
+        own = {c: "config" for c in self.floor_configured}
+        out = [{"range": c, "source": own.get(c, "builtin"), "scope": "all"} for c in self.hard_deny_floor]
+        out += [{"range": c, "source": "policy", "scope": "all"} for c in self.policy.hard_deny]
+        source = "grants_config" if self.config.get("grants_never") else "grants_builtin"
+        out += [{"range": str(n), "source": source, "scope": "grants"} for n in self.grants.never]
+        out += [{"range": str(n), "source": "stack", "scope": "grants"} for n in self.grants.internal]
+        out += [
+            {"range": f"{ip}:{port}", "source": "listener", "scope": "grants"}
+            for ip, port in sorted(self.grants.own, key=lambda s: (str(s[0]), s[1]))
+        ]
+        return out
 
     def _apply_service_exceptions(self) -> None:
         self.policy.exceptions = []

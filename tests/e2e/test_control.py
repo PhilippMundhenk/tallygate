@@ -113,6 +113,17 @@ def test_web_console_roundtrip(ui, control):
     assert b"tally-42" in asyncio.run(run())
 
 
+def test_never_reachable_is_one_list_in_the_ui(ui):
+    """#121: built-in floor, config, own additions and the grant limits in one read-only list."""
+    status, rows, _ = ui.call("GET", "/api/gw/never-reachable")
+    assert status == 200 and all(set(r) == {"range", "source", "scope"} for r in rows)
+    assert {"range": "169.254.0.0/16", "source": "grants_config", "scope": "grants"} in rows  # the e2e config
+    assert any(r["source"] in ("builtin", "config") and r["scope"] == "all" for r in rows)
+    page = ui.call("GET", "/")[1]
+    assert b'id="neverBody"' in page and b'id="hardDeny"' in page and b"hardDenyFloor" not in page
+    assert b'gw("GET", "/never-reachable")' in ui.call("GET", "/static/app.js")[1]
+
+
 def test_grant_editor_has_the_simple_form_and_keeps_every_setting_under_advanced(ui):
     """#121: name, address, type, access, duration and "local network"; the full editor is under Advanced."""
     page = ui.call("GET", "/")[1].decode()

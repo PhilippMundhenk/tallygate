@@ -126,6 +126,32 @@ def test_grant_decision_must_be_known(gw):
     assert status == 200 and body["status"] == "approved"
 
 
+def test_never_reachable_lists_every_source(tmp_path, monkeypatch, gw):
+    # #121: one read-only list for the UI. The fixture's gateway has no extra configuration.
+    status, rows = admin(gw, "GET", "/never-reachable")
+    assert status == 200 and {r["source"] for r in rows} == {"builtin", "grants_builtin"}
+    assert {"range": "10.0.0.0/8", "source": "builtin", "scope": "all"} in rows
+    assert {"range": "127.0.0.0/8", "source": "grants_builtin", "scope": "grants"} in rows
+    assert admin(gw, "GET", "/never-reachable", auth=False)[0] == 401
+
+    cfg = {"hard_deny_floor": ["8.8.8.0/24", "10.0.0.0/8"], "grants_never": ["169.254.0.0/16"]}
+    (tmp_path / "config.yaml").write_text(yaml.safe_dump(cfg))
+    (tmp_path / "policy.yaml").write_text(yaml.safe_dump({"default": "ask", "hard_deny": ["9.9.9.9/32"]}))
+    monkeypatch.setenv("GW_INTERNAL_NETS", "172.31.11.0/24")
+    monkeypatch.setenv("GW_API_HOST", "172.31.11.2")
+    monkeypatch.setenv("GW_API_PORT", "8081")
+    monkeypatch.delenv("GW_LISTEN_HOST", raising=False)
+    rows = core.Gateway().never_reachable()
+    by_source = {s: [r["range"] for r in rows if r["source"] == s] for s in {r["source"] for r in rows}}
+    assert by_source["config"] == ["8.8.8.0/24"]  # 10.0.0.0/8 is built in already: listed once, as built in
+    assert rows.count({"range": "10.0.0.0/8", "source": "builtin", "scope": "all"}) == 1
+    assert by_source["policy"] == ["9.9.9.9/32"] and by_source["grants_config"] == ["169.254.0.0/16"]
+    assert by_source["stack"] == ["172.31.11.0/24"] and by_source["listener"] == ["172.31.11.2:8081"]
+    assert "grants_builtin" not in by_source  # a configured grants_never replaces the built-in list
+    assert {r["scope"] for r in rows if r["source"] in ("grants_config", "stack", "listener")} == {"grants"}
+    assert {r["scope"] for r in rows if r["source"] in ("builtin", "config", "policy")} == {"all"}
+
+
 def test_info_reports_injection_services_and_ca(gw):
     status, body = admin(gw, "GET", "/info")
     assert status == 200 and body["ca_pem"] is None

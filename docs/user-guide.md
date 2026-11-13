@@ -164,8 +164,11 @@ searches the whole event log on the gateway, which keeps `log_keep_days` (30) da
   and checked against the hard deny; a name that would be denied or asked is decided without resolving it, as
   for a real connection.
 - **Add rule**: host glob or CIDR, ports, note and optional TTL. New rules go to the top (first match wins).
-- **Hard deny**: CIDRs that are never reachable. The built-in floor is read-only here (change it only in the
-  gateway config file); you can add more, e.g. your Docker host's public IP.
+- **Never reachable**: one list of every range that can never be reached, with where each entry comes from
+  and where it is changed: the built-in list, `hard_deny_floor` and `grants_never` from the gateway config
+  file, the tallygate stack itself, and your own additions, which you edit right there (e.g. your Docker
+  host's public IP). *All connections* entries are never asked about and no rule opens them; *Grants*
+  entries stay closed for grants too, local-network ones included.
 - **Advanced: raw policy JSON**: edit everything at once (validated server-side).
 - **Rule usage and suggestions**: how often each rule matched and when it last did (sortable, filterable),
   unused rules to clean up, and permanent rules for destinations you keep approving for a limited time. See

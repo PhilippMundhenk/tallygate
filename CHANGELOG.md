@@ -138,6 +138,10 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   on the emergency stop and on restart (#69).
 
 ### Changed
+- **One "Never reachable" list:** *Rules → Never reachable* shows every range that can never be reached in one
+  table: the built-in list, `hard_deny_floor`, your additions, `grants_never`, the stack's own networks and the
+  gateway's own listeners, each with where it comes from and where it is changed. It replaces the *Hard deny*
+  card; adding ranges works as before. New read-only route `GET /never-reachable` (#121).
 - **Simple grant form:** *New grant* asks for a name, an address (host and port, or a URL), the type, read-only
   or full access, and a duration. The other settings are under *Advanced* with their defaults. Grants saved from
   the simple form use the chosen duration as default and maximum, and ask for approval each time (#121).
