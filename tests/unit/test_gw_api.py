@@ -127,29 +127,59 @@ def test_grant_decision_must_be_known(gw):
 
 
 def test_never_reachable_lists_every_source(tmp_path, monkeypatch, gw):
-    # #121: one read-only list for the UI. The fixture's gateway has no extra configuration.
+    # one read-only list for the UI. The fixture's gateway has no extra configuration.
     status, rows = admin(gw, "GET", "/never-reachable")
-    assert status == 200 and {r["source"] for r in rows} == {"builtin", "grants_builtin"}
+    assert status == 200 and {r["source"] for r in rows} == {"builtin"}
     assert {"range": "10.0.0.0/8", "source": "builtin", "scope": "all"} in rows
-    assert {"range": "127.0.0.0/8", "source": "grants_builtin", "scope": "grants"} in rows
+    assert {"range": "127.0.0.0/8", "source": "builtin", "scope": "all+lan"} in rows  # closed for LAN grants too
     assert admin(gw, "GET", "/never-reachable", auth=False)[0] == 401
 
-    cfg = {"hard_deny_floor": ["8.8.8.0/24", "10.0.0.0/8"], "grants_never": ["192.168.50.0/24", "169.254.0.0/16"]}
+    cfg = {
+        "never": ["8.8.8.0/24", {"range": "192.168.50.0/24", "scope": "all+lan"}],
+        "hard_deny_floor": ["10.0.0.0/8", "8.8.4.0/24"],  # old keys: still read
+        "grants_never": ["192.168.60.0/24"],
+    }
     (tmp_path / "config.yaml").write_text(yaml.safe_dump(cfg))
     (tmp_path / "policy.yaml").write_text(yaml.safe_dump({"default": "ask", "hard_deny": ["9.9.9.9/32"]}))
     monkeypatch.setenv("GW_INTERNAL_NETS", "172.31.11.0/24")
     monkeypatch.setenv("GW_API_HOST", "172.31.11.2")
     monkeypatch.setenv("GW_API_PORT", "8081")
     monkeypatch.delenv("GW_LISTEN_HOST", raising=False)
-    rows = core.Gateway().never_reachable()
-    by_source = {s: [r["range"] for r in rows if r["source"] == s] for s in {r["source"] for r in rows}}
-    assert by_source["config"] == ["8.8.8.0/24"]  # 10.0.0.0/8 is built in already: listed once, as built in
-    assert rows.count({"range": "10.0.0.0/8", "source": "builtin", "scope": "all"}) == 1
-    assert by_source["policy"] == ["9.9.9.9/32"] and by_source["grants_config"] == ["192.168.50.0/24"]
-    assert by_source["stack"] == ["172.31.11.0/24"] and by_source["listener"] == ["172.31.11.2:8081"]
-    assert "127.0.0.0/8" in by_source["grants_builtin"]  # grants_never adds to the built-in list
-    assert {r["scope"] for r in rows if r["source"] in ("grants_config", "stack", "listener")} == {"grants"}
-    assert {r["scope"] for r in rows if r["source"] in ("builtin", "config", "policy")} == {"all"}
+    g = core.Gateway()
+    assert g.old_never_keys == ["hard_deny_floor", "grants_never"]
+    rows = g.never_reachable()
+    cfg_rows = {r["range"]: r["scope"] for r in rows if r["source"] == "config"}
+    assert cfg_rows == {
+        "8.8.8.0/24": "all",
+        "8.8.4.0/24": "all",
+        "192.168.50.0/24": "all+lan",
+        "192.168.60.0/24": "all+lan",
+    }
+    assert rows.count({"range": "10.0.0.0/8", "source": "builtin", "scope": "all"}) == 1  # listed once, as built in
+    assert [r["range"] for r in rows if r["source"] == "policy"] == ["9.9.9.9/32"]
+    assert {r["range"]: r["scope"] for r in rows if r["source"] in ("stack", "listener")} == {
+        "172.31.11.0/24": "all+lan",
+        "172.31.11.2:8081": "all+lan",
+    }
+    assert len({r["range"] for r in rows}) == len(rows)  # every range once
+    # an all+lan range closes every connection too, and every grant
+    assert g.policy.hard_denied("x", 443, ["192.168.60.5"]) and g.policy.hard_denied("x", 443, ["8.8.8.8"])
+    assert [str(n) for n in g.grants.never_configured] == ["192.168.50.0/24", "192.168.60.0/24"]
+
+
+@pytest.mark.parametrize(
+    "never, error",
+    [
+        ("10.0.0.0/8", "expected a list"),
+        ([{"range": "10.0.0.0/8", "scope": "lan"}], "scope must be one of"),
+        ([{"range": "10.0.0.0/8", "why": "x"}], "unknown keys"),
+        (["not-a-cidr"], "invalid CIDR"),
+    ],
+)
+def test_a_broken_never_entry_stops_the_gateway(tmp_path, gw, never, error):
+    (tmp_path / "config.yaml").write_text(yaml.safe_dump({"never": never}))
+    with pytest.raises(ValueError, match=error):
+        core.Gateway()
 
 
 def test_info_reports_injection_services_and_ca(gw):

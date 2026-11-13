@@ -234,14 +234,12 @@ function setField(sel, value, keepEdits) {
   el.value = value; delete el.dataset.dirty; el.classList.remove("stale"); el.title = "";
   return true;
 }
-// One list of everything that is never reachable (#121): the built-in floor, hard_deny_floor, the additions made
-// here, grants_never, the stack's own networks and the gateway's own listeners. [comes from, to change it]
+// One list of everything that is never reachable: the built-in list, `never` in the gateway config, the additions
+// made here, the stack's own networks and the gateway's own listeners. [comes from, to change it]
 const NEVER_SOURCE = {
   builtin: ["Built in", "Cannot be changed"],
-  config: ["hard_deny_floor", "Gateway config file (gateway.yaml)"],
+  config: ["never in the gateway config", "Gateway config file (gateway.yaml)"],
   policy: ["Added here", "The field below"],
-  grants_builtin: ["Built in, for grants", "Cannot be changed"],
-  grants_config: ["grants_never", "Gateway config file (gateway.yaml)"],
   stack: ["The tallygate stack itself", "GW_INTERNAL_NETS in compose.yaml, together with the networks there"],
   listener: ["The gateway itself", "Cannot be changed"],
 };
@@ -252,7 +250,7 @@ async function loadNever() {
   for (const r of rows) {
     const [from, change] = NEVER_SOURCE[r.source] || [r.source, ""];
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td><code>${esc(r.range)}</code></td><td>${r.scope === "grants" ? "Grants" : "All connections"}</td>
+    tr.innerHTML = `<td><code>${esc(r.range)}</code></td><td>${r.scope === "all+lan" ? "All connections, LAN grants too" : "All connections"}</td>
       <td>${esc(from)}</td><td class="muted">${esc(change)}</td>`;
     body.appendChild(tr);
   }

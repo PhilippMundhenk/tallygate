@@ -25,7 +25,7 @@ from pathlib import Path
 
 import yaml
 
-from egressgw.policy import ip_addr, is_ip, valid_hostname
+from egressgw.policy import ip_addr, is_ip, parse_never, valid_hostname
 from egressgw.store import atomic_write
 
 log = logging.getLogger("egressgw")
@@ -342,9 +342,9 @@ def clean_reason(text: str) -> str:
 class Grants:
     def __init__(self, config: dict, data_dir: Path) -> None:
         self.ui_path = data_dir / "grants.yaml"
-        # The built-in list always applies; `grants_never` adds to it (as hard_deny_floor does to its list).
+        # The built-in list always applies; `never` entries with scope all+lan (and the old `grants_never`) add to it.
         # TEST ONLY: with GW_TEST_FLOOR_REPLACE a configured list replaces it (the e2e upstreams are on loopback).
-        configured = [ipaddress.ip_network(c, strict=False) for c in config.get("grants_never") or []]
+        configured = [ipaddress.ip_network(c, strict=False) for c in parse_never(config)[1]]
         replace = os.environ.get("GW_TEST_FLOOR_REPLACE") == "1" and configured
         builtin = [] if replace else [ipaddress.ip_network(c, strict=False) for c in DEFAULT_NEVER]
         self.never_configured = [n for n in configured if n not in builtin]

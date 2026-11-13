@@ -124,7 +124,7 @@ Every key with an example. The file in the repository lists them all, most of th
 | `suggest_min_approvals` | `3` | `5` | Temporary approvals of one destination that lead to a "make it permanent?" suggestion. |
 | `suggest_window_days` | `7` | `14` | The time window for those approvals (at most `log_keep_days`: older approvals are forgotten). |
 | `policy_history_keep` | `500` | `100` | Policy versions kept for diff and rollback (at least 10); older ones are removed. |
-| `hard_deny_floor` | built-in list | `[203.0.113.7/32]` | **Added** to the built-in hard deny (your VPS's public IP; the example is a placeholder). |
+| `never` | built-in list | `[203.0.113.7/32, {range: 192.168.1.1/32, scope: all+lan}]` | Ranges that are never reachable, **added** to the built-in list (your VPS's public IP; the example is a placeholder). A plain CIDR closes every connection, but a grant with `lan: true` may still reach it; `scope: all+lan` closes it for those grants too. Replaces the old keys `hard_deny_floor` (= scope `all`) and `grants_never` (= scope `all+lan`), which are still read; `python -m egressgw.convert` prints a file in the new form. |
 | `readonly` | `[]`; the shipped `gateway.yaml` lists npm, Yarn, crates.io, Docker Hub, GHCR, Quay, Hugging Face | `[registry.npmjs.org, {host: ghcr.io, post_is_write: true}]` | Hosts where writes are refused: PUT/PATCH/DELETE, and with `post_is_write` also POST (except `read_posts`). See [Read-only hosts](#read-only-hosts). |
 | `inject` | `[]`; the shipped `gateway.yaml` has the GitHub entries | see below | Credential injection per host. |
 | `github_repos` | `[]` (every repository) | `[acme/app, acme-tools/*]` | Limit GitHub to these repositories; others are refused before they reach GitHub. See [GitHub per repository](#github-per-repository). |
@@ -175,7 +175,7 @@ learning_ports: [80, 443]  # ports learning mode may open (the UI offers 443, or
 learning_max_minutes: 120  # longest learning-mode session
 suggest_min_approvals: 3   # temporary approvals of one destination before a permanent rule is suggested ...
 suggest_window_days: 7     # ... within this many days
-# hard_deny_floor: [...]   # ADDED to the built-in hard deny below (cannot remove from it). Only this file can change it.
+# never: [...]             # ADDED to the built-in never-reachable list below (cannot remove from it). Only this file can change it.
 readonly:                  # TLS intercepted, PUT/PATCH/DELETE refused (e.g. blocks `npm publish`)
   - registry.npmjs.org
   - host: ghcr.io            # POST refused too (an image push starts with a POST)
@@ -269,7 +269,7 @@ See [grants.md](grants.md) for the concept and examples. Keys in `config/gateway
 |---|---|---|
 | `grants` | – | Map `name → definition` (`description`, `targets`, `levels`, `approval`, `default_ttl`, `max_ttl`, `inject`). Read-only in the UI. |
 | `grants_lan_allow` | `[]` | CIDRs that **UI-defined** grants may reach with `lan: true`. Empty = UI grants cannot target the LAN. |
-| `grants_never` | loopback, link-local, multicast, unspecified | Never reachable through any grant. The built-in list always applies; a list here **adds** to it, as `hard_deny_floor` does. The stack's own networks (`GW_INTERNAL_NETS`) and the gateway's own listeners are refused in addition, whatever is set here. |
+| `grants_never` | – | **Old key**, read as `never` entries with `scope: all+lan` (closed for every connection and every grant). Loopback, link-local, multicast and unspecified addresses are always closed for grants. The stack's own networks (`GW_INTERNAL_NETS`) and the gateway's own listeners are refused in addition, whatever is set here. |
 | `grant_request_timeout` | `300` | Seconds a request waits for a decision. |
 | `grant_max_pending` | `3` | Open grant requests at once. |
 | `grant_api_rate` | `30` | Requests/minute on the agent grant API. |
@@ -303,10 +303,10 @@ Built-in hard-deny floor: `0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 16
 192.0.0.0/24, 192.0.2.0/24, 192.88.99.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24,
 224.0.0.0/4, 240.0.0.0/4, ::/96, ::ffff:0:0/96, 64:ff9b::/96, 64:ff9b:1::/48, 100::/64, 2001::/32,
 2001:db8::/32, 2002::/16, fc00::/7, fe80::/10, fec0::/10, ff00::/8` (NAT64, 6to4 and Teredo prefixes are
-included because they embed IPv4 addresses). The floor always contains this list; `hard_deny_floor` in the
+included because they embed IPv4 addresses). The floor always contains this list; `never` in the
 read-only gateway config **adds** to it (it cannot remove built-in ranges), and an invalid entry stops the
 gateway. `policy.yaml`/the API can only add further CIDRs. If the Docker host has a public IP (VPS), add it
-to `hard_deny_floor`.
+to `never`.
 For LAN services use a service port with `allow_private: true` (exempts exactly that target, and only on
 that service port — not via the proxy or SOCKS) rather than shrinking the floor.
 
@@ -367,7 +367,7 @@ one that `compose.yaml` does not list, add it to that service's `environment:` b
 | egress-gw | `GW_EXTRA_ARGS` | Extra mitmdump arguments (advanced). |
 | egress-gw, control | `GW_API_TOKEN_FILE` | Token file in the `gw-token` volume (`/run/tallygate/gw/api-token`), used when `GW_API_TOKEN` is not set. |
 | egress-gw | `GW_TEST_STATIC_HOSTS` | **Test suite only.** Never set in production (logged as a warning). |
-| egress-gw | `GW_TEST_FLOOR_REPLACE` | **Test suite only.** `1` = `hard_deny_floor` replaces the built-in list (the e2e upstreams run on loopback). Never set in production (logged as a warning). |
+| egress-gw | `GW_TEST_FLOOR_REPLACE` | **Test suite only.** `1` = `never` (or `hard_deny_floor`) replaces the built-in list (the e2e upstreams run on loopback). Never set in production (logged as a warning). |
 | control | `CONTROL_BIND_HOST` / `CONTROL_PORT` | UI bind address (mgmt network only) / port. |
 | control | `GW_URL` | Gateway API base URL. |
 | control | `AGENT_HOST`, `AGENT_STATUS_PORT`, `TERMINALS` | Agent address, status port, `name:port` list of ttyd consoles. |

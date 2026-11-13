@@ -115,6 +115,33 @@ def is_ip(value: str) -> bool:
         return False
 
 
+SCOPES_NEVER = ("all", "all+lan")
+
+
+def parse_never(config: dict) -> tuple[list[str], list[str], list[str]]:
+    """The never-reachable ranges of the gateway config (ADR-0014): (scope all, scope all+lan, old keys used).
+
+    `never:` lists ranges as "CIDR" (scope `all`: closed for every connection, a LAN grant target may be
+    exempt) or {range, scope} with scope `all+lan` (closed for LAN grant targets too). The old keys are still
+    read: `hard_deny_floor` as scope `all`, `grants_never` as scope `all+lan`. A broken entry stops the
+    gateway (fail closed)."""
+    entries = config.get("never") or []
+    if isinstance(entries, (str, dict)) or not isinstance(entries, (list, tuple)):
+        raise ValueError("never: expected a list of CIDRs or {range, scope} entries")
+    every, lan = [], []
+    for e in entries:
+        cidr, scope = (e, "all") if not isinstance(e, dict) else (e.get("range"), e.get("scope", "all"))
+        if isinstance(e, dict) and set(e) - {"range", "scope"}:
+            raise ValueError(f"never: unknown keys in {e!r} (range, scope)")
+        if scope not in SCOPES_NEVER:
+            raise ValueError(f"never: scope must be one of {SCOPES_NEVER}, not {scope!r}")
+        (lan if scope == "all+lan" else every).append(cidr)
+    old = [k for k in ("hard_deny_floor", "grants_never") if config.get(k)]
+    every = parse_cidrs([*every, *(config.get("hard_deny_floor") or [])], "never")
+    lan = parse_cidrs([*lan, *(config.get("grants_never") or [])], "never")
+    return every, lan, old
+
+
 def parse_cidrs(values, what: str) -> list[str]:
     """Normalised CIDR strings; a clear error naming the setting for anything that is not a network."""
     if isinstance(values, str) or not isinstance(values, (list, tuple)):

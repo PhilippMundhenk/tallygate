@@ -47,6 +47,7 @@ from egressgw.policy import (
     is_ip,
     load_preset,
     parse_cidrs,
+    parse_never,
     registrable_domain,
     rule_for_approval,
     valid_hostname,
@@ -201,9 +202,12 @@ class Gateway:
         self.policy_path = DATA_DIR / "policy.yaml"
         # The hard-deny floor comes only from the (read-only mounted) static config, never from the API:
         # the built-in list plus `hard_deny_floor`. Validated here: a broken entry must stop the gateway.
-        configured = parse_cidrs(self.config.get("hard_deny_floor") or [], "hard_deny_floor")
+        # `never` in the config (ADR-0014; the old keys hard_deny_floor and grants_never are still read). Every
+        # range closes all connections; the `all+lan` ones also close LAN grant targets (see Grants).
+        every, lan, self.old_never_keys = parse_never(self.config)
+        configured = parse_cidrs([*every, *lan], "never")
         builtin = [] if FLOOR_REPLACE and configured else DEFAULT_HARD_DENY
-        self.hard_deny_floor = parse_cidrs([*builtin, *configured], "hard_deny_floor")
+        self.hard_deny_floor = parse_cidrs([*builtin, *configured], "never")
         self.floor_configured = [c for c in configured if c not in builtin]  # for the "never reachable" view
         self.history = PolicyHistory(DATA_DIR / "policy-history.db", int(self.config.get("policy_history_keep", 500)))
         if not self.policy_path.exists():
@@ -274,23 +278,27 @@ class Gateway:
         return policy
 
     def never_reachable(self) -> list[dict]:
-        """Every range that is never reachable, from all the places that define one, for one view in the UI
-        (#121). `scope` is "all" (every connection; only a LAN grant target is exempt) or "grants" (every
-        grant, LAN targets included). Read-only: this reports what is enforced, it decides nothing."""
-        own = {c: "config" for c in self.floor_configured}
-        out = [{"range": c, "source": own.get(c, "builtin"), "scope": "all"} for c in self.hard_deny_floor]
-        out += [{"range": c, "source": "policy", "scope": "all"} for c in self.policy.hard_deny]
-        out += [
-            {
-                "range": str(n),
-                "source": "grants_config" if n in self.grants.never_configured else "grants_builtin",
-                "scope": "grants",
-            }
+        """Every range that is never reachable, from all the places that define one, for one view in the UI.
+        `scope` is "all" (every connection; a LAN grant target may be exempt) or "all+lan" (LAN grant targets
+        included). Read-only: this reports what is enforced, it decides nothing."""
+        own = set(self.floor_configured)
+        lan = {str(n) for n in self.grants.never}
+        floor = set(self.hard_deny_floor)
+
+        def row(cidr: str, source: str) -> dict:
+            return {"range": cidr, "source": source, "scope": "all+lan" if cidr in lan else "all"}
+
+        out = [row(c, "config" if c in own else "builtin") for c in self.hard_deny_floor]
+        configured_lan = {str(n) for n in self.grants.never_configured}
+        out += [  # closed for grants although not in the floor (only with the test-only floor switch)
+            {"range": str(n), "source": "config" if str(n) in configured_lan else "builtin", "scope": "all+lan"}
             for n in self.grants.never
+            if str(n) not in floor
         ]
-        out += [{"range": str(n), "source": "stack", "scope": "grants"} for n in self.grants.internal]
+        out += [{"range": c, "source": "policy", "scope": "all"} for c in self.policy.hard_deny]
+        out += [{"range": str(n), "source": "stack", "scope": "all+lan"} for n in self.grants.internal]
         out += [
-            {"range": f"{ip}:{port}", "source": "listener", "scope": "grants"}
+            {"range": f"{ip}:{port}", "source": "listener", "scope": "all+lan"}
             for ip, port in sorted(self.grants.own, key=lambda s: (str(s[0]), s[1]))
         ]
         return out
@@ -308,6 +316,12 @@ class Gateway:
             log.warning("GW_TEST_STATIC_HOSTS is set - test-only name resolution is ACTIVE: %s", STATIC_HOSTS)
         if FLOOR_REPLACE:
             log.warning("GW_TEST_FLOOR_REPLACE is set - the built-in hard-deny floor is NOT active (test only)")
+        if self.old_never_keys:
+            log.warning(
+                "gateway config: %s still work, but are read as `never` now; see docs/configuration.md "
+                "(python -m egressgw.convert prints the file in the new form)",
+                " and ".join(self.old_never_keys),
+            )
         if len(self.api_token) < 24:
             log.warning("GW_API_TOKEN missing or shorter than 24 chars - API disabled")
         else:

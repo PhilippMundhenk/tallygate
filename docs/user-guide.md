@@ -173,7 +173,7 @@ searches the whole event log on the gateway, which keeps `log_keep_days` (30) da
   for a real connection.
 - **Add rule**: host glob or CIDR, ports, note and optional TTL. New rules go to the top (first match wins).
 - **Never reachable**: one list of every range that can never be reached, with where each entry comes from
-  and where it is changed: the built-in list, `hard_deny_floor` and `grants_never` from the gateway config
+  and where it is changed: the built-in list, `never` from the gateway config
   file, the tallygate stack itself, and your own additions, which you edit right there (e.g. your Docker
   host's public IP). *All connections* entries are never asked about and no rule opens them; *Grants*
   entries stay closed for grants too, local-network ones included.
@@ -289,7 +289,7 @@ author and what changed.
   gateway config file.
 - **Import from file** checks the file like a normal policy change and every grant like the grant editor,
   then shows what would change. *Import* replaces the policy and adds or replaces the UI grants in the file;
-  grants that are not in the file stay. A `hard_deny_floor` in the file is ignored: the floor comes only from
+  grants that are not in the file stay. A `hard_deny_floor` or `never` in the file is ignored: the floor comes only from
   the gateway config file.
 
 The gateway keeps the last `policy_history_keep` (500) versions in `policy-history.db` in its data volume.

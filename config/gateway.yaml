@@ -18,13 +18,16 @@ max_pending: 10            # at most this many approvals open at once; more are 
 #                            # days = when a period starts; tz defaults to the gateway's TZ. The UI can change it.
 # digest_minutes: 30         # while away: a digest every N minutes (0 = only when you are back)
 
-# Hard-deny floor: CIDRs that are NEVER reachable (except service-port targets with allow_private).
+# Never reachable (`never`, ADR-0014; the old keys hard_deny_floor and grants_never still work): CIDRs that
+# no rule can open (except service-port targets with allow_private).
 # The built-in list (RFC 1918, loopback, link-local, CGNAT, multicast, ULA, NAT64/6to4/Teredo, docs
 # ranges ...) always applies; entries here are ADDED to it, they cannot remove built-in ones. Only
 # this read-only file can change the floor; the API/UI can only add further entries. Add your Docker
 # host's public IP(s) here if it has any (e.g. a VPS), so the agent cannot reach host services via
 # the egress path. An invalid entry stops the gateway.
-# hard_deny_floor: [203.0.113.7/32]   # placeholder: put your host's public IP here
+# never: [203.0.113.7/32]             # placeholder: put your host's public IP here
+# A plain range closes every connection; a grant with `lan: true` may still reach it. Closed for those too:
+# never: [{range: 192.168.1.1/32, scope: all+lan}]   # e.g. your router
 
 # Credential injection: TLS for these exact hosts is intercepted and the header is set.
 # The agent only ever holds a placeholder. Secrets are set via the control UI (stored in /data/secrets.json).
@@ -83,9 +86,6 @@ services: []
 
 # Grants: named, time-limited access the agent can request and you approve (docs/grants.md).
 # grants_lan_allow: [192.168.1.0/24]   # LAN ranges that grants defined in the UI may reach (default: none)
-# Never reachable through any grant: loopback, link-local, multicast and unspecified addresses are built in;
-# ranges listed here are ADDED to them.
-# grants_never: [192.168.1.1/32]      # e.g. your router
 # grant_request_timeout: 300          # seconds a grant request waits for your decision
 # grant_max_pending: 3                # open grant requests at once
 # grant_api_rate: 30                  # requests per minute the agent may send to the grant API
