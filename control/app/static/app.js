@@ -234,11 +234,35 @@ function setField(sel, value, keepEdits) {
   el.value = value; delete el.dataset.dirty; el.classList.remove("stale"); el.title = "";
   return true;
 }
+// One list of everything that is never reachable (#121): the built-in floor, hard_deny_floor, the additions made
+// here, grants_never, the stack's own networks and the gateway's own listeners. [comes from, to change it]
+const NEVER_SOURCE = {
+  builtin: ["Built in", "Cannot be changed"],
+  config: ["hard_deny_floor", "Gateway config file (gateway.yaml)"],
+  policy: ["Added here", "The field below"],
+  grants_builtin: ["Built in, for grants", "grants_never in the gateway config file replaces this list"],
+  grants_config: ["grants_never", "Gateway config file (gateway.yaml)"],
+  stack: ["The tallygate stack itself", "GW_INTERNAL_NETS in compose.yaml, together with the networks there"],
+  listener: ["The gateway itself", "Cannot be changed"],
+};
+async function loadNever() {
+  const rows = await gw("GET", "/never-reachable"), body = $("#neverBody");
+  if (!Array.isArray(rows)) return;
+  body.innerHTML = "";
+  for (const r of rows) {
+    const [from, change] = NEVER_SOURCE[r.source] || [r.source, ""];
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td><code>${esc(r.range)}</code></td><td>${r.scope === "grants" ? "Grants" : "All connections"}</td>
+      <td>${esc(from)}</td><td class="muted">${esc(change)}</td>`;
+    body.appendChild(tr);
+  }
+  $("#neverCount").textContent = `(${rows.length})`;
+}
 let rawBase = null;  // the policy the raw editor's text was loaded from (JSON)
 async function loadPolicy(keepEdits = false) {
   policy = await gw("GET", "/policy");
   setField("#defaultAction", policy.default, keepEdits); setField("#askTimeout", policy.ask_timeout, keepEdits);
-  $("#hardDenyFloor").textContent = (policy.hard_deny_floor || []).join("  ");
+  loadNever().catch(() => {});  // its own request: an older gateway without the route must not break the tab
   setField("#hardDeny", policy.hard_deny.join("\n"), keepEdits);
   if (setField("#rawPolicy", JSON.stringify(policy, null, 2), keepEdits)) rawBase = JSON.stringify(policy);
   const body = $("#rulesBody"); body.innerHTML = "";

@@ -577,6 +577,10 @@ def build_app(gw: Gateway) -> web.Application:
         gw.publish({"type": "availability"})
         return _json(gw.availability.describe())
 
+    @routes.get("/never-reachable")
+    async def never_reachable(_):
+        return _json(gw.never_reachable())
+
     @routes.get("/info")
     async def info(_):
         from egressgw.core import CA_EXPORT
