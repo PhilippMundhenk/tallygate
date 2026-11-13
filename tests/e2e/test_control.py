@@ -113,6 +113,14 @@ def test_web_console_roundtrip(ui, control):
     assert b"tally-42" in asyncio.run(run())
 
 
+def test_setup_points_to_learning_mode_as_the_first_run_path(ui):
+    """#121: the starting-policy step offers learning mode; it is started (and confirmed) on the Rules tab."""
+    page = ui.call("GET", "/")[1]
+    assert b'id="wzLearn"' in page and b"run your first task in <i>learning mode</i>" in page
+    js = ui.call("GET", "/static/wizard.js")[1]
+    assert b'$("#wzLearn").onclick' in js and b'gw("POST", "/learning"' not in js  # it navigates, it does not start
+
+
 def test_what_the_agent_can_reach_is_one_table(ui):
     """#121: each destination once, with the rule, the per-request limits and the grants that apply."""
     status, view, _ = ui.call("GET", "/api/gw/access")

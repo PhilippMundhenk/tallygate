@@ -343,6 +343,11 @@
         <p class="hint">What happens with destinations no rule covers. You can change it any time under <i>Rules</i>.</p>
         <div class="row" role="group" aria-label="Starting policy"><button data-policy="ask" class="secondary">Ask me (recommended)</button>
           <button data-policy="deny" class="secondary">Strict: block unknown</button><button id="wzTemplates" class="secondary">Shortcuts&hellip;</button></div>
+        <p class="hint"><b>The quickest way to a working set of rules:</b> run your first task in <i>learning mode</i>.
+          For a time you choose, the agent may reach any public host on the web ports and everything it uses is
+          recorded. Afterwards you tick what to keep and save it as rules, instead of answering one prompt at a
+          time. The local network and everything under <i>Never reachable</i> stay closed.</p>
+        <div class="row"><button id="wzLearn" class="secondary">Learn from a first task&hellip;</button></div>
         <div class="status"></div></li>
       <li id="st-notify"><h3 tabindex="-1">Phone notifications <span class="step-state"></span></h3>
         <div id="notifyStatus" class="muted"></div>

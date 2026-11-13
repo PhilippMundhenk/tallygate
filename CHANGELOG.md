@@ -138,6 +138,9 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   on the emergency stop and on restart (#69).
 
 ### Changed
+- **First run:** the *Starting policy* step of the setup points to learning mode as the quickest way to a
+  working set of rules (*Learn from a first task*). It opens *Rules → Learning mode*, where the time limit is
+  chosen and confirmed as before (#121).
 - **What the agent can reach:** a new table at the top of the *Rules* tab lists each destination once with
   everything that applies to it: the deciding rule, read-only, added credentials, repository limits, the grants
   defined for it and when it was last used. Until now that took three tabs and the config file. New read-only
