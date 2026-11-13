@@ -315,7 +315,7 @@ function checkMatch(kind, v) {
   if (kind === "cidr" && !/^[0-9a-fA-F:.]+(\/\d{1,3})?$/.test(v)) throw new Error(`CIDR "${v}" is not valid: use 203.0.113.0/24 or 203.0.113.10/32`);
 }
 
-/* ---------------- quick actions and templates ---------------- */
+/* ---------------- shortcuts (preset files: internet and tool ecosystems) ---------------- */
 let presetInfo = null;
 const presetRules = (name) => (policy ? policy.rules.filter((r) => r.source === `preset:${name}`) : []);
 const TTL_CHOICES = [["", "until undone"], ["3600", "for 1 h"], ["86400", "for 1 day"]];

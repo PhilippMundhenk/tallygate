@@ -96,12 +96,12 @@ were asked.
 | # | Goal | How |
 |---|---|---|
 | 16 | Allow something for one hour | add the rule with *TTL* `3600` (a UI field; the API takes `expires`, a unix time), or approve the prompt with *More → Allow 1 h* |
-| 17 | Open the web for 15 minutes during setup | *Quick actions → Allow web for 15 min* |
-| 18 | Strict allowlist, no prompts | mode `deny`, then allow rules for what is needed (or *Templates*) |
+| 17 | Open the web for 15 minutes during setup | *Shortcuts → Allow web for 15 min* |
+| 18 | Strict allowlist, no prompts | mode `deny`, then allow rules for what is needed (or *Shortcuts → Tool ecosystems*) |
 | 19 | Everything public allowed, but logged | mode `allow`; add `deny` or `ask` rules for exceptions |
-| 20 | Let one rule win over another | it must be **above** it: new rules, approvals, accepted suggestions and templates are added at the top; rules saved from learning mode are added at the bottom |
+| 20 | Let one rule win over another | it must be **above** it: new rules, approvals, accepted suggestions and shortcuts are added at the top; rules saved from learning mode are added at the bottom |
 
-Rules from approvals are tagged `approval`, rules from templates and shortcuts `preset:<name>`, rules saved
+Rules from approvals are tagged `approval`, rules from shortcuts `preset:<name>`, rules saved
 from learning mode `learning` and accepted suggestions `suggestion`. Expired rules are ignored and cleaned up.
 
 ## The local network

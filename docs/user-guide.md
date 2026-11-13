@@ -157,7 +157,7 @@ searches the whole event log on the gateway, which keeps `log_keep_days` (30) da
 
 - **Mode**: what happens to unmatched destinations: `ask` (human in the loop), `deny` (strict allowlist) or
   `allow` (blocklist).
-- **Quick actions** (top of the tab), see below.
+- **Shortcuts** (top of the tab), see below.
 - **Learning mode**: record what a new task needs for a limited time, then save the rules in one go. See
   [Learning mode](#learning-mode).
 - **Test a destination**: dry run against the current policy. A name that the rules allow is also resolved
@@ -173,7 +173,7 @@ searches the whole event log on the gateway, which keeps `log_keep_days` (30) da
 - **History, export and import**: every version of the policy, a diff between any two, *Restore*, and the
   policy with your UI grants as one YAML file. See [History and rollback](#history-and-rollback).
 
-### Quick actions and templates
+### Shortcuts
 
 | Action | What it does | Undo |
 |---|---|---|
@@ -182,7 +182,7 @@ searches the whole event log on the gateway, which keeps `log_keep_days` (30) da
 | Unknown destinations: ask me / block / allow | Sets the mode (`ask`, `deny`, `allow`); changes nothing else | click another mode |
 | Emergency stop | Revokes all active grants, denies everything waiting for approval (connections and grant requests), undoes the internet shortcuts, ends learning mode, sets the mode `deny` and suspends automatic grant approval | set the mode again |
 | Allow a device on the local network | Opens the grant editor with a LAN target (see below) | delete the grant |
-| Templates | Allow what a tool ecosystem needs: Python, Node.js, Go, Rust, Debian/Ubuntu apt, container registries, Hugging Face. Until undone, for 1 h or for 1 day | *Undo* on the template |
+| Tool ecosystems | One shortcut for what a tool ecosystem needs: Python, Node.js, Go, Rust, Debian/Ubuntu apt, container registries, Hugging Face. Until undone, for 1 h or for 1 day | *Undo* on the shortcut |
 
 Actions that are hard to take back (*allow (log only)*, *Emergency stop*, deleting a grant or a secret) ask
 for confirmation in the page: the first click arms the button (*Confirm: …*) and says what will happen, a
@@ -202,9 +202,9 @@ overwrites on purpose.
 
 All of them create normal rules at the top of the list, with ids like `python:pypi` and tagged `preset:<name>` in
 the table, so you can see what a shortcut added. *Undo* removes exactly those rules. Rules you added yourself are
-never touched. Because they sit at the top, **template and shortcut rules win over your own rules while they are
-active, deny rules included**: a template that allows `*.quay.io` opens it even if you deny it further down. Undo
-them, or pick a time limit. *Apply again* replaces the template's rules with the new time limit; the message shows
+never touched. Because they sit at the top, **shortcut rules win over your own rules while they are
+active, deny rules included**: a shortcut that allows `*.quay.io` opens it even if you deny it further down. Undo
+them, or pick a time limit. *Apply again* replaces the shortcut's rules with the new time limit; the message shows
 the time the gateway actually set.
 
 **The local network** (private ranges, the Docker host, cloud metadata) is always blocked by the hard deny, and
@@ -263,7 +263,7 @@ show only unused or only matched rules.
 ### History and rollback
 
 Every change to the policy is kept as a version, whoever made it: the UI (`web:<user>`), the API (`api`),
-an approval on Telegram or Matrix (`telegram:<user>`), a template, the emergency stop, or the gateway itself
+an approval on Telegram or Matrix (`telegram:<user>`), a shortcut, the emergency stop, or the gateway itself
 when temporary rules expire (`gateway`). *Rules → History, export and import* lists the versions with time,
 author and what changed.
 
@@ -328,7 +328,7 @@ password change runs on the Docker host.
 | Log in to Claude | *Start login* runs `claude auth login` in the agent (tmux session `tg-login`) and shows the link to Anthropic's login page. Sign in there and paste the code it shows. Only links to Anthropic's login pages are shown. Once logged in, the button reads *Log in again*. |
 | Git identity | *Use my GitHub identity* asks GitHub, through the gateway with the stored token, who you are (`gh api user`) and shows the name and the noreply address `<id>+<login>@users.noreply.github.com`; *Apply* sets them. Without a stored token, or when GitHub refuses it or cannot be reached, it says so and links to the token step. *Enter it yourself* is the fallback. Empty values are never written; a name or address that is set but empty (for example from a `git config` whose `$(…)` failed) is reported as such. |
 | Remote Control | *Enable Remote Control* answers Claude Code's one-time question `Enable Remote Control? (y/n)` with yes, trusts `/workspace` and restarts Remote Control. The step is done when it runs; it also tells you when Remote Control waits for an answer in the *rc* console. Switched off with `RC_ENABLE=0`. |
-| Starting policy | *Ask me* or *Strict* sets what happens with unknown destinations; *Templates* opens them in the Rules tab. |
+| Starting policy | *Ask me* or *Strict* sets what happens with unknown destinations; *Shortcuts* opens them in the Rules tab. |
 | Phone notifications | Status of Telegram, Matrix, Web Push, ntfy, Gotify and Pushover; browser notifications. Web Push devices are managed in the *Notifications* card below the steps. |
 | Isolation self-test | Runs the in-agent self-test. |
 
@@ -393,9 +393,9 @@ destinations in plain text, like Telegram does.
 |---|---|
 | Strict allowlist, no prompts | Mode `deny`; add allow rules for what you need |
 | Everything public allowed, but log it | Mode `allow` (hard deny still protects the LAN) |
-| Allow a package ecosystem | *Quick actions → Templates* (Python, Node.js, Go, Rust, apt, container registries, Hugging Face) |
-| Allow docs browsing for an hour | *Quick actions → Allow web for 1 h* (preset `open` with TTL `3600`) |
-| Let the agent install Go modules today | *Templates → Go modules → for 1 day → Apply* |
+| Allow a package ecosystem | *Rules → Shortcuts → Tool ecosystems* (Python, Node.js, Go, Rust, apt, container registries, Hugging Face) |
+| Allow docs browsing for an hour | *Rules → Shortcuts → Allow web for 1 h* (preset file `open` with TTL `3600`) |
+| Let the agent install Go modules today | *Shortcuts → Tool ecosystems → Go modules → for 1 day → Apply* |
 | Block a noisy telemetry host quietly | `deny` rule for the host (no more prompts) |
 | Reach a LAN database | `services:` entry with `allow_private: true` in the gateway config (`gateway.yaml`, see [operations](operations.md#with-docker-compose-recommended)) |
 | SSH to one external host | Allow `host:22`; add `openssh-client netcat-openbsd` to the agent image (see *Toolchains* below); then `ssh -o ProxyCommand='nc -X connect -x 172.31.10.2:3128 %h %p' host` |

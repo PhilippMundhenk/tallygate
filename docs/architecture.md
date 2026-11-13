@@ -218,7 +218,7 @@ Evaluation for a connection attempt to `host:port`:
 3. **Resolve** the allowed name (IP literals skip 1–3).
 4. **Hard deny** = immutable floor + policy extras: if any literal/resolved address is inside → **deny**,
    never ask, cannot be approved (except a service-port target with `allow_private`, on that port only).
-5. **Rules**, first match wins. Approvals and presets are inserted at the top. Expired rules are ignored and
+5. **Rules**, first match wins. Approvals and shortcuts (preset files) are inserted at the top. Expired rules are ignored and
    pruned every 15 s.
 6. **default** action: `allow` (blocklist mode), `deny` (allowlist mode) or `ask` (human in the loop).
    While **learning mode** runs, a host name on one of its ports that no rule matched (and no grant is

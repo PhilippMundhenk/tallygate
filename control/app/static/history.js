@@ -5,7 +5,7 @@
   const box = $("#historyBox");
   if (!box) return;
   box.innerHTML = `<p class="hint">Every change to the policy is kept as a version: from this UI, the API, approvals,
-      templates and the emergency stop. Compare two versions or go back to one. The hard-deny floor and secrets
+      shortcuts and the emergency stop. Compare two versions or go back to one. The hard-deny floor and secrets
       are never part of a version.</p>
     <div class="row wrap">
       <label class="inline">From <select id="hiFrom"></select></label>
@@ -18,7 +18,7 @@
     <button id="hiMore" class="small secondary">Older versions</button>
     <h4>Export and import</h4>
     <p class="hint">One YAML file with the policy and the grants defined in the UI, to move a setup to another host
-      or share it as a template. Secrets are not included. An import is checked like a normal policy change and
+      or share it as a starting point. Secrets are not included. An import is checked like a normal policy change and
       shown before anything is replaced; the hard-deny floor stays as configured.</p>
     <div class="row wrap">
       <button id="hiExport" class="secondary">Export (YAML)</button>

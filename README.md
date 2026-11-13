@@ -31,7 +31,7 @@ only then let through, turned back, or held for you to decide.
 - **Fail-closed isolation by topology.** The agent sits on an `internal` Docker network: no default route, no
   iptables, no capabilities. Anything that bypasses the proxy simply can't connect.
 - **One policy for every protocol.** HTTP(S) proxy, SOCKS5 and TCP service ports all pass through a single
-  enforcement hook. Rules work on domains, globs, CIDRs and ports, with TTLs and presets.
+  enforcement hook. Rules work on domains, globs, CIDRs and ports, with TTLs and one-click shortcuts.
 - **Human in the loop.** `ask` holds the connection while you decide: allow 2 min / 1 h / always / whole
   domain, deny, or block forever. Concurrent attempts share one prompt.
 - **LAN protection.** A hard deny on resolved IPs (RFC1918, loopback, link-local/metadata, CGNAT, ULA …) that
@@ -50,7 +50,7 @@ only then let through, turned back, or held for you to decide.
   credentials for those hosts are stripped, and
   read-only hosts (e.g. the npm registry) refuse uploads.
 - **Operator UI.** An overview of what the agent is doing and what needs you, approvals (with keyboard
-  shortcuts), live log, rules editor with dry-run test, presets, workspace files, browser consoles (Remote
+  shortcuts), live log, rules editor with dry-run test, shortcuts, workspace files, browser consoles (Remote
   Control, bash, claude), and a guided first start that logs in to Claude, takes the git identity from GitHub
   and enables Remote Control without a console. It tells you when a new release is out.
 - **Learning mode.** Let a new task run for 30 minutes with public HTTPS allowed and recorded, then save the

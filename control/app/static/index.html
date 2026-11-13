@@ -91,9 +91,9 @@
   <!-- RULES -->
   <section id="tab-rules" role="tabpanel" aria-labelledby="tabbtn-rules" class="hidden">
     <div class="card" id="quick">
-      <h3>Quick actions</h3>
-      <p class="hint">Common changes in one click. They add normal rules, tagged with their name, which you can see in the
-        table below and undo here.</p>
+      <h3>Shortcuts</h3>
+      <p class="hint">Common changes in one click. A shortcut adds normal rules, tagged with its name, which you can see in
+        the table below and undo here.</p>
       <h4>Internet</h4>
       <div class="row wrap">
         <button data-preset="open" data-ttl="900">Allow web (HTTP/HTTPS) for 15 min</button>
@@ -118,9 +118,9 @@
         limit, and your approval each time it is used.</p>
       <button id="qaLan" class="secondary">Allow a device on the local network&hellip;</button>
       <div id="qaLanHelp" class="hint hidden"></div>
-      <h4>Templates</h4>
-      <p class="hint">Allow everything a tool ecosystem needs. Optional time limit; <i>Undo</i> removes exactly the
-        template's rules.</p>
+      <h4>Tool ecosystems</h4>
+      <p class="hint">One shortcut per tool ecosystem, for everything it needs. Optional time limit; <i>Undo</i> removes
+        exactly that shortcut's rules.</p>
       <div id="qaTemplates" class="templates"></div>
     </div>
     <div class="card" id="learnCard" tabindex="-1"><h3>Learning mode</h3><div id="learnBox"></div></div>
@@ -316,7 +316,7 @@
       <li id="st-policy"><h3 tabindex="-1">Starting policy <span class="step-state"></span></h3>
         <p class="hint">What happens with destinations no rule covers. You can change it any time under <i>Rules</i>.</p>
         <div class="row" role="group" aria-label="Starting policy"><button data-policy="ask" class="secondary">Ask me (recommended)</button>
-          <button data-policy="deny" class="secondary">Strict: block unknown</button><button id="wzTemplates" class="secondary">Templates&hellip;</button></div>
+          <button data-policy="deny" class="secondary">Strict: block unknown</button><button id="wzTemplates" class="secondary">Shortcuts&hellip;</button></div>
         <div class="status"></div></li>
       <li id="st-notify"><h3 tabindex="-1">Phone notifications <span class="step-state"></span></h3>
         <div id="notifyStatus" class="muted"></div>
