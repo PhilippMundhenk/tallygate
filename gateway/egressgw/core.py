@@ -526,11 +526,8 @@ class Gateway:
     async def decide(
         self, host: str, port: int, ips: list[str], proto: str, client: str, learning: bool = False
     ) -> Decision:
-        """Full decision with known IPs (hard deny, rules, default; asks if needed). With `learning`, learning
-        mode replaces the default decision only: the hard deny and every rule still decide first."""
-        dec = self.policy.evaluate(host, port, ips, proto)
-        if learning and dec.rule_id is None and self.learning.covers(port):
-            return Decision("allow", LEARNING)
+        """Full decision with known IPs (the model), asking you if it says `ask`."""
+        dec = self.access.on_addresses(host, port, ips, proto, learning)
         if dec.action != "ask":
             return dec
         return await self.ask(host, port, ips, proto, client)
@@ -690,25 +687,19 @@ class Gateway:
 
     async def _grant_connect(self, data, host: str, port: int, proto: str, client: str, block) -> bool:
         """Handle a connection covered by an active grant. Returns True if handled (allowed or blocked)."""
-        m = self._grant_match(host, port)
+        m = self.access.grant_for(host, port)
         if not m:
             return False
         a, g, t = m
-        if t.address:
-            ips = [t.address]
-        elif is_ip(host):
-            ips = [host.strip("[]")]
-        else:
+        ips = self.access.grant_addresses(t, host)
+        if ips is None:
             try:
                 ips = await self.resolve(host, port)
             except OSError as e:
                 block(f"dns failure: {e}")
                 return True
-        problem = self.grants.address_problem(g, t, ips)
-        if not problem and not t.lan:
-            problem = self.policy.hard_denied(host, port, ips)
-        if problem or not ips:
-            block(problem or "no address", ips)
+        if problem := self.access.grant_problem(g, t, host, port, ips):
+            block(problem, ips)
             return True
         self.record(
             kind="conn",
@@ -746,29 +737,22 @@ class Gateway:
             if await self._grant_connect(data, host, port, proto, client, block):
                 return
             ips = [host.strip("[]")]
-            if hint := self._grant_hint(host, port):
-                dec = self.policy.evaluate(host, port, ips, proto)
+            if hint := self.access.grant_hint(host, port):
+                dec = self.access.on_addresses(host, port, ips, proto)
                 if dec.action != "allow":
                     self._hit(dec)
                     return block(f"{dec.reason}; {hint}", ips)
             dec = await self.decide(host, port, ips, proto, client)
         else:
-            if not host.isascii():  # mitmproxy hands us IDNs decoded; prompts and rules use punycode
-                try:
-                    host = host.encode("idna").decode("ascii")
-                except UnicodeError:
-                    return block("invalid hostname")
-            if not valid_hostname(host):
+            name = self.access.checked_name(host)
+            if name is None:
                 return block("invalid hostname")
-            host = host.lower().rstrip(".")
+            host = name
             if await self._grant_connect(data, host, port, proto, client, block):
                 return
             # 1) decide on the name alone: denied / not-yet-approved names are never resolved
-            pre = self.policy.evaluate_name(host, port)
-            hint = self._grant_hint(host, port)
-            if pre.rule_id is None and not hint and self.learning.covers(port):
-                # no rule matched and no grant is defined for it: learning mode decides instead of the mode
-                pre = Decision("allow", LEARNING)
+            pre = self.access.on_name(host, port)
+            hint = self.access.grant_hint(host, port)
             if hint and pre.action != "allow":
                 self._hit(pre)
                 return block(f"{pre.reason}; {hint}")
@@ -789,7 +773,7 @@ class Gateway:
         self._hit(dec)
         if dec.action != "allow":
             data.server.error = f"egress policy: blocked ({dec.reason})"
-            if hint := self._grant_hint(host, port):
+            if hint := self.access.grant_hint(host, port):
                 reason = f"{reason}; {hint}"
         self.record(
             kind="conn", proto=proto, client=client, host=host, port=port, ips=ips, action=dec.action, reason=reason
@@ -836,19 +820,6 @@ class Gateway:
             except OSError:
                 continue  # transient DNS failure: keep what we have and try again next cycle
         self.intercept_ips |= found
-
-    def _grant_match(self, host: str, port: int):
-        """Active grant for host:port - unless the policy already allows the name: grants only ADD
-        access, they never narrow what the rules allow. A LAN target is always used: the rules alone
-        can never reach it (hard deny), e.g. with the `open` preset active."""
-        m = self.grants.match(host, port)
-        if m and not m[2].lan and not is_ip(host) and self.policy.evaluate_name(host, port).action == "allow":
-            return None
-        return m
-
-    def _grant_hint(self, host: str, port: int) -> str | None:
-        names = self.grants.defined_for(host, port)
-        return f"available via grant {', '.join(names)} (agent: tallygate request {names[0]})" if names else None
 
     @fail_closed
     def server_disconnected(self, data: server_hooks.ServerConnectionHookData) -> None:
@@ -963,7 +934,7 @@ class Gateway:
         v = self.verdicts.get(flow.server_conn.id)
         if v is None:
             host = (flow.request.host or "").lower().rstrip(".")
-            if flow.request.scheme == "http" and (m := self._grant_match(host, flow.request.port)):
+            if flow.request.scheme == "http" and (m := self.access.grant_for(host, flow.request.port)):
                 return Verdict(host, flow.request.port, m[0].id, m[2])
             return Verdict(host, flow.request.port)
         return v

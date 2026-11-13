@@ -192,8 +192,9 @@ Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is
   suite without a difference, and then took over: the hooks in `core.py` ask the model, and the helpers it
   replaced (`_intercepted`, `_sni_problem`, `_host_binding`, `_host_checks`, `_grant_binding`, `_grant_checks`)
   and the per-connection maps (`orig_host`, `conn_grant`) are gone.
-- Open: the connection decision in the model, the unified file format with migration, one never-reachable
-  list, API and UI.
+- 2026-11-13: the connection decision moved into the model too (`on_name`, `on_addresses`, `grant_for`,
+  `grant_problem`); `server_connect` only resolves, asks you and applies the verdict.
+- Open: the unified file format with migration, one never-reachable list, API and UI.
 
 ## Consequences
 
