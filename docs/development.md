@@ -15,6 +15,8 @@
 │   └── egressgw/
 │       ├── addon.py          #   mitmproxy script entry point (thin loader)
 │       ├── core.py           #   hooks: server_connect, tls_clienthello, request, dns_request; approvals
+│       ├── model.py          #   one model: the verdict per connection, the limits per request (ADR-0014)
+│       ├── access.py         #   read-only view for the UI: each destination once
 │       ├── policy.py         #   pure policy engine (rules, hard deny, approvals → rules)
 │       ├── grants.py         #   grant definitions, requests, active grants
 │       ├── availability.py   #   away mode, quiet hours, digest of refused requests
@@ -117,7 +119,10 @@ Every Python module in `gateway/`, `control/`, `agent/` and `tools/` is gated th
 
 ## Making changes safely
 
-- Enforcement logic lives in `gateway/egressgw/core.py` (`server_connect` is the single gate). Keep it small.
+- Enforcement lives in two files. `gateway/egressgw/core.py` holds the mitmproxy hooks (`server_connect` is the
+  single gate for connections) and does the I/O. `gateway/egressgw/model.py` decides what follows from an allowed
+  connection: whether it is intercepted, and what each request may do. It has no I/O and no mitmproxy types;
+  a new kind of limit is added there, not as another check in the hooks.
 - Any change to topology, policy evaluation, injection or management exposure requires an ADR update and a
   threat-model review ([threat-model.md](threat-model.md)).
 - Add an e2e test for every new protocol path or decision type.

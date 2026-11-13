@@ -23,7 +23,7 @@ from mitmproxy.test import tflow, tutils
 
 from egressgw import core
 from egressgw.grants import Target
-from egressgw.model import Verdict
+from egressgw.model import Req, Verdict
 
 
 @pytest.fixture
@@ -244,7 +244,7 @@ def test_allowed_name_is_pinned_to_the_checked_ip(make, monkeypatch):
     data = connect(gw, "API.example.")
     assert data.server.error is None and data.server.address == ("93.184.216.34", 443)
     assert data.server.sni == "api.example"  # intercepted host: upstream cert checked against the name
-    assert gw.orig_host[data.server.id] == "api.example"
+    assert gw.verdicts[data.server.id] == Verdict("api.example", 443)
 
 
 def test_ip_literal_with_a_grant_hint_is_refused_without_asking(make):
@@ -259,7 +259,8 @@ def test_grant_on_an_ip_literal_target(make):
     gw.grants.activate("ipgrant", "read", 600, "", "t")
     data = connect(gw, "198.51.100.9", 8443)
     assert data.server.error is None and data.server.address == ("198.51.100.9", 8443)
-    assert gw.conn_grant[data.server.id][1] == "198.51.100.9"
+    v = gw.verdicts[data.server.id]
+    assert v.host == "198.51.100.9" and v.grant and v.target.port == 8443
 
 
 def test_grant_with_a_fixed_address_is_never_resolved(make, monkeypatch):
@@ -284,7 +285,7 @@ def test_grant_dns_failure_is_refused(make, monkeypatch):
     monkeypatch.setattr(gw, "resolve", fail)
     data = connect(gw, "nas.example")
     assert data.server.error == "egress policy: blocked (dns failure: timeout)"
-    assert data.server.id not in gw.conn_grant
+    assert data.server.id not in gw.verdicts
 
 
 def test_non_lan_grant_still_honours_the_hard_deny(make, monkeypatch):
@@ -303,7 +304,6 @@ def test_non_lan_grant_still_honours_the_hard_deny(make, monkeypatch):
 def grant_conn(gw, target: Target, level="write", name="nas") -> str:
     a = gw.grants.activate(name, level, 600, "", "t")
     sid = "srv-1"
-    gw.conn_grant[sid] = (a.id, target.host, target)
     gw.verdicts[sid] = Verdict(target.host, target.port, a.id, target)
     return sid
 
@@ -384,7 +384,6 @@ def test_tls_verify_false_disables_verification_only_for_that_target(make):
 # ------------------------------------------------------------------ SNI binding (#57)
 def hello(gw, orig, sni, sid="srv-9", port=443):
     if orig is not None:
-        gw.orig_host[sid] = orig
         gw.verdicts[sid] = Verdict(orig, port)
     ctx = SimpleNamespace(
         server=SimpleNamespace(id=sid, address=("192.0.2.1", port)), client=SimpleNamespace(peername=("10.0.0.5", 1))
@@ -459,7 +458,7 @@ def test_ip_literal_to_an_intercept_host_ip_is_refused_even_without_sni(make):
 def test_note_intercept_ips_ignores_non_intercept_resolutions(make):
     gw = make({"inject": [{"host": "api.example", "value": "x"}]})
     # server_connect only records IPs for hosts that are actually intercepted
-    assert gw._intercepted("api.example") and not gw._intercepted("ok.example")
+    assert gw.access.intercepted("api.example") and not gw.access.intercepted("ok.example")
     assert gw._intercept_names() == {"api.example"}  # wildcards / IP literals excluded
     assert not gw._is_intercept_ip("203.0.113.5")
 
@@ -478,6 +477,12 @@ def test_refused_tls_fails_both_handshakes_and_is_forgotten_on_disconnect(make):
     assert "s1" not in gw.tls_refused
 
 
+def binding(gw, req, target):
+    """What the model says about this mitmproxy request on a connection to `target`."""
+    r = Req(req.method, req.scheme, req.path, req.host_header, req.pretty_host)
+    return gw.access.check(Verdict(target, 80), r).refuse
+
+
 def test_host_binding(make):
     gw = make()
     for host, target, refused in (
@@ -490,10 +495,10 @@ def test_host_binding(make):
     ):
         req = tutils.treq(host=target)
         req.headers["Host"] = host
-        assert (gw._host_binding(req, target) is not None) is refused, host
+        assert (binding(gw, req, target) is not None) is refused, host
     req = tutils.treq()
     req.headers.pop("Host", None)
-    assert gw._host_binding(req, "a.example") is None  # no Host: the upstream's default site
+    assert binding(gw, req, "a.example") is None  # no Host: the upstream's default site
 
 
 # ------------------------------------------------------------------ websocket / http
@@ -503,7 +508,6 @@ def test_websocket_refused_on_read_grants_only(make):
     for level, killed in (("read", True), ("write", False)):
         flow = tflow.twebsocketflow()
         a = gw.grants.activate("nas", level, 600, "", "t")
-        gw.conn_grant[flow.server_conn.id] = (a.id, "nas.example", t)
         gw.verdicts[flow.server_conn.id] = Verdict("nas.example", 443, a.id, t)
         gw.websocket_start(flow)
         assert (not flow.killable) is killed
@@ -516,7 +520,6 @@ def grant_flow(gw, level="read", **req):
     flow.request.headers["Host"] = "nas.example"
     a = gw.grants.activate("nas", level, 600, "", "t")
     t = Target(host="nas.example", port=443)
-    gw.conn_grant[flow.server_conn.id] = (a.id, "nas.example", t)
     gw.verdicts[flow.server_conn.id] = Verdict("nas.example", 443, a.id, t)
     return flow, a
 
@@ -660,7 +663,8 @@ def test_an_invalid_readonly_entry_stops_the_gateway(make):
 
 def test_post_is_a_write_only_where_configured(make):
     gw = make({"readonly": ["npm.example", {"host": "*.oci.example", "post_is_write": True, "read_posts": ["/q/*"]}]})
-    assert gw._intercepted("oci.example") and gw._intercepted("cdn.oci.example") and not gw._intercepted("x.example")
+    m = gw.access
+    assert m.intercepted("oci.example") and m.intercepted("cdn.oci.example") and not m.intercepted("x.example")
     for host, method, path, refused in (
         ("npm.example", "POST", "/-/npm/v1/security/audits", False),  # npm audit
         ("npm.example", "PUT", "/pkg", True),
