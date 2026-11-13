@@ -137,8 +137,13 @@ def parse_never(config: dict) -> tuple[list[str], list[str], list[str]]:
             raise ValueError(f"never: scope must be one of {SCOPES_NEVER}, not {scope!r}")
         (lan if scope == "all+lan" else every).append(cidr)
     old = [k for k in ("hard_deny_floor", "grants_never") if config.get(k)]
-    every = parse_cidrs([*every, *(config.get("hard_deny_floor") or [])], "never")
-    lan = parse_cidrs([*lan, *(config.get("grants_never") or [])], "never")
+    # each old key is checked under its own name, so that an error names the key the operator wrote
+    every = parse_cidrs(
+        [*parse_cidrs(every, "never"), *parse_cidrs(config.get("hard_deny_floor") or [], "hard_deny_floor")], "never"
+    )
+    lan = parse_cidrs(
+        [*parse_cidrs(lan, "never"), *parse_cidrs(config.get("grants_never") or [], "grants_never")], "never"
+    )
     return every, lan, old
 
 

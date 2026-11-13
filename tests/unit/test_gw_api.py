@@ -182,6 +182,13 @@ def test_a_broken_never_entry_stops_the_gateway(tmp_path, gw, never, error):
         core.Gateway()
 
 
+def test_a_broken_old_key_is_named_in_the_error(tmp_path, gw):
+    for key in ("hard_deny_floor", "grants_never"):
+        (tmp_path / "config.yaml").write_text(yaml.safe_dump({key: ["10.0.0.0/33"]}))
+        with pytest.raises(ValueError, match=f"^{key}: invalid CIDR"):
+            core.Gateway()
+
+
 def test_info_reports_injection_services_and_ca(gw):
     status, body = admin(gw, "GET", "/info")
     assert status == 200 and body["ca_pem"] is None

@@ -194,7 +194,9 @@ Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is
   and the per-connection maps (`orig_host`, `conn_grant`) are gone.
 - 2026-11-13: the connection decision moved into the model too (`on_name`, `on_addresses`, `grant_for`,
   `grant_problem`); `server_connect` only resolves, asks you and applies the verdict.
-- Open: the unified file format with migration, one never-reachable list, API and UI.
+- 2026-11-13: one `never` list in the gateway config, with scopes `all` and `all+lan`; the old keys are read
+  as `never` and `python -m egressgw.convert` prints a file in the new form.
+- Open: destinations as the file format with migration, API and UI.
 
 ## Consequences
 
