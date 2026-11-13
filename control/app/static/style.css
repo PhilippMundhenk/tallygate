@@ -27,7 +27,7 @@ label{display:block;margin:6px 0;color:var(--muted)}label select,label input{dis
 table{width:100%;border-collapse:collapse;background:var(--panel);border-radius:10px;overflow:hidden;margin-bottom:14px}
 th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:500;font-size:12px}
 td code{font-size:12px}table.log td{font-size:12.5px}
-.a-allow{color:var(--green)}.a-deny{color:var(--red)}.a-ask{color:var(--amber)}
+.a-allow{color:var(--green)}.a-deny{color:var(--red)}.a-ask{color:var(--amber)}.small-text{font-size:12px}table.access td{vertical-align:top}
 .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap}.toolbar input[type=text],#logFilter{flex:1;min-width:200px}
 .toolbar label{display:flex;gap:4px;align-items:center;margin:0}
 .pending{background:var(--panel);border:1px solid var(--amber);border-radius:10px;padding:12px;margin-bottom:10px}

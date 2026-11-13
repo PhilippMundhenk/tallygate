@@ -138,6 +138,10 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   on the emergency stop and on restart (#69).
 
 ### Changed
+- **What the agent can reach:** a new table at the top of the *Rules* tab lists each destination once with
+  everything that applies to it: the deciding rule, read-only, added credentials, repository limits, the grants
+  defined for it and when it was last used. Until now that took three tabs and the config file. New read-only
+  route `GET /access` (#121).
 - **One "Never reachable" list:** *Rules → Never reachable* shows every range that can never be reached in one
   table: the built-in list, `hard_deny_floor`, your additions, `grants_never`, the stack's own networks and the
   gateway's own listeners, each with where it comes from and where it is changed. It replaces the *Hard deny*

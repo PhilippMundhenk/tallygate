@@ -577,6 +577,13 @@ def build_app(gw: Gateway) -> web.Application:
         gw.publish({"type": "availability"})
         return _json(gw.availability.describe())
 
+    @routes.get("/access")
+    async def access_overview(_):
+        """Each destination once, with the rule, the per-request limits and the grants that apply (#121)."""
+        from egressgw import access
+
+        return _json(access.overview(gw))
+
     @routes.get("/never-reachable")
     async def never_reachable(_):
         return _json(gw.never_reachable())
