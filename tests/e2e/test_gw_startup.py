@@ -91,3 +91,35 @@ def test_tls_verify_false_only_for_the_grant_that_says_so(make_gateway, upstream
     assert status == 200 and b'"path": "/ok"' in body
     status, _ = tls_request(proxy, f"strict.test:{port}", "strict.test", gw["ca"])
     assert status != 200  # hostname mismatch is still refused for every other target
+
+
+# ---------------------------------------------------------------- the test harness itself
+def test_harness_starts_again_when_a_picked_port_was_taken(make_gateway, monkeypatch):
+    """The ports are picked as free and bound a moment later. If one is taken in between, the gateway exits;
+    the harness then starts it once more with new ports instead of failing an unrelated test."""
+    from . import conftest
+
+    blocker = socket.socket()
+    blocker.bind(("127.0.0.1", 0))
+    blocker.listen()
+    taken, real, calls = blocker.getsockname()[1], conftest.free_port, []
+
+    def first_port_is_taken() -> int:
+        calls.append(1)
+        return taken if len(calls) == 1 else real()
+
+    monkeypatch.setattr(conftest, "free_port", first_port_is_taken)
+    try:
+        gw = make_gateway({}, {"default": "ask", "rules": []})
+        assert gw["api"].call("GET", "/health")[0] == 200 and gw["ports"]["http"] != taken
+        assert len(calls) == 10  # two attempts, five ports each
+    finally:
+        blocker.close()
+
+
+def test_harness_reports_the_gateway_log_when_it_cannot_start(make_gateway):
+    from .conftest import GatewayStartError
+
+    with pytest.raises(GatewayStartError) as e:
+        make_gateway({"hard_deny_floor": ["not-a-cidr"]}, {"default": "ask", "rules": []})
+    assert e.value.exited and "exited with code" in str(e.value) and "hard_deny_floor" in str(e.value)
