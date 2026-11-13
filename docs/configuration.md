@@ -263,7 +263,7 @@ See [grants.md](grants.md) for the concept and examples. Keys in `config/gateway
 |---|---|---|
 | `grants` | – | Map `name → definition` (`description`, `targets`, `levels`, `approval`, `default_ttl`, `max_ttl`, `inject`). Read-only in the UI. |
 | `grants_lan_allow` | `[]` | CIDRs that **UI-defined** grants may reach with `lan: true`. Empty = UI grants cannot target the LAN. |
-| `grants_never` | loopback, link-local, multicast, unspecified | Never reachable through any grant. |
+| `grants_never` | loopback, link-local, multicast, unspecified | Never reachable through any grant. The stack's own networks (`GW_INTERNAL_NETS`) and the gateway's own listeners are refused in addition, whatever is set here. |
 | `grant_request_timeout` | `300` | Seconds a request waits for a decision. |
 | `grant_max_pending` | `3` | Open grant requests at once. |
 | `grant_api_rate` | `30` | Requests/minute on the agent grant API. |
@@ -350,6 +350,7 @@ These are wired by the compose file and normally need no change.
 | egress-gw | `GW_HTTP_PORT` / `GW_SOCKS_PORT` / `GW_DNS_PORT` | Listener ports (3128 / 1080 / 53). |
 | egress-gw | `GW_API_HOST` / `GW_API_PORT` | API address on control-net / port (8081). |
 | egress-gw | `GW_GRANTS_PORT` | Agent grant API port on agent-net (8079). |
+| egress-gw | `GW_INTERNAL_NETS` | The stack's own networks as comma-separated CIDRs (compose: the four `172.31.1x.0/24` networks). Never reachable through a grant, not even with `lan: true`. Change it together with the `networks:` subnets; an invalid entry stops the gateway. |
 | egress-gw | `GW_CONFIG`, `DATA_DIR`, `CA_EXPORT_DIR`, `PRESET_DIR` | Paths. |
 | egress-gw | `GW_EXTRA_ARGS` | Extra mitmdump arguments (advanced). |
 | egress-gw | `GW_TEST_STATIC_HOSTS` | **Test suite only.** Never set in production (logged as a warning). |

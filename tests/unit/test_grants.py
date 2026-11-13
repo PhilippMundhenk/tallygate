@@ -6,7 +6,17 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gateway"))
 
-from egressgw.grants import GrantDef, Grants, Target, clean_reason, parse_ttl, path_ok
+from egressgw.grants import (
+    GrantDef,
+    Grants,
+    Target,
+    clean_reason,
+    internal_nets,
+    own_sockets,
+    parse_ttl,
+    path_ok,
+)
+from egressgw.policy import ip_addr
 
 HA = {
     "description": "Home Assistant",
@@ -121,6 +131,44 @@ def test_never_reachable_and_ui_lan_limits(tmp_path):
     with pytest.raises(ValueError):
         g.upsert_ui("ha", HA)  # config grants cannot be overridden from the UI
     assert (tmp_path / "grants.yaml").exists() and Grants({"grants": {"ha": HA}}, tmp_path).defs["cam"].source == "ui"
+
+
+def test_the_stack_itself_is_never_reachable_through_a_grant(tmp_path, monkeypatch):
+    # #112: a LAN target skips the hard deny, so the stack's own networks (GW_INTERNAL_NETS, set in
+    # compose.yaml) and the gateway's own listeners are refused here, whatever grants_never says.
+    monkeypatch.setenv("GW_INTERNAL_NETS", "172.31.11.0/24, 172.31.12.0/24,")
+    monkeypatch.setenv("GW_API_HOST", "192.168.5.2")
+    monkeypatch.setenv("GW_API_PORT", "8123")  # the port of the HA target
+    monkeypatch.setenv("GW_LISTEN_HOST", "egress-gw")  # not an address: nothing to compare with
+    g = make(tmp_path, grants_never=["169.254.0.0/16"], grants_lan_allow=["172.31.0.0/16"])
+    d, t = g.defs["ha"], g.defs["ha"].targets[0]
+    assert t.lan and t.port == 8123
+    assert "belongs to the tallygate stack itself" in g.address_problem(d, t, ["192.168.7.7", "172.31.11.2"])
+    assert "belongs to the tallygate stack itself" in g.address_problem(d, t, ["172.31.12.3"])
+    assert "192.168.5.2:8123 is the gateway itself" in g.address_problem(d, t, ["192.168.5.2"])
+    assert g.address_problem(d, t, ["192.168.5.3"]) is None  # another host on that LAN
+    assert len(g.own) == 1
+    cam = {"host": "cam.lan", "port": 80, "scheme": "http", "lan": True}
+    with pytest.raises(ValueError, match="belongs to the tallygate stack itself"):
+        g.upsert_ui("cam", {"targets": [{**cam, "address": "172.31.11.2"}]})
+    assert g.upsert_ui("cam", {"targets": [{**cam, "address": "172.31.99.9"}]}).targets[0].address == "172.31.99.9"
+
+
+def test_own_listeners_and_internal_nets_from_the_environment(tmp_path, monkeypatch):
+    for var in ("GW_INTERNAL_NETS", "GW_API_HOST", "GW_API_PORT", "GW_LISTEN_HOST"):
+        monkeypatch.delenv(var, raising=False)
+    g = make(tmp_path)
+    assert g.internal == [] and g.own == set()  # nothing configured: only grants_never applies
+    assert own_sockets({"GW_LISTEN_HOST": "172.31.10.2", "GW_API_HOST": "172.31.11.2", "GW_SOCKS_PORT": "1081"}) == {
+        (ip_addr("172.31.11.2"), 8081),
+        (ip_addr("172.31.10.2"), 8079),
+        (ip_addr("172.31.10.2"), 3128),
+        (ip_addr("172.31.10.2"), 1081),
+    }
+    assert [str(n) for n in internal_nets("10.1.0.0/16,fd00::/8")] == ["10.1.0.0/16", "fd00::/8"]
+    monkeypatch.setenv("GW_INTERNAL_NETS", "172.31.10.0/24,nonsense")
+    with pytest.raises(ValueError, match="GW_INTERNAL_NETS: invalid CIDR 'nonsense'"):
+        make(tmp_path)  # a broken entry stops the gateway
 
 
 def test_ui_lan_grants_need_config_opt_in(tmp_path):

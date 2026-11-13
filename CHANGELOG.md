@@ -11,6 +11,11 @@ set of security fixes from two review rounds, quick actions and templates, help 
 coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you update.
 
 ### Security
+- **Grants and the stack itself:** a `lan: true` grant target skips the hard deny, and `grants_never` did not
+  cover the stack's own networks, so a LAN grant pointing there could reach the gateway's management API or
+  the control UI. The stack's networks (`GW_INTERNAL_NETS`, set in `compose.yaml`) and the gateway's own
+  listeners are now refused for every grant, whatever `grants_never` says. If you changed the subnets in
+  `compose.yaml`, change `GW_INTERNAL_NETS` with them (#112).
 - **IP literal to an intercepted host:** an intercepted host (credential injection / read-only) could be
   reached without interception by connecting to its IP as a literal — with the host's name as the TLS SNI, a
   mismatched SNI, or no SNI at all — skipping the credential strip/inject and the read-only check.
