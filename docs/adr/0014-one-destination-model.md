@@ -184,6 +184,17 @@ the current behaviour and reverted on its own.
 
 Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is the only risky merge.
 
+## Progress
+
+- 2026-11-13: the three intended behaviour changes that could be made in the old code were made first
+  (#119: CIDR `deny`, `grants_never` additive).
+- 2026-11-13: `model.py` was evaluated in shadow on every TLS handshake and request in the whole unit and e2e
+  suite without a difference, and then took over: the hooks in `core.py` ask the model, and the helpers it
+  replaced (`_intercepted`, `_sni_problem`, `_host_binding`, `_host_checks`, `_grant_binding`, `_grant_checks`)
+  and the per-connection maps (`orig_host`, `conn_grant`) are gone.
+- Open: the connection decision in the model, the unified file format with migration, one never-reachable
+  list, API and UI.
+
 ## Consequences
 
 - ✅ One definition, one matcher, one place where a connection is recognised: the class of "two mechanisms

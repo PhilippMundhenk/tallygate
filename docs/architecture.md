@@ -163,12 +163,12 @@ sequenceDiagram
     participant G as egress-gw
     participant S as api.github.com
     A->>G: CONNECT api.github.com:443
-    G->>G: policy allow · remember orig_host = api.github.com · pin IP · set upstream SNI
+    G->>G: policy allow · remember the verdict (checked name api.github.com) · pin IP · set upstream SNI
     A->>G: ClientHello SNI = api.github.com
-    G->>G: orig_host is an injection host → intercept (whatever the SNI says)
+    G->>G: the checked name has limits (credentials) → intercept (whatever the SNI says)
     G-->>A: TLS with certificate from the tallygate CA (trusted by the agent)
     A->>G: GET /user · Authorization: token injected-by-egress-gateway
-    G->>G: strip agent Authorization/Cookie · Host == orig_host → set "Bearer <real token>"
+    G->>G: strip agent Authorization/Cookie · Host == checked name → set "Bearer <real token>"
     G->>S: TLS (verified against api.github.com) · real token
     S-->>A: response
 ```

@@ -146,6 +146,10 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   on the emergency stop and on restart (#69).
 
 ### Changed
+- **One evaluation path (ADR-0014, first part):** whether a connection is intercepted and what each request on
+  it may do is now decided in one place (`gateway/egressgw/model.py`), for read-only hosts, credential
+  injection, repository limits and grants alike. No behaviour change: the model ran next to the old code on
+  every TLS handshake and request of the whole test suite without a difference before it took over (#122).
 - **First run:** the *Starting policy* step of the setup points to learning mode as the quickest way to a
   working set of rules (*Learn from a first task*). It opens *Rules → Learning mode*, where the time limit is
   chosen and confirmed as before (#121).

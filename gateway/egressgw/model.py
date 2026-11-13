@@ -212,10 +212,7 @@ class Access:
         method = r.method.upper()
         if lim.read_level and (method not in READ_METHODS or "upgrade" in r.connection.lower()):
             return Outcome(f"grant {lim.grant} is read-only")
-        if lim.no_writes and (
-            method in WRITE_METHODS
-            or (method == "POST" and lim.post_is_write and not path_ok(r.path, list(lim.read_posts)))
-        ):
+        if lim.no_writes and is_write(method, r.path, lim.post_is_write, lim.read_posts):
             return Outcome("read-only host")
         if lim.repos and (why := self.gw.github.check(lim.host, r.method, r.path)):
             return Outcome(why)  # another repository: refused before it reaches GitHub, before any token is added
@@ -226,6 +223,13 @@ class Access:
                 if value is not None:  # secret not configured: the request goes out without credentials
                     out.add.append((header, value))
         return out
+
+
+def is_write(method: str, path: str, post_is_write: bool, read_posts) -> bool:
+    """A request that a read-only destination refuses: PUT, PATCH, DELETE, and POST where it counts as a write
+    (except on the `read_posts` paths: POSTs that only read, e.g. a search or a batch lookup)."""
+    method = method.upper()
+    return method in WRITE_METHODS or (method == "POST" and post_is_write and not path_ok(path, list(read_posts)))
 
 
 def _same_host(sent: str, host: str) -> bool:
