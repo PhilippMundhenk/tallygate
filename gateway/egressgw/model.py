@@ -8,14 +8,18 @@ what may the agent do at this destination, now? Here they are properties of one 
 - `Limits` are everything that applies to single requests on that connection, whatever defined it: the
   scheme and Host it must use, the paths, the methods, the credentials that are stripped and added.
 
-Two questions are answered here and nowhere else:
+What is answered here and nowhere else:
 
+- `Access.on_name` / `Access.on_addresses`: the decision for a connection, on the name before it is resolved
+  and again with its addresses (hard deny, rules, the mode, learning mode); `Access.grant_for` and
+  `Access.grant_problem` for a connection an active grant carries.
 - `Access.tls`: is the connection intercepted, passed through, or refused? It follows from the limits
   (anything with limits is intercepted), and a destination that has limits cannot be reached around them by
   its IP address.
 - `Access.check`: may this request go out, and with which headers?
 
-The module has no I/O and does not know mitmproxy: `core.py` turns flows into `Req` and applies the outcome.
+The module has no I/O and does not know mitmproxy: `core.py` resolves names, asks you, turns flows into `Req`
+and applies the outcome.
 """
 
 from __future__ import annotations
@@ -25,7 +29,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from egressgw.grants import READ_METHODS, Target, path_ok
-from egressgw.policy import host_matches, ip_addr, is_ip, valid_hostname
+from egressgw.learning import REASON as LEARNING
+from egressgw.policy import Decision, host_matches, ip_addr, is_ip, valid_hostname
 from egressgw.store import render
 
 if TYPE_CHECKING:
@@ -99,6 +104,67 @@ class Access:
 
     def __init__(self, gw: Gateway) -> None:
         self.gw = gw
+
+    # ---------------------------------------------------------------- the connection
+    @staticmethod
+    def checked_name(host: str) -> str | None:
+        """The name as rules and prompts use it (punycode, lower case, no trailing dot), or None if it is not a
+        valid host name. mitmproxy hands IDNs over decoded."""
+        if not host.isascii():
+            try:
+                host = host.encode("idna").decode("ascii")
+            except UnicodeError:
+                return None
+        return host.lower().rstrip(".") if valid_hostname(host) else None
+
+    def on_name(self, host: str, port: int) -> Decision:
+        """The decision on the name alone, before any lookup: denied and not-yet-approved names are never
+        resolved. Learning mode replaces the mode when no rule matched and no grant is defined for it."""
+        dec = self.gw.policy.evaluate_name(host, port)
+        if dec.rule_id is None and not self.grant_hint(host, port) and self.gw.learning.covers(port):
+            return Decision("allow", LEARNING)
+        return dec
+
+    def on_addresses(self, host: str, port: int, ips: list[str], proto: str = "", learning: bool = False) -> Decision:
+        """The decision with the addresses: hard deny, CIDR deny rules, the rules, the mode. With `learning`
+        (the name was let through by learning mode) learning mode replaces the mode again; the hard deny and
+        every rule still decide first."""
+        dec = self.gw.policy.evaluate(host, port, ips, proto)
+        if learning and dec.rule_id is None and self.gw.learning.covers(port):
+            return Decision("allow", LEARNING)
+        return dec
+
+    def grant_for(self, host: str, port: int):
+        """(active, definition, target) of the grant that carries a connection to host:port, or None.
+        Grants only ADD access: a name the rules already allow uses the rules, except for a LAN target, which
+        the rules can never reach (hard deny), e.g. with the `open` preset active. IP literals always use it."""
+        m = self.gw.grants.match(host, port)
+        if m and not m[2].lan and not is_ip(host) and self.gw.policy.evaluate_name(host, port).action == "allow":
+            return None
+        return m
+
+    def grant_hint(self, host: str, port: int) -> str | None:
+        names = self.gw.grants.defined_for(host, port)
+        return f"available via grant {', '.join(names)} (agent: tallygate request {names[0]})" if names else None
+
+    @staticmethod
+    def grant_addresses(t: Target, host: str) -> list[str] | None:
+        """The addresses of a grant target that need no lookup (a pinned address, an IP literal), else None."""
+        if t.address:
+            return [t.address]
+        if is_ip(host):
+            return [host.strip("[]")]
+        return None
+
+    def grant_problem(self, g, t: Target, host: str, port: int, ips: list[str]) -> str | None:
+        """Why a grant connection to these addresses is refused, or None: never-reachable ranges for grants,
+        `grants_lan_allow` for UI grants, and for a target without `lan` the hard deny as for any connection."""
+        problem = self.gw.grants.address_problem(g, t, ips)
+        if not problem and not t.lan:
+            problem = self.gw.policy.hard_denied(host, port, ips)
+        if not problem and not ips:
+            problem = "no address"
+        return problem
 
     # ---------------------------------------------------------------- limits of a destination
     def host_limits(self, host: str) -> Limits:

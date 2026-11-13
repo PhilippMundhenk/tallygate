@@ -179,3 +179,52 @@ def test_raw_traffic_and_websockets(gw):
     assert m.websocket_problem(grant(gw, "ha", "read")) == "websocket on a read-only grant"
     assert m.websocket_problem(grant(gw, "ha", "write")) is None
     assert m.websocket_problem(Verdict("ok.example", 443)) is None
+
+
+# ---------------------------------------------------------------- the connection decision
+def test_checked_name(gw):
+    m = gw.access
+    assert m.checked_name("API.Example.") == "api.example"
+    assert m.checked_name("bücher.example") == "xn--bcher-kva.example"  # IDNs as punycode, as rules use them
+    assert m.checked_name("bad_name!") is None and m.checked_name("a..b") is None
+    assert m.checked_name("\udcff.example") is None  # not encodable
+
+
+def test_on_name_and_on_addresses(gw, monkeypatch):
+    m = gw.access
+    assert m.on_name("ok.example", 443).action == "allow" and m.on_name("x.example", 443).reason == "default"
+    assert m.on_addresses("ok.example", 443, ["93.184.216.34"]).action == "allow"
+    assert m.on_addresses("ok.example", 443, ["10.0.0.1"]).rule_id == "hard_deny"  # the addresses decide too
+    monkeypatch.setattr(gw.learning, "covers", lambda port: port == 443)
+    assert m.on_name("x.example", 443).reason == "learning mode"  # no rule, no grant: learning mode decides
+    assert m.on_name("x.example", 80).reason == "default"  # not on its ports
+    assert m.on_name("ha.example", 443).reason == "default"  # a grant is defined for it: never learned
+    assert m.on_name("ok.example", 443).rule_id == "ok"  # a rule still decides first
+    assert m.on_addresses("x.example", 443, ["93.184.216.34"]).reason == "default"
+    assert m.on_addresses("x.example", 443, ["93.184.216.34"], learning=True).reason == "learning mode"
+    assert m.on_addresses("x.example", 443, ["10.0.0.1"], learning=True).rule_id == "hard_deny"
+
+
+def test_grants_only_add_access(gw):
+    m = gw.access
+    assert m.grant_for("ha.example", 443) is None  # nothing active
+    gw.grants.activate("api", "write", 600, "", "t")
+    gw.grants.activate("ha", "read", 600, "", "t")
+    assert m.grant_for("api.example", 443) is None  # the rules allow the name already: the rules decide
+    a, g, t = m.grant_for("ha.example", 443)
+    assert g.name == "ha" and t.host == "ha.example" and a.level == "read"
+    assert m.grant_hint("ha.example", 443) == "available via grant ha (agent: tallygate request ha)"
+    assert m.grant_hint("ok.example", 443) is None
+
+
+def test_grant_addresses_and_problems(gw):
+    m, g = gw.access, gw.grants.defs["ha"]
+    t = g.targets[0]
+    assert m.grant_addresses(t, "ha.example") is None  # needs a lookup
+    assert m.grant_addresses(t, "[2001:db8::1]") == ["2001:db8::1"]
+    pinned = type(t)(host="ha.example", port=443, address="203.0.113.9")
+    assert m.grant_addresses(pinned, "ha.example") == ["203.0.113.9"]
+    assert m.grant_problem(g, t, "ha.example", 443, ["93.184.216.34"]) is None
+    assert m.grant_problem(g, t, "ha.example", 443, ["10.0.0.5"]).startswith("hard-deny")  # no `lan`: hard deny
+    assert "never reachable" in m.grant_problem(g, t, "ha.example", 443, ["127.0.0.1"])
+    assert m.grant_problem(g, t, "ha.example", 443, []) == "no address"
