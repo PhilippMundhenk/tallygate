@@ -282,8 +282,14 @@ class Gateway:
         own = {c: "config" for c in self.floor_configured}
         out = [{"range": c, "source": own.get(c, "builtin"), "scope": "all"} for c in self.hard_deny_floor]
         out += [{"range": c, "source": "policy", "scope": "all"} for c in self.policy.hard_deny]
-        source = "grants_config" if self.config.get("grants_never") else "grants_builtin"
-        out += [{"range": str(n), "source": source, "scope": "grants"} for n in self.grants.never]
+        out += [
+            {
+                "range": str(n),
+                "source": "grants_config" if n in self.grants.never_configured else "grants_builtin",
+                "scope": "grants",
+            }
+            for n in self.grants.never
+        ]
         out += [{"range": str(n), "source": "stack", "scope": "grants"} for n in self.grants.internal]
         out += [
             {"range": f"{ip}:{port}", "source": "listener", "scope": "grants"}

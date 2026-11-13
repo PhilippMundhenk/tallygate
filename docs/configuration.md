@@ -269,7 +269,7 @@ See [grants.md](grants.md) for the concept and examples. Keys in `config/gateway
 |---|---|---|
 | `grants` | – | Map `name → definition` (`description`, `targets`, `levels`, `approval`, `default_ttl`, `max_ttl`, `inject`). Read-only in the UI. |
 | `grants_lan_allow` | `[]` | CIDRs that **UI-defined** grants may reach with `lan: true`. Empty = UI grants cannot target the LAN. |
-| `grants_never` | loopback, link-local, multicast, unspecified | Never reachable through any grant. A list here **replaces** the default (unlike `hard_deny_floor`): repeat the defaults you want to keep. The stack's own networks (`GW_INTERNAL_NETS`) and the gateway's own listeners are refused in addition, whatever is set here. |
+| `grants_never` | loopback, link-local, multicast, unspecified | Never reachable through any grant. The built-in list always applies; a list here **adds** to it, as `hard_deny_floor` does. The stack's own networks (`GW_INTERNAL_NETS`) and the gateway's own listeners are refused in addition, whatever is set here. |
 | `grant_request_timeout` | `300` | Seconds a request waits for a decision. |
 | `grant_max_pending` | `3` | Open grant requests at once. |
 | `grant_api_rate` | `30` | Requests/minute on the agent grant API. |

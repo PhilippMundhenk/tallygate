@@ -119,6 +119,19 @@ def test_requests_dedupe_cap_and_expiry(tmp_path):
     assert {r.status for r in timed_out} == {"expired"}
 
 
+def test_grants_never_adds_to_the_built_in_list(tmp_path, monkeypatch):
+    monkeypatch.delenv("GW_TEST_FLOOR_REPLACE", raising=False)
+    g = make(tmp_path, grants_never=["192.168.9.0/24", "127.0.0.0/8"])
+    d, t = g.defs["ha"], g.defs["ha"].targets[0]
+    assert "never reachable" in g.address_problem(d, t, ["192.168.9.5"])  # the addition
+    assert "never reachable" in g.address_problem(d, t, ["169.254.169.254"])  # built in, although not listed
+    assert [str(n) for n in g.never_configured] == ["192.168.9.0/24"]  # 127.0.0.0/8 is built in: listed once
+    monkeypatch.setenv("GW_TEST_FLOOR_REPLACE", "1")  # test only: the e2e upstreams live on loopback
+    g = make(tmp_path, grants_never=["192.168.9.0/24"])
+    assert g.address_problem(d, t, ["127.0.0.1"]) is None and "never" in g.address_problem(d, t, ["192.168.9.5"])
+    assert "never reachable" in make(tmp_path).address_problem(d, t, ["127.0.0.1"])  # nothing configured: built in
+
+
 def test_never_reachable_and_ui_lan_limits(tmp_path):
     g = make(tmp_path, grants_lan_allow=["192.168.1.0/24"])
     d, t = g.defs["ha"], g.defs["ha"].targets[0]

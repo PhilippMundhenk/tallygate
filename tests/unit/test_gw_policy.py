@@ -65,6 +65,40 @@ def test_cidr_rule_never_matches_without_addresses():
         assert not Rule(action=action, cidr="0.0.0.0/0").matches("x.example", 443, [])
 
 
+def test_a_cidr_deny_wins_over_a_host_allow_wherever_it_stands():
+    # #119: approvals and shortcuts are added on top; they must not switch off a CIDR deny further down.
+    p = Policy.from_dict(
+        {
+            "default": "ask",
+            "rules": [
+                {"id": "open", "action": "allow", "host": "*", "port": [80, 443]},  # e.g. "Allow web for 15 min"
+                {"id": "ok", "action": "allow", "host": "evil.example"},  # e.g. an "Always allow" approval
+                {"id": "net", "action": "deny", "cidr": "93.184.0.0/16", "note": "never there"},
+                {"id": "old", "action": "deny", "cidr": "8.8.0.0/16", "expires": 1},
+                {"id": "p", "action": "deny", "cidr": "9.9.9.0/24", "port": 22},
+            ],
+        }
+    )
+    dec = p.evaluate("evil.example", 443, ["93.184.0.7"])
+    assert (dec.action, dec.rule_id, dec.reason) == ("deny", "net", "rule net (never there)")
+    assert p.evaluate("evil.example", 443, ["1.1.1.1", "93.184.255.1"]).rule_id == "net"  # any address inside
+    assert p.evaluate("evil.example", 443, ["1.1.1.1"]).rule_id == "open"  # outside: first match, as before
+    assert p.evaluate("x.example", 443, ["8.8.8.8"]).rule_id == "open"  # an expired deny decides nothing
+    assert p.evaluate("x.example", 443, ["9.9.9.9"]).rule_id == "open"  # another port
+    assert p.evaluate_name("evil.example", 443).action == "allow"  # the name alone: still resolved, then refused
+    # IP literals keep the plain order: the first matching rule decides
+    q = Policy.from_dict(
+        {
+            "rules": [
+                {"id": "a", "action": "allow", "cidr": "93.184.0.7/32"},
+                {"id": "d", "action": "deny", "cidr": "93.184.0.0/16"},
+            ]
+        }
+    )
+    assert q.evaluate("93.184.0.7", 443, ["93.184.0.7"]).rule_id == "a"
+    assert q.evaluate("93.184.0.8", 443, ["93.184.0.8"]).rule_id == "d"
+
+
 def test_cidr_allow_needs_every_address_inside_deny_any():
     ips = ["1.2.3.4", "5.6.7.8"]
     assert not Rule(action="allow", cidr="1.2.3.0/24").matches("1.2.3.4", 443, ips)

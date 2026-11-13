@@ -214,7 +214,7 @@ overwrites on purpose.
 All of them create normal rules at the top of the list, with ids like `python:pypi` and tagged `preset:<name>` in
 the table, so you can see what a shortcut added. *Undo* removes exactly those rules. Rules you added yourself are
 never touched. Because they sit at the top, **shortcut rules win over your own rules while they are
-active, deny rules included**: a shortcut that allows `*.quay.io` opens it even if you deny it further down. Undo
+active, deny rules included**: a shortcut that allows `*.quay.io` opens it even if you deny that name further down. The exception is a `deny` rule on a CIDR: it refuses names that resolve into its range wherever it stands. Undo
 them, or pick a time limit. *Apply again* replaces the shortcut's rules with the new time limit; the message shows
 the time the gateway actually set.
 

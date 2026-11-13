@@ -10,7 +10,8 @@ Evaluation order for a connection attempt to (host, port) resolving to ips:
 Hostnames are first evaluated *without* resolving them (`evaluate_name`), so names the policy
 denies or still has to ask about never reach a DNS resolver (no DNS exfiltration). CIDR allow/ask rules
 (e.g. from approving an IP literal) apply to IP-literal destinations only; for hostnames only the name
-decides, and CIDR deny rules and the hard deny can narrow that after resolution.
+decides, and CIDR deny rules and the hard deny narrow that after resolution: a CIDR deny refuses a name that
+resolves into it wherever the rule stands in the list.
 """
 
 from __future__ import annotations
@@ -289,11 +290,21 @@ class Policy:
             return Decision("deny", hd, "hard_deny")
         now = time.time()
         name = not is_ip(host)
+
+        def decided(r: Rule) -> Decision:
+            return Decision(r.action, f"rule {r.id}" + (f" ({r.note})" if r.note else ""), r.id)
+
+        if name:
+            # A name is decided by the host rules, but a CIDR deny narrows whatever allowed it, wherever it
+            # stands in the list: approvals and shortcuts are added on top and must not switch it off (#119).
+            for r in self.rules:
+                if r.cidr and r.action == "deny" and not r.expired(now) and r.matches(host, port, ips):
+                    return decided(r)
         for r in self.rules:
-            if r.expired(now) or (name and r.cidr and r.action != "deny"):
+            if r.expired(now) or (name and r.cidr):
                 continue  # CIDR allow/ask only for IP literals: a name must never be allowed by its IPs
             if r.matches(host, port, ips):
-                return Decision(r.action, f"rule {r.id}" + (f" ({r.note})" if r.note else ""), r.id)
+                return decided(r)
         return Decision(self.default, "default")
 
     # ---------- mutation ----------
