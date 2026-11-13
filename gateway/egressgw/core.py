@@ -258,6 +258,11 @@ class Gateway:
         self.orig_host: dict[str, str] = {}
         # server connection ids whose TLS is refused (SNI does not match the checked name): both handshakes fail
         self.tls_refused: set[str] = set()
+        # IPs the configured intercept hosts (inject / read-only / scoped GitHub) resolve to. Interception is
+        # keyed on the NAME, so an IP-literal connection to one of these would skip credential strip/injection
+        # and the read-only check, with no SNI needed (#108, no-SNI variant). Such connections are refused so
+        # the agent must use the name. Filled proactively, on a timer, and as intercept hosts are used by name.
+        self.intercept_ips: set = set()
         self.subscribers: set[asyncio.Queue] = set()
         self.api_token = os.environ.get("GW_API_TOKEN", "")
         self._tasks: list[asyncio.Task] = []
@@ -296,6 +301,7 @@ class Gateway:
         await agentapi.start(self, ahost, aport)
         log.warning("grant request API for the agent listening on %s:%s", ahost, aport)
         self._export_ca()
+        await self._refresh_intercept_ips()  # know the intercept hosts' IPs before the first connection
         self._tasks.append(asyncio.create_task(self._housekeeping()))
 
     def done(self) -> None:
@@ -311,10 +317,14 @@ class Gateway:
             log.warning("could not export CA cert: %s", e)
 
     async def _housekeeping(self) -> None:
+        last_ip_refresh = time.monotonic()
         while True:
             await asyncio.sleep(15)
             try:
                 self._housekeep()
+                if time.monotonic() - last_ip_refresh > 600:  # re-resolve intercept hosts (CDN IPs rotate)
+                    last_ip_refresh = time.monotonic()
+                    await self._refresh_intercept_ips()
             except Exception:  # keep the loop alive; the error is logged
                 log.exception("housekeeping failed")
 
@@ -760,6 +770,7 @@ class Gateway:
             data.server.address = (ips[0], port)
             if self._intercepted(host):
                 data.server.sni = host
+                self._note_intercept_ips(ips)  # record the IPs so an IP-literal route to them is refused
 
     def _readonly(self, host: str) -> ReadOnly | None:
         return next((r for r in self.readonly if host_matches(r.host, host)), None)
@@ -768,6 +779,37 @@ class Gateway:
         """TLS to injection, read-only and repository-limited GitHub hosts is always intercepted (whatever the
         SNI says): their requests are checked one by one."""
         return host in self.inject_hosts or self._readonly(host) is not None or self.github.applies(host)
+
+    def _intercept_names(self) -> set[str]:
+        """Exact (resolvable) host names that are intercepted; wildcards and IP literals are skipped."""
+        names = set(self.inject_hosts) | {r.host for r in self.readonly}
+        if self.github.patterns:  # GitHub hosts are intercepted only when repo-scoping is active
+            names |= set(self.github.hosts)
+        return {n for n in names if n and "*" not in n and not is_ip(n) and valid_hostname(n)}
+
+    def _note_intercept_ips(self, ips: list[str]) -> None:
+        with contextlib.suppress(ValueError):
+            self.intercept_ips.update(ip_addr(i) for i in ips)
+        if len(self.intercept_ips) > 4096:  # bound memory under CDN IP churn; the next refresh rebuilds it
+            self.intercept_ips = set()
+
+    def _is_intercept_ip(self, host: str) -> bool:
+        try:
+            return ip_addr(host) in self.intercept_ips
+        except ValueError:
+            return False
+
+    async def _refresh_intercept_ips(self) -> None:
+        """Resolve the configured intercept host names so an IP-literal connection to one can be refused."""
+        found: set = set()
+        for name in self._intercept_names():
+            try:
+                for ip in await self.resolve(name, 443):
+                    with contextlib.suppress(ValueError):
+                        found.add(ip_addr(ip))
+            except OSError:
+                continue  # transient DNS failure: keep what we have and try again next cycle
+        self.intercept_ips |= found
 
     def _grant_match(self, host: str, port: int):
         """Active grant for host:port - unless the policy already allows the name: grants only ADD
@@ -830,6 +872,10 @@ class Gateway:
             if sni == orig:
                 return None
             return f"TLS SNI {sni or '(none)'} does not match the checked name {orig}"
+        if self._is_intercept_ip(orig):
+            # The IP literal is an intercept host's address: passthrough (no SNI, or any SNI) would skip
+            # interception, so it is refused here too and server_connect blocks the connection outright (#108).
+            return f"IP {orig} is an intercepted host; reach it by name, not by IP literal"
         if not sni or (is_ip(sni) and ip_addr(sni) == ip_addr(orig)):
             return None
         port = address[1] if address else 0

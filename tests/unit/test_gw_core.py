@@ -436,6 +436,31 @@ def test_ip_literal_with_intercepted_host_sni_is_refused(make):
     assert "ok" not in gw.tls_refused
 
 
+def test_ip_literal_to_an_intercept_host_ip_is_refused_even_without_sni(make):
+    # #108 (no-SNI variant): interception is keyed on the NAME, so once the gateway knows an intercept
+    # host's IP, an IP-literal connection to it must be refused whatever the SNI says (none included);
+    # otherwise the agent reaches the intercept host with no credential strip/injection, no read-only check.
+    gw = make({"inject": [{"host": "api.example", "value": "x"}]})
+    gw._note_intercept_ips(["192.0.2.1"])  # as recorded when api.example is resolved by name
+    assert gw._is_intercept_ip("192.0.2.1")
+    for sni in (None, "", "api.example", "ok.example"):  # no SNI, empty, matching, or an unrelated name
+        data = hello(gw, "192.0.2.1", sni, sid=f"n-{sni}")
+        assert data.ignore_connection is False, sni
+        assert f"n-{sni}" in gw.tls_refused
+        assert "intercepted host" in last_event(gw)["reason"]
+    data = hello(gw, "192.0.2.9", None, sid="free")  # a non-intercept IP with no SNI still passes
+    assert data.ignore_connection is True
+    assert "free" not in gw.tls_refused
+
+
+def test_note_intercept_ips_ignores_non_intercept_resolutions(make):
+    gw = make({"inject": [{"host": "api.example", "value": "x"}]})
+    # server_connect only records IPs for hosts that are actually intercepted
+    assert gw._intercepted("api.example") and not gw._intercepted("ok.example")
+    assert gw._intercept_names() == {"api.example"}  # wildcards / IP literals excluded
+    assert not gw._is_intercept_ip("203.0.113.5")
+
+
 def test_refused_tls_fails_both_handshakes_and_is_forgotten_on_disconnect(make):
     gw = make()
     hello(gw, "ok.example", "front.example", sid="s1")
