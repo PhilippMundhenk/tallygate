@@ -1,6 +1,6 @@
 # ADR-0014: One destination model and one evaluation path
 
-- Status: Proposed (needs a decision before any gateway code is written, see [Open questions](#open-questions))
+- Status: Accepted (see [Decisions](#decisions))
 - Date: 2026-11-13
 - Issue: #122
 
@@ -130,14 +130,23 @@ An entry from the API that sets a file-only property is rejected, as UI grants w
 
 ### 5. Migration
 
-- **Files keep loading.** `policy.yaml`, `grants.yaml` and the `readonly`, `inject`, `github_repos`, `grants`,
-  `grants_never`, `hard_deny_floor` keys of `gateway.yaml` are translated to the model at start. The gateway
-  logs each translated entry once. `tallygate-gateway --convert` writes the new format; nothing is rewritten
-  without being asked.
-- **The API keeps its routes for one release**, mapped onto the model (`/rules`, `/grants`, `/policy`).
-  New routes work on destinations. `GET /access` (#121) already returns the merged view and becomes the
-  read side of the new API.
-- **The UI** builds on the step 1 views: *What the agent can reach* becomes editable.
+There are few deployments, so the old formats are not kept alive next to the new ones. What must keep working
+is an **unattended image update** (for example by Watchtower): a stack that is running today has to come up
+with the new images without anyone touching it.
+
+- **State in the gateway's volume is migrated at start.** `policy.yaml` and `grants.yaml` in the old format
+  are translated once and written back in the new format; the old files are kept next to them as
+  `*.pre-0014`. A file that cannot be translated stops the gateway with a message that names the entry,
+  as an invalid policy does today (fail closed).
+- **The operator's `gateway.yaml` is read in both formats.** It is mounted read-only and belongs to the
+  operator, so the gateway cannot rewrite it. The old keys (`readonly`, `inject`, `github_repos`, `grants`,
+  `grants_never`, `hard_deny_floor`) are translated in memory at every start, and the log says once which
+  keys to rename. `python -m egressgw.convert gateway.yaml` prints the file in the new format.
+- **Environment variables keep their names.**
+- **API:** the routes change with the model and the old ones are removed in the same release. The UI, the
+  notifiers and the agent CLI are updated with it. Because the gateway and control images may be updated a
+  few seconds apart, control treats an unknown-route answer from the gateway as "gateway is updating" and
+  retries, instead of showing an error.
 
 ### 6. Intended behaviour changes
 
@@ -183,8 +192,8 @@ Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is
 - ✅ #119 is fixed by the evaluation order instead of another cross-check.
 - ⚠️ The largest change to the security-critical code so far. Mitigated by shadow evaluation before the
   switch and a security review after it.
-- ⚠️ Two configuration formats exist for a while (old files keep loading). The converter and the upgrade
-  notes carry the cost.
+- ⚠️ The gateway's state is rewritten in a new format on the first start (old files are kept as
+  `*.pre-0014`), and `gateway.yaml` is read in both formats for as long as operators have old files.
 - ⚠️ `core.py` (about 1100 lines) is restructured; open pull requests against it will conflict.
 
 ## Alternatives considered
@@ -197,17 +206,15 @@ Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is
   the gateway and breaks clients that pin certificates. [ADR-0005](0005-credential-injection-by-tls-interception.md)
   chose selective interception for that reason, and it still holds.
 
-## Open questions
+## Decisions
 
-These need the maintainer's decision before step 3. Steps 1 and 2 do not depend on them.
+Decided by the maintainer on 2026-11-13:
 
-1. **File format.** One `destinations:` list in `policy.yaml` for everything (file-only properties are then
-   rejected when they arrive through the API), or keep two files: the read-only `gateway.yaml` for entries
-   with file-only properties and `policy.yaml` for the rest? This ADR assumes two files, because the
-   read-only mount is what makes the trust split hold.
-2. **Is "grant" still a word in the UI?** The model calls it `access: request`. Keeping "grant" for the
-   request and approval flow, and dropping it as a separate kind of definition, is the proposal.
-3. **#119 semantics.** CIDR `deny` before name entries, as proposed, or keep strict first-match order and
-   only warn in the UI when a deny is shadowed?
-4. **How long the old API routes and file keys stay.** Proposal: one minor release with a deprecation
-   notice, removed in the next.
+1. **Two files.** The read-only `gateway.yaml` holds the entries with file-only properties, `policy.yaml`
+   the rest. The read-only mount is what makes the trust split hold.
+2. **"Grant" stays as a word for the flow** (the agent requests, you approve, it ends by itself). It is no
+   longer a separate kind of definition: it is a destination with `access: request`.
+3. **A CIDR `deny` always wins over name entries** (#119). It is checked against the resolved addresses
+   before the name entries.
+4. **No deprecation period.** The old API routes and the old formats of the gateway's own state go in the
+   same release; see [Migration](#5-migration) for what keeps an unattended update working.
