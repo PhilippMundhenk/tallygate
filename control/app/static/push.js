@@ -12,7 +12,7 @@
 
   box.innerHTML = `<h4>Phone approvals (Web Push)</h4>
     <p class="hint">Install tallygate on your phone (browser menu → <i>Add to Home screen</i> / <i>Install app</i>) and turn
-      on notifications here. Each request arrives with <b>Allow 2 min</b> and <b>Deny</b> buttons; tapping the
+      on notifications here. Each request arrives with <b>Allow once</b> and <b>Deny</b> buttons; tapping the
       notification opens the approvals. No chat bot needed.</p>
     <p id="pushUnsupported" class="meta warn hidden" role="note"></p>
     <div class="row wrap" id="pushControls">

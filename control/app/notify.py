@@ -3,7 +3,7 @@
 Telegram: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALLOWED_USER_IDS (comma list, required).
 Matrix:   MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN, MATRIX_ROOM_ID, MATRIX_ALLOWED_USERS (comma list, required).
           Use an UNENCRYPTED room (the bot does not do E2EE); host it on your own homeserver.
-Web Push: browsers that subscribed in the UI (app/webpush.py); Allow 2 min / Deny buttons with action tokens.
+Web Push: browsers that subscribed in the UI (app/webpush.py); Allow once / Deny buttons with action tokens.
 ntfy:     NTFY_URL (topic URL), NTFY_TOKEN (optional).  Gotify: GOTIFY_URL, GOTIFY_TOKEN (application token).
 Pushover: PUSHOVER_TOKEN (application), PUSHOVER_USER (user or group key).
           These three only notify (with a link to the UI): deciding needs the UI, a chat bot or Web Push.
@@ -31,13 +31,15 @@ QUEUE_SIZE = 1000  # gateway events waiting for delivery; beyond that new events
 SEND_TIMEOUT = 15  # per chat API call (not the long polls): a hanging API delays later prompts at most this long
 
 BUTTONS = [  # (scope, label, matrix reaction)
-    ("once", "Allow 2 min", "👍"),
+    ("once", "Allow once", "👍"),
     ("hour", "Allow 1 h", "⏰"),
-    ("always", "Always (host)", "✅"),
+    ("always", "Always allow", "✅"),
     ("domain", "Always (*.domain)", "🌐"),
     ("deny", "Deny", "👎"),
     ("deny_always", "Block forever", "⛔"),
 ]
+PRIMARY = ("once", "always", "deny")  # offered first; the other scopes are behind "More" (#121)
+MORE = "More…"
 REACTION_TO_SCOPE = {r: s for s, _, r in BUTTONS}
 GRANT_REACTIONS = {"👍": "approve", "📖": "read", "👎": "deny"}
 GRANT_WORDS = {"approve": "approve", "allow": "approve", "read": "read", "deny": "deny", "block": "deny"}
@@ -232,7 +234,7 @@ class Notifier:
         self._n = self._n % 999 + 1
         while self._n in self.short:  # never reuse a number that is still open
             self._n = self._n % 999 + 1
-        entry = {"short": self._n, "text": _describe(p), "expires": p.get("expires", now)}
+        entry = {"short": self._n, "text": _describe(p), "expires": p.get("expires", now), "domain": p.get("domain")}
         self.msgs[p["id"]] = entry
         self.short[self._n] = p["id"]
         timeout = int(p["expires"] - time.time())
@@ -470,7 +472,7 @@ class Notifier:
                 "body": f"{_describe(p)}{context_line(p)}\nAuto-deny in {timeout}s.",
                 "tag": f"a{p['id']}",
                 "url": "/#approvals",
-                "actions": [{"action": "once", "title": "Allow 2 min"}, {"action": "deny", "title": "Deny"}],
+                "actions": [{"action": "once", "title": "Allow once"}, {"action": "deny", "title": "Deny"}],
                 "tokens": {"once": mint("once"), "deny": mint("deny")},
             }
 
@@ -548,13 +550,17 @@ class Notifier:
                 raise RuntimeError(f"telegram {method}: {data.get('description')}")
             return data["result"]
 
+    @staticmethod
+    def _tg_keyboard(pid: str, domain: str | None, full: bool = False) -> dict:
+        """Three buttons and "More"; `full` is what "More" turns it into: every scope."""
+        p = {"domain": domain}
+        buttons = [(scope, _scope_label(scope, label, p)) for scope, label, _ in BUTTONS if full or scope in PRIMARY]
+        row = [{"text": label, "callback_data": f"d:{pid}:{scope}"} for scope, label in buttons if label]
+        if not full:
+            row.append({"text": MORE, "callback_data": f"m:{pid}"})
+        return {"inline_keyboard": [row[i : i + 2] for i in range(0, len(row), 2)]}
+
     async def _tg_send(self, p: dict, timeout: int) -> int:
-        buttons = [(scope, _scope_label(scope, label, p)) for scope, label, _ in BUTTONS]
-        buttons = [(scope, label) for scope, label in buttons if label]
-        kb = [
-            [{"text": label, "callback_data": f"d:{p['id']}:{scope}"} for scope, label in buttons[i : i + 2]]
-            for i in range(0, len(buttons), 2)
-        ]
         text = f"🔐 Agent wants to connect:\n{_describe(p)}\nAuto-deny in {timeout}s."
         if self.public_url:
             text += f"\n{self.public_url}"
@@ -562,7 +568,7 @@ class Notifier:
             "sendMessage",
             chat_id=self.tg_chat,
             text=text,
-            reply_markup={"inline_keyboard": kb},
+            reply_markup=self._tg_keyboard(p["id"], p.get("domain")),
             disable_web_page_preview=True,
         )
         return res["message_id"]
@@ -588,6 +594,16 @@ class Notifier:
                     parts = cq["data"].split(":")
                     if parts[0] == "d" and len(parts) == 3:
                         result = await self._apply(parts[1], parts[2], f"telegram:{who}")
+                    elif parts[0] == "m" and len(parts) == 2:  # "More": show every scope on the same message
+                        entry = self.msgs.get(parts[1])
+                        result = "More choices" if entry else "already decided"
+                        if entry:
+                            await self._tg(
+                                "editMessageReplyMarkup",
+                                chat_id=self.tg_chat,
+                                message_id=cq.get("message", {}).get("message_id") or entry.get("tg"),
+                                reply_markup=self._tg_keyboard(parts[1], entry.get("domain"), full=True),
+                            )
                     elif parts[0] == "g" and len(parts) == 3:
                         result = await self._apply_grant(parts[1], parts[2], f"telegram:{who}")
                     elif parts[0] == "r" and len(parts) == 2 and self.revoke_grant:
@@ -633,14 +649,16 @@ class Notifier:
         return await self._mx("PUT", path, body)
 
     async def _mx_send(self, p: dict, short: int, timeout: int) -> str:
-        legend = "  ".join(f"{r} {lbl}" for s, label, r in BUTTONS if (lbl := _scope_label(s, label, p)))
+        labels = [(s, r, lbl) for s, label, r in BUTTONS if (lbl := _scope_label(s, label, p))]
+        legend = "  ".join(f"{r} {lbl}" for s, r, lbl in labels if s in PRIMARY)
+        more = "  ".join(f"{r} {lbl}" for s, r, lbl in labels if s not in PRIMARY)
         body = (
             f"🔐 #{short} Agent wants to connect: {_describe(p)} — auto-deny in {timeout}s.\n"
-            f"React: {legend}\nor reply: allow|hour|always|domain|deny|block {short}"
+            f"React: {legend}\nMore: {more}\nor reply: allow|hour|always|domain|deny|block {short}"
         )
         html_body = (
             f"🔐 <b>#{short}</b> Agent wants to connect: <code>{html.escape(_describe(p))}</code>"
-            f" — auto-deny in {timeout}s.<br/>React: {html.escape(legend)}<br/>"
+            f" — auto-deny in {timeout}s.<br/>React: {html.escape(legend)}<br/>More: {html.escape(more)}<br/>"
             f"or reply: <code>allow|hour|always|domain|deny|block {short}</code>"
         )
         res = await self._mx_put(
@@ -648,7 +666,7 @@ class Notifier:
             {"msgtype": "m.text", "body": body, "format": "org.matrix.custom.html", "formatted_body": html_body},
         )
         event_id = res["event_id"]
-        self._background(self._mx_seed(event_id, [reaction for _, _, reaction in BUTTONS]))
+        self._background(self._mx_seed(event_id, [reaction for scope, _, reaction in BUTTONS if scope in PRIMARY]))
         return event_id
 
     async def _mx_sync(self) -> None:

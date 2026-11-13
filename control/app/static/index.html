@@ -56,12 +56,17 @@
     <p class="hint">Connections are held until you decide or the timeout passes (then denied). Hard-denied targets (LAN etc.) never appear here.</p>
     <details class="help"><summary>Which button should I use?</summary>
       <ul>
-        <li><b>Allow 2 min</b>: one operation (an install, a clone). Follow-up connections in that time are covered.</li>
+        <li><b>Allow once</b>: one operation (an install, a clone). The host is open for 2 minutes, so follow-up
+          connections are covered.</li>
+        <li><b>Always allow</b>: a permanent rule for exactly this host and port.</li>
+        <li><b>Deny</b>: refuse now; the agent may ask again later.</li>
+      </ul>
+      <p>Under <b>More</b>:</p>
+      <ul>
         <li><b>Allow 1 h</b>: a working session with this host.</li>
-        <li><b>Always (host)</b>: a permanent rule for exactly this host and port.</li>
         <li><b>Always (*.domain)</b>: the domain and every subdomain, e.g. all of <code>*.githubusercontent.com</code>.
           Check the domain line first: <code>github.com.evil.example</code> belongs to <code>evil.example</code>.</li>
-        <li><b>Deny</b>: refuse now; the agent may ask again later. <b>Block forever</b>: a permanent deny rule, no more prompts.</li>
+        <li><b>Block forever</b>: a permanent deny rule, no more prompts.</li>
       </ul>
       <p>Every decision becomes a normal rule you can review or delete under <i>Rules</i>.
         <a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#approvals" target="_blank" rel="noopener">More</a></p>

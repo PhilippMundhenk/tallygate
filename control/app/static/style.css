@@ -32,7 +32,7 @@ td code{font-size:12px}table.log td{font-size:12.5px}
 .toolbar label{display:flex;gap:4px;align-items:center;margin:0}
 .pending{background:var(--panel);border:1px solid var(--amber);border-radius:10px;padding:12px;margin-bottom:10px}
 .pending .dest{font-size:16px;font-weight:600}.pending .meta{color:var(--muted);font-size:12px;margin:4px 0 10px}
-.pending .btns{display:flex;gap:6px;flex-wrap:wrap}
+.pending .btns{display:flex;gap:6px;flex-wrap:wrap}.pending:not(.more-open) .btns .extra{display:none}
 #termFrame{width:100%;height:calc(100vh - 190px);min-height:400px;border:1px solid var(--line);border-radius:8px;background:#000}
 .wizard{list-style:none;padding:0}.wizard li{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
 .status{margin-top:8px;font-size:13px}.ok{color:var(--green)}.bad{color:var(--red)}.warn{color:var(--amber)}

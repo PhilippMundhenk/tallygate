@@ -60,7 +60,7 @@ def test_telegram_delivers_while_matrix_is_down(gateway, mockbots, control_with,
 
 
 def test_slow_matrix_reactions_do_not_delay_prompts(gateway, mockbots, control_with, outage):
-    """Matrix seeds 6 reactions per prompt; at 3 s each a burst used to hold every later prompt (#63)."""
+    """Matrix seeds reactions for every prompt; at 3 s each a burst used to hold every later prompt (#63)."""
     outage["matrix"] = "slow-reactions"
     mockbots.plan = {}
     _both(control_with, mockbots)
@@ -70,7 +70,7 @@ def test_slow_matrix_reactions_do_not_delay_prompts(gateway, mockbots, control_w
     deadline = time.time() + 4
     while len(mockbots.messages("tg.send")) - before < 3 and time.time() < deadline:
         time.sleep(0.1)
-    assert len(mockbots.messages("tg.send")) - before == 3  # sequential seeding: > 18 s for the third
+    assert len(mockbots.messages("tg.send")) - before == 3  # sequential seeding would take > 18 s for the third
     assert len(mockbots.messages("mx.msg")) >= 3
     for t, _ in threads:
         t.join(15)  # the asks time out (5 s) unanswered

@@ -21,7 +21,7 @@ class MockBots:
             self.port = s.getsockname()[1]
         self.base = f"http://127.0.0.1:{self.port}"
         self.log: list[tuple[str, str]] = []
-        # telegram: {"scope_label": "Always (host)", "user_id": 4242, "chat_id": 777}
+        # telegram: {"scope_label": "Always allow", "user_id": 4242, "chat_id": 777}
         # matrix:   {"actions": [("@user:hs", "reaction", "👎") | ("@user:hs", "text", "allow {n}")]}
         self.plan: dict = {}
         # outages for sending: {"telegram" | "matrix": "error" | "slow" | "slow-reactions"}
@@ -105,7 +105,10 @@ class MockBots:
                 buttons = [b for row in p["reply_markup"]["inline_keyboard"] for b in row]
                 label = plan["scope_label"]
                 btn = next((b for b in buttons if b["text"] == label or b["text"].startswith(label)), None)
-                if btn is None:
+                if btn is None:  # not among the first choices: open "More" and press it there
+                    more = next((b for b in buttons if b["text"] == "More…"), None)
+                    if more:
+                        self._keep(asyncio.create_task(self._press(more, plan, mid)))
                     return web.json_response({"ok": True, "result": {"message_id": mid}})
 
                 async def press():
@@ -141,6 +144,15 @@ class MockBots:
                 btn = next((b for b in buttons if b["text"] == plan["then"]), None)
                 if btn:
                     self._keep(asyncio.create_task(self._press(btn, plan, p.get("message_id"), p.get("text"))))
+            return web.json_response({"ok": True, "result": True})
+        if method == "editMessageReplyMarkup":  # the answer to "More": every scope on the same message
+            self.log.append(("tg.editMessageReplyMarkup", ""))
+            plan = self.plan.get("telegram") or {}
+            buttons = [b for row in p["reply_markup"]["inline_keyboard"] for b in row]
+            label = plan.get("scope_label", "")
+            btn = next((b for b in buttons if label and (b["text"] == label or b["text"].startswith(label))), None)
+            if btn:
+                self._keep(asyncio.create_task(self._press(btn, plan, p.get("message_id"))))
             return web.json_response({"ok": True, "result": True})
         return web.json_response({"ok": False, "description": f"unknown {method}"})
 

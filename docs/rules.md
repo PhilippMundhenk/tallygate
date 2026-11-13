@@ -95,7 +95,7 @@ were asked.
 
 | # | Goal | How |
 |---|---|---|
-| 16 | Allow something for one hour | add the rule with *TTL* `3600` (a UI field; the API takes `expires`, a unix time), or approve the prompt with *Allow 1 h* |
+| 16 | Allow something for one hour | add the rule with *TTL* `3600` (a UI field; the API takes `expires`, a unix time), or approve the prompt with *More → Allow 1 h* |
 | 17 | Open the web for 15 minutes during setup | *Quick actions → Allow web for 15 min* |
 | 18 | Strict allowlist, no prompts | mode `deny`, then allow rules for what is needed (or *Templates*) |
 | 19 | Everything public allowed, but logged | mode `allow`; add `deny` or `ask` rules for exceptions |

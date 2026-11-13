@@ -62,7 +62,7 @@ only then let through, turned back, or held for you to decide.
 - **Policy history.** Every change is a version with author and time: see what changed since yesterday,
   restore an earlier version, or export the policy and UI grants as one YAML file for another host.
 - **Phone approvals** via Telegram buttons or Matrix reactions (outbound polling only, no webhooks), or
-  without any bot: install the UI as an app and tap *Allow 2 min* / *Deny* right in the push notification.
+  without any bot: install the UI as an app and tap *Allow once* / *Deny* right in the push notification.
   ntfy, Gotify and Pushover can notify too.
 - **Away mode and quiet hours.** When you can't answer, new destinations are refused at once with a clear
   message to the agent instead of waiting for you, and you get one digest of what was refused afterwards.

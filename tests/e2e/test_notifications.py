@@ -20,7 +20,7 @@ def _events(gateway, port):
 
 
 def test_telegram_button_approves(gateway, upstream, mockbots, control_with):
-    mockbots.plan = {"telegram": {"scope_label": "Always (host)", "user_id": 4242, "chat_id": 777}}
+    mockbots.plan = {"telegram": {"scope_label": "Always allow", "user_id": 4242, "chat_id": 777}}
     control_with(
         TELEGRAM_API_BASE=mockbots.base,
         TELEGRAM_BOT_TOKEN="t",
@@ -40,7 +40,7 @@ def test_telegram_button_approves(gateway, upstream, mockbots, control_with):
 
 
 def test_telegram_unauthorised_user_is_rejected(gateway, mockbots, control_with):
-    mockbots.plan = {"telegram": {"scope_label": "Always (host)", "user_id": 9999, "chat_id": 777}}
+    mockbots.plan = {"telegram": {"scope_label": "Always allow", "user_id": 9999, "chat_id": 777}}
     control_with(
         TELEGRAM_API_BASE=mockbots.base,
         TELEGRAM_BOT_TOKEN="t",
@@ -68,7 +68,7 @@ def test_matrix_reaction_denies_and_stranger_is_ignored(gateway, mockbots, contr
     assert status == 502 and time.time() - t0 < 4  # decided by reaction, not by timeout
     reasons = [e["reason"] for e in _events(gateway, port)]
     assert "deny by matrix:@me:hs" in reasons and not any("stranger" in r for r in reasons)
-    assert len(mockbots.messages("mx.reaction")) >= 6  # bot pre-seeds the reaction buttons
+    assert len(mockbots.messages("mx.reaction")) >= 3  # bot pre-seeds the three first choices
 
 
 def test_matrix_text_reply_approves(gateway, mockbots, control_with):
