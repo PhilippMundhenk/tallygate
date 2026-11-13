@@ -157,7 +157,12 @@ searches the whole event log on the gateway, which keeps `log_keep_days` (30) da
 
 - **Mode**: what happens to unmatched destinations: `ask` (human in the loop), `deny` (strict allowlist) or
   `allow` (blocklist).
-- **Shortcuts** (top of the tab), see below.
+- **What the agent can reach** (top of the tab): each destination once, with everything that applies to it:
+  allowed, asks you, blocked or only on request (and by which rule), read-only, credentials that are added,
+  repository limits, the grants defined for it (and whether one is active), and when it was last used. The
+  last line is what happens with everything else. It is a read-only summary; each part is changed where it is
+  defined (the rule table, the Grants tab, the gateway config file).
+- **Shortcuts**, see below.
 - **Learning mode**: record what a new task needs for a limited time, then save the rules in one go. See
   [Learning mode](#learning-mode).
 - **Test a destination**: dry run against the current policy. A name that the rules allow is also resolved

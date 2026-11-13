@@ -113,6 +113,22 @@ def test_web_console_roundtrip(ui, control):
     assert b"tally-42" in asyncio.run(run())
 
 
+def test_what_the_agent_can_reach_is_one_table(ui):
+    """#121: each destination once, with the rule, the per-request limits and the grants that apply."""
+    status, view, _ = ui.call("GET", "/api/gw/access")
+    assert status == 200 and view["default"] in ("ask", "deny", "allow")
+    rows = {r["host"]: r for r in view["rows"]}
+    assert rows["ro.test"]["read_only"] is not None and rows["ro.test"]["access"] == "allow"  # rule + read-only
+    assert rows["gh.test"]["credentials"] is True  # rule + added credentials
+    assert rows["sec.test"]["grants"][0]["name"] == "sec" and rows["sec.test"]["grants"][0]["credentials"] is True
+    lan = rows["lanecho.test"]
+    assert lan["access"] == "request" and {g["name"] for g in lan["grants"]} == {"lanhttp", "nolan"}
+    page = ui.call("GET", "/")[1]
+    assert b'id="accessCard"' in page and b'src="/static/access.js"' in page
+    status, js, _ = ui.call("GET", "/static/access.js")
+    assert status == 200 and b'gw("GET", "/access")' in js
+
+
 def test_never_reachable_is_one_list_in_the_ui(ui):
     """#121: built-in floor, config, own additions and the grant limits in one read-only list."""
     status, rows, _ = ui.call("GET", "/api/gw/never-reachable")
