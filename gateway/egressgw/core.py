@@ -37,6 +37,7 @@ from egressgw.grants import READ_METHODS, GrantDef, Grants, Target, path_ok
 from egressgw.history import PolicyHistory
 from egressgw.learning import REASON as LEARNING
 from egressgw.learning import Learning, parse_ports
+from egressgw.model import INTERCEPT, PASSTHROUGH, Access, Req, Verdict
 from egressgw.policy import (
     DEFAULT_HARD_DENY,
     Decision,
@@ -67,6 +68,11 @@ WRITE_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
 STATIC_HOSTS = dict(kv.split("=", 1) for kv in os.environ.get("GW_TEST_STATIC_HOSTS", "").split(",") if "=" in kv)
 # TEST ONLY: the configured hard_deny_floor replaces the built-in list (the e2e upstreams live on 127.0.0.1).
 FLOOR_REPLACE = os.environ.get("GW_TEST_FLOOR_REPLACE") == "1"
+# TEST ONLY: the model of ADR-0014 (model.py) is evaluated next to the code below on every TLS handshake and
+# request; a difference is written to GW_TEST_SHADOW_LOG, which fails the test suite (tests/conftest.py). The code
+# below decides either way.
+SHADOW = os.environ.get("GW_TEST_SHADOW") == "1"
+SHADOW_LOG = Path(os.environ.get("GW_TEST_SHADOW_LOG") or DATA_DIR / "shadow-mismatch.log")
 
 
 def fail_closed(hook):
@@ -259,6 +265,9 @@ class Gateway:
         self.orig_host: dict[str, str] = {}
         # server connection ids whose TLS is refused (SNI does not match the checked name): both handshakes fail
         self.tls_refused: set[str] = set()
+        # ADR-0014: what was decided per upstream connection, and the one model that reads it
+        self.verdicts: dict[str, Verdict] = {}
+        self.access = Access(self)
         # IPs the configured intercept hosts (inject / read-only / scoped GitHub) resolve to. Interception is
         # keyed on the NAME, so an IP-literal connection to one of these would skip credential strip/injection
         # and the read-only check, with no SNI needed (#108, no-SNI variant). Such connections are refused so
@@ -710,6 +719,7 @@ class Gateway:
         )
         self.conn_grant[data.server.id] = (a.id, host, t)
         self.orig_host[data.server.id] = host
+        self.verdicts[data.server.id] = Verdict(host, port, a.id, t)
         data.server.address = (ips[0], port)
         if t.scheme == "https" and not is_ip(host):
             data.server.sni = host
@@ -786,6 +796,7 @@ class Gateway:
         if dec.action != "allow":
             return
         self.orig_host[data.server.id] = host
+        self.verdicts[data.server.id] = Verdict(host, port)
         # Pin to the checked address (anti DNS-rebinding: no second resolution after the decision).
         # For intercepted hosts the upstream SNI is set explicitly, so the upstream certificate is
         # still verified against the hostname, not the IP.
@@ -850,6 +861,7 @@ class Gateway:
     @fail_closed
     def server_disconnected(self, data: server_hooks.ServerConnectionHookData) -> None:
         self.orig_host.pop(data.server.id, None)
+        self.verdicts.pop(data.server.id, None)
         self.conn_grant.pop(data.server.id, None)
         self.tls_refused.discard(data.server.id)
 
@@ -860,6 +872,21 @@ class Gateway:
 
     @fail_closed
     def tls_clienthello(self, data: tls.ClientHelloData) -> None:
+        if SHADOW:
+            sid = data.context.server.id
+            hello_sni = (getattr(data.client_hello, "sni", None) or "").lower().rstrip(".")
+            expected = self.access.tls(self.verdicts.get(sid), hello_sni)
+            self._tls_refusal = None
+            self._tls_clienthello(data)
+            passed = data.ignore_connection or self._tls_refusal is not None
+            got = (PASSTHROUGH if passed else INTERCEPT, self._tls_refusal)
+            self._shadow("tls", expected, got, f"{self.orig_host.get(sid)} sni={hello_sni!r}")
+            return
+        self._tls_clienthello(data)
+
+    _tls_refusal: str | None = None  # SHADOW only: why the last passthrough was refused
+
+    def _tls_clienthello(self, data: tls.ClientHelloData) -> None:
         b = self.conn_grant.get(data.context.server.id)
         if b:
             # http(s) grant targets are ALWAYS intercepted so method/path/Host can be enforced; tcp
@@ -880,6 +907,7 @@ class Gateway:
             self.tls_refused.add(data.context.server.id)
             client = data.context.client.peername[0] if data.context.client.peername else "?"
             port = data.context.server.address[1] if data.context.server.address else 0
+            self._tls_refusal = why
             self.record(kind="conn", proto="tls", client=client, host=orig or "?", port=port, action="deny", reason=why)
             return
         data.ignore_connection = True  # end-to-end TLS, untouched
@@ -951,13 +979,21 @@ class Gateway:
     @fail_closed
     def tcp_start(self, flow) -> None:
         b = self.conn_grant.get(flow.server_conn.id)
-        if b and b[2].scheme != "tcp":
+        refused = bool(b and b[2].scheme != "tcp")
+        if SHADOW:
+            expected = self.access.raw_problem(self.verdicts.get(flow.server_conn.id))
+            self._shadow("tcp", expected, "non-HTTP traffic to an HTTP grant target" if refused else None, str(b))
+        if refused:
             self._grant_refuse_raw(flow, b, "non-HTTP traffic to an HTTP grant target")
 
     @fail_closed
     def websocket_start(self, flow: http.HTTPFlow) -> None:
         b = self.conn_grant.get(flow.server_conn.id)
-        if b and (a := self.grants.active.get(b[0])) is not None and a.level == "read":
+        refused = bool(b and (a := self.grants.active.get(b[0])) is not None and a.level == "read")
+        if SHADOW:
+            expected = self.access.websocket_problem(self.verdicts.get(flow.server_conn.id))
+            self._shadow("websocket", expected, "websocket on a read-only grant" if refused else None, str(b))
+        if refused:
             self._grant_refuse_raw(flow, b, "websocket on a read-only grant")
 
     def _grant_refuse_raw(self, flow, b, reason: str) -> None:
@@ -1066,8 +1102,48 @@ class Gateway:
         why = self._host_binding(flow.request, target) or self._host_checks(flow, target)
         return (target, flow.request.port, why) if why else None
 
+    def _verdict_for(self, flow: http.HTTPFlow) -> Verdict:
+        """The verdict a request belongs to. Plain-HTTP proxy requests are checked before their server
+        connection exists: they get the verdict their connection will get (an active grant, or the URL host)."""
+        v = self.verdicts.get(flow.server_conn.id)
+        if v is None:
+            host = (flow.request.host or "").lower().rstrip(".")
+            if flow.request.scheme == "http" and (m := self._grant_match(host, flow.request.port)):
+                return Verdict(host, flow.request.port, m[0].id, m[2])
+            return Verdict(host, flow.request.port)
+        return v
+
+    def _shadow_request(self, flow: http.HTTPFlow) -> tuple:
+        """What the model decides for this request, without touching it: (reason to refuse, headers sent)."""
+        req = flow.request
+        out = self.access.check(
+            self._verdict_for(flow),
+            Req(req.method, req.scheme, req.path, req.host_header, req.pretty_host, req.headers.get("connection", "")),
+        )
+        if out.refuse:
+            return out.refuse, None
+        headers = req.headers.copy()
+        for name in out.strip:
+            headers.pop(name, None)
+        for name, value in out.add:
+            headers[name] = value
+        return None, tuple(headers.fields)
+
+    def _shadow(self, what: str, expected, got, context: str) -> None:
+        if expected != got:
+            line = f"{what}: model {expected!r} != current {got!r} [{context}]"
+            log.error("ADR-0014 shadow check: %s", line)
+            with SHADOW_LOG.open("a") as f:
+                f.write(line + "\n")
+
     def _enforce(self, flow: http.HTTPFlow, early: bool) -> None:
-        refusal = self._checks(flow)
+        if SHADOW:
+            expected = self._shadow_request(flow)
+            refusal = self._checks(flow)
+            got = (refusal[2], None) if refusal else (None, tuple(flow.request.headers.fields))
+            self._shadow("request", expected, got, f"{flow.request.method} {flow.request.pretty_url[:120]}")
+        else:
+            refusal = self._checks(flow)
         if refusal is None:
             return
         host, port, why = refusal
