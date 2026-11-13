@@ -7,6 +7,7 @@ consoles into the agent, and run the setup wizard. Remote Control itself is used
 - [Overview](#overview)
 - [Approvals](#approvals)
 - [Away mode and quiet hours](#away-mode-and-quiet-hours)
+- [Grants](#grants)
 - [Log](#log)
 - [Rules](#rules)
 - [Console](#console)
@@ -65,6 +66,28 @@ approval, so IPs show as "not resolved yet". A destination you approve can still
 deny (LAN, host, metadata…). At most `max_pending` (10) requests wait at once; further unknown destinations
 are denied immediately until you have answered.
 
+### Keyboard shortcuts, compact list and sound
+
+For approving a lot. The switches above the list are kept in this browser.
+
+| Key | Effect (Approvals tab, outside text fields) |
+|---|---|
+| `j` / `k` | Select the next / previous request |
+| `a` | Allow 2 min; approve a grant request |
+| `h` | Allow 1 h |
+| `d` | Deny |
+| `?` | List the keys (anywhere; `Esc` closes) |
+
+`a`, `h` and `d` act on the selected request; without a selection the first press selects the first request,
+so a stray key never decides anything. After a decision the next request is selected. Single-key shortcuts
+can be switched off with **Keyboard shortcuts** (for screen readers and voice control). The **Keys (?)**
+button next to the switches shows the same list.
+
+**Compact list** shows one line per connection request: destination, the registrable domain when it differs,
+the punycode warning and the buttons (the countdown and IPs are hidden). Grant requests keep their full card,
+because the agent's reason matters. **Sound** plays a short tone when a request arrives while the tab is in
+the background; turn it on with a click, as browsers allow sound only after one.
+
 ## Away mode and quiet hours
 
 When you cannot answer, the agent should not wait 60 seconds for every new destination, and your phone
@@ -80,32 +103,12 @@ Nothing is ever allowed automatically because you are away: away mode only turns
 that allow a destination keep working, and grants with `approval: auto` are still granted (and logged).
 What was refused is listed under **Refused while you were away**, with *Allow 1 h* per destination, and sent
 as one **digest** to Telegram/Matrix: when quiet hours end, when you are back, and while away every
-`digest_minutes` (30). The header shows *away* or *quiet hours* on every tab. The agent sees the state in
-`tallygate grants`.
+`digest_minutes` (30). *Dismiss all* clears the list. The header shows *away* or *quiet hours* on every tab.
+The agent sees the state in `tallygate grants`.
 
 Quiet hours use the gateway's time zone: set `TZ` (e.g. `TZ=Europe/Berlin` in `.env`) or `tz` in
 `quiet_hours`. They can be preset in the gateway config (`quiet_hours`, see
 [configuration](configuration.md#availability)); a change in the UI is stored and wins over the file.
-### Keyboard shortcuts, compact list and sound
-
-For approving a lot. The switches above the list are kept in this browser.
-
-| Key | Effect (Approvals tab, outside text fields) |
-|---|---|
-| `j` / `k` | Select the next / previous request |
-| `a` | Allow 2 min; approve a grant request |
-| `h` | Allow 1 h |
-| `d` | Deny |
-| `?` | List the keys (anywhere; `Esc` closes) |
-
-`a`, `h` and `d` act on the selected request; without a selection the first press selects the first request,
-so a stray key never decides anything. After a decision the next request is selected. Single-key shortcuts
-can be switched off with **Keyboard shortcuts** (for screen readers and voice control).
-
-**Compact list** shows one line per connection request: destination, the registrable domain when it differs,
-the punycode warning and the buttons (the countdown and IPs are hidden). Grant requests keep their full card,
-because the agent's reason matters. **Sound** plays a short tone when a request arrives while the tab is in
-the background; turn it on with a click, as browsers allow sound only after one.
 
 ## Grants
 
@@ -114,7 +117,9 @@ named bundles with targets, read/write levels, LAN access, credentials and a dur
 them (`tallygate request homeassistant --write --reason "…"`). Grant requests appear at the top of
 **Approvals** and in Telegram/Matrix, where you can approve, approve read-only, or deny. The **Grants** tab
 lists definitions and active grants (with *Revoke*), has an editor for UI-defined grants, and holds the
-write-only secrets used for credential injection. Full guide: [grants.md](grants.md).
+write-only secrets used for credential injection. *Activate read* / *Activate write* on a definition
+activates the grant yourself for its default duration, without a request from the agent. Full guide:
+[grants.md](grants.md).
 
 ## Log
 
@@ -122,7 +127,8 @@ write-only secrets used for credential injection. Full guide: [grants.md](grants
 
 Live view of every decision: connections (`conn`), approval requests (`ask`), blocked DNS lookups (`dns`), and
 admin changes. Filter by text, hide DNS noise, or show only blocked entries. The **allow / deny** buttons
-create a rule for exactly that host:port.
+create a rule for exactly that host:port. The table starts with the latest 200 events and keeps up to 2000
+while it follows the live stream; *Load older* fetches 200 more.
 
 ### Search, time ranges and export
 
@@ -152,11 +158,13 @@ searches the whole event log on the gateway, which keeps `log_keep_days` (30) da
 - **Quick actions** (top of the tab), see below.
 - **Learning mode**: record what a new task needs for a limited time, then save the rules in one go. See
   [Learning mode](#learning-mode).
-- **Test a destination**: dry run against the current policy, including DNS resolution and hard deny.
+- **Test a destination**: dry run against the current policy. A name that the rules allow is also resolved
+  and checked against the hard deny; a name that would be denied or asked is decided without resolving it, as
+  for a real connection.
 - **Add rule**: host glob or CIDR, ports, note and optional TTL. New rules go to the top (first match wins).
 - **Hard deny**: CIDRs that are never reachable. The built-in floor is read-only here (change it only in the
   gateway config file); you can add more, e.g. your Docker host's public IP.
-- **Raw policy JSON**: edit everything at once (validated server-side).
+- **Advanced: raw policy JSON**: edit everything at once (validated server-side).
 - **Rule usage and suggestions**: how often each rule matched and when it last did (sortable, filterable),
   unused rules to clean up, and permanent rules for destinations you keep approving for a limited time. See
   [Rule usage](#rule-usage).
@@ -167,10 +175,10 @@ searches the whole event log on the gateway, which keeps `log_keep_days` (30) da
 
 | Action | What it does | Undo |
 |---|---|---|
-| Allow web for 15 min / 1 h | Adds the `open` preset (any public host, ports 80 and 443) with that time limit | *Active → Undo*, or wait |
+| Allow web (HTTP/HTTPS) for 15 min / Allow web for 1 h | Adds the `open` preset (any public host, ports 80 and 443) with that time limit | *Active → Undo*, or wait |
 | Allow all ports for 15 min | Adds the `internet` preset (any public host and port: SSH, databases, ...) | same |
 | Unknown destinations: ask me / block / allow | Sets the mode (`ask`, `deny`, `allow`); changes nothing else | click another mode |
-| Emergency stop | Revokes all active grants, denies everything waiting for approval (connections and grant requests), undoes the internet shortcuts, sets the mode `deny` and suspends automatic grant approval | set the mode again |
+| Emergency stop | Revokes all active grants, denies everything waiting for approval (connections and grant requests), undoes the internet shortcuts, ends learning mode, sets the mode `deny` and suspends automatic grant approval | set the mode again |
 | Allow a device on the local network | Opens the grant editor with a LAN target (see below) | delete the grant |
 | Templates | Allow what a tool ecosystem needs: Python, Node.js, Go, Rust, Debian/Ubuntu apt, container registries, Hugging Face. Until undone, for 1 h or for 1 day | *Undo* on the template |
 
@@ -217,7 +225,8 @@ lets the task run for a while and shows afterwards what it used:
 3. When the time is up (or you click *Stop learning mode*), the card lists every destination used during the
    session, grouped by registrable domain, with the number of connections. Destinations only learning mode
    allowed are ticked, with a proposed rule: the exact host, or `*.domain` when several hosts of one domain
-   were used. Untick what you do not want and click *Save selected as allow rules*.
+   were used. Untick what you do not want and click *Save selected as allow rules*. Earlier sessions stay
+   available: pick one under *Session* and click *Show what was used*.
 
 What stays in force while learning mode runs:
 
@@ -291,7 +300,8 @@ a patch) and download results, without `docker cp` or a shell.
 
 - Uploads go into the folder you are in. An existing file is only replaced with **replace existing files**;
   folders and links are never replaced. Up to `FILES_MAX_UPLOAD` (default 50 MiB) per file.
-- **Download** saves the file (up to `FILES_MAX_DOWNLOAD`, default 200 MiB). Files are always sent as
+- **Download** saves the file (up to `FILES_MAX_DOWNLOAD`, default 200 MiB; a larger file is marked *too
+  large* instead). A folder shows at most its first 2000 entries. Files are always sent as
   downloads (`application/octet-stream`, `Content-Disposition: attachment`), never shown in the UI, so a
   file the agent wrote (HTML, SVG, a script) cannot run on the UI's address.
 - Everything stays inside `/workspace`: no `..`, no absolute paths, and links that point outside are refused
@@ -304,19 +314,20 @@ a patch) and download results, without `docker cp` or a shell.
 
 The **Setup** tab is the first start in one flow. Every step shows *done*, *to do*, *check* or *optional*; the
 summary at the top counts the steps and its *Next* button jumps to the first one still to do. The states are
-checked again whenever you open the tab or finish a step. No step needs a console.
+checked again whenever you open the tab or finish a step. No step needs a console in the agent; only the
+password change runs on the Docker host.
 
 | Step | What it does |
 |---|---|
-| Access to this UI | Checks how your browser reaches the UI: HTTPS (or localhost), the session cookie's `Secure` flag, whether a reverse proxy sends forwarded headers and whether they are trusted, whether `PUBLIC_URL` matches the address you use, and how other machines reach the UI. Each line says what to change. |
+| Access to this UI | Checks how your browser reaches the UI: HTTPS (or localhost), the session cookie's `Secure` flag, whether a reverse proxy sends forwarded headers and whether they are trusted, whether `PUBLIC_URL` matches the address you use, and how other machines reach the UI. Each line says what to change. Over plain HTTP from another machine, a *Not encrypted* banner is also shown at the top of every tab. |
 | UI password | *To do* while it is still the password generated on first start; change it with `docker compose exec control python -m app.passwd`. |
 | Gateway | The gateway's CA is exported and which hosts get credentials injected. |
-| GitHub token | *Validate & store* checks a token against GitHub (from control) and stores it in the gateway only. |
-| Log in to Claude | *Start login* runs `claude auth login` in the agent (tmux session `tg-login`) and shows the link to Anthropic's login page. Sign in there and paste the code it shows. Only links to Anthropic's login pages are shown. |
+| GitHub token | *Validate & store* checks a token against GitHub (from control) and stores it in the gateway only. *Remove* deletes the stored token (it asks for confirmation). |
+| Log in to Claude | *Start login* runs `claude auth login` in the agent (tmux session `tg-login`) and shows the link to Anthropic's login page. Sign in there and paste the code it shows. Only links to Anthropic's login pages are shown. Once logged in, the button reads *Log in again*. |
 | Git identity | *Use my GitHub identity* asks GitHub, through the gateway with the stored token, who you are (`gh api user`) and shows the name and the noreply address `<id>+<login>@users.noreply.github.com`; *Apply* sets them. Without a stored token, or when GitHub refuses it or cannot be reached, it says so and links to the token step. *Enter it yourself* is the fallback. Empty values are never written; a name or address that is set but empty (for example from a `git config` whose `$(…)` failed) is reported as such. |
 | Remote Control | *Enable Remote Control* answers Claude Code's one-time question `Enable Remote Control? (y/n)` with yes, trusts `/workspace` and restarts Remote Control. The step is done when it runs; it also tells you when Remote Control waits for an answer in the *rc* console. Switched off with `RC_ENABLE=0`. |
 | Starting policy | *Ask me* or *Strict* sets what happens with unknown destinations; *Templates* opens them in the Rules tab. |
-| Phone notifications | Telegram and Matrix status; browser notifications. |
+| Phone notifications | Status of Telegram, Matrix, Web Push, ntfy, Gotify and Pushover; browser notifications. Web Push devices are managed in the *Notifications* card below the steps. |
 | Isolation self-test | Runs the in-agent self-test. |
 
 ## Telegram approvals
@@ -327,7 +338,7 @@ checked again whenever you open the tab or finish a step. No step needs a consol
 3. In `.env`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ALLOWED_USER_IDS=<your from.id>`.
 4. `docker compose up -d control`.
 
-Each request arrives with six buttons. After a decision the message is edited to show the outcome and who
+Each request arrives with six buttons (five when the name has no registrable domain). After a decision the message is edited to show the outcome and who
 decided. Taps from users not in the allowlist are answered with "Not authorised".
 
 ## Matrix approvals
@@ -382,8 +393,8 @@ destinations in plain text, like Telegram does.
 | Allow docs browsing for an hour | *Quick actions → Allow web for 1 h* (preset `open` with TTL `3600`) |
 | Let the agent install Go modules today | *Templates → Go modules → for 1 day → Apply* |
 | Block a noisy telemetry host quietly | `deny` rule for the host (no more prompts) |
-| Reach a LAN database | `services:` entry with `allow_private: true` in `config/gateway.yaml` |
-| SSH to one external host | Allow `host:22`; add `openssh-client netcat-openbsd` to `AGENT_EXTRA_PACKAGES`; then `ssh -o ProxyCommand='nc -X connect -x 172.31.10.2:3128 %h %p' host` |
+| Reach a LAN database | `services:` entry with `allow_private: true` in the gateway config (`gateway.yaml`, see [operations](operations.md#with-docker-compose-recommended)) |
+| SSH to one external host | Allow `host:22`; add `openssh-client netcat-openbsd` to the agent image (see *Toolchains* below); then `ssh -o ProxyCommand='nc -X connect -x 172.31.10.2:3128 %h %p' host` |
 
 ## Working with the agent
 
@@ -393,5 +404,6 @@ destinations in plain text, like Telegram does.
 - **Parallel sessions**: start more sessions on the same environment from the Claude app; set
   `RC_ARGS=--spawn worktree` to give each session its own git worktree.
 - **Skills**: put them in `/home/agent/.claude/skills/<name>/SKILL.md` in the agent (the `agent-home` volume, owner uid 1000), e.g. with `docker compose cp`.
-- **Toolchains**: add Debian packages via `AGENT_EXTRA_PACKAGES` and rebuild the agent. `pip install --user`
-  and `npm install` work through the proxy if the registries are allowed.
+- **Toolchains**: with the published images, add Debian packages in an agent image of your own
+  ([operations](operations.md#custom-agent-image)); when building from source, set `AGENT_EXTRA_PACKAGES` and
+  run `make up`. `pip install --user` and `npm install` work through the proxy if the registries are allowed.

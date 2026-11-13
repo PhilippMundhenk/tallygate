@@ -3,11 +3,15 @@
 - [Requirements](#requirements)
 - [Installation](#installation)
   - [With Docker Compose (recommended)](#with-docker-compose-recommended)
+  - [Reaching the UI](#reaching-the-ui)
   - [Host directories](#host-directories)
   - [From source](#from-source)
   - [Custom agent image](#custom-agent-image)
+  - [Docker log rotation](#docker-log-rotation)
 - [Reverse proxy](#reverse-proxy)
+  - [Authenticating proxy](#authenticating-proxy)
 - [First-time setup](#first-time-setup)
+- [Changing the UI password](#changing-the-ui-password)
 - [Day-to-day](#day-to-day)
 - [Upgrades](#upgrades)
 - [Resource limits](#resource-limits)
@@ -117,11 +121,11 @@ The users don't need to exist on the host; `chown` takes the numbers. For all se
 
 ```bash
 cd /srv/tallygate
-sudo mkdir -p gateway-data gw-token ca control-data ttyd agent-home workspace
-sudo chown 10001:10001 gateway-data gw-token ca
+sudo mkdir -p gateway gw-token ca control-data ttyd agent-home workspace
+sudo chown 10001:10001 gateway gw-token ca
 sudo chown 10002:10002 control-data ttyd
 sudo chown 1000:1000 agent-home workspace
-sudo chmod 700 gateway-data control-data
+sudo chmod 700 gateway control-data
 ```
 
 The four with an `.env` variable hold everything worth keeping; set them to the host paths. `./setup.sh
@@ -307,9 +311,9 @@ docker compose exec control python -m app.passwd --print-hash   # prints scrypt:
 |---|---|
 | Approve/deny connections | UI → Approvals, Telegram buttons, Matrix reactions/replies |
 | Review traffic | UI → Log (filter, "only blocked", one-click allow/deny rule) |
-| Tighten/loosen policy | UI → Rules (mode, add/delete rules, presets with TTL, dry-run test) |
-| Temporarily open the internet | Rules → Presets → `open` with TTL `900` |
-| Emergency stop | Rules → Quick actions → *Emergency stop* (revokes grants, denies what is pending, removes the internet shortcuts, mode `deny`, suspends auto-approved grants), or `docker compose stop agent` |
+| Tighten/loosen policy | UI → Rules (quick actions and templates, mode, add/delete rules, dry-run test, history) |
+| Temporarily open the internet | Rules → Quick actions → *Allow web (HTTP/HTTPS) for 15 min* (or Overview → *Allow web for 15 min*) |
+| Emergency stop | Rules → Quick actions → *Emergency stop* (revokes grants, denies what is pending, removes the internet shortcuts, ends learning mode, mode `deny`, suspends auto-approved grants), or `docker compose stop agent` |
 | Several sessions in parallel | New session in the Claude app on the same environment; `RC_ARGS=--spawn worktree` for isolated worktrees |
 | Files into or out of the workspace | UI → Files (upload into the open folder, download results) |
 | Shell in the agent | UI → Console → bash (or `docker compose exec agent bash`) |
@@ -346,8 +350,8 @@ The gateway's event log is capped by `log_max_events` and `log_keep_days`, and i
 
 ## Backup and restore
 
-Back up the volumes (or the directories in `GATEWAY_DATA`, `AGENT_HOME`, `WORKSPACE`), plus `.env` and your
-`gateway.yaml` if you have them:
+Back up the volumes (or the directories in `GATEWAY_DATA`, `CONTROL_DATA`, `AGENT_HOME`,
+`WORKSPACE`), plus `.env` and your `gateway.yaml` if you have them:
 
 | Volume | Contains | Sensitivity |
 |---|---|---|
@@ -387,7 +391,7 @@ to a new gateway, the CA changes. That's harmless: the agent re-reads the CA on 
 | Tool fails with "could not resolve host" | It resolves locally instead of via the proxy. Use `socks5h://`, proxy-side resolution, or a service port. |
 | Tool hangs ~60 s then fails | The destination is in `ask` and nobody answered. Approve it in the UI/phone, then retry. |
 | `502 egress policy: blocked (hard-deny …)` | Destination resolves to a private range. For LAN services define a [grant](grants.md), or a service port with `allow_private: true`. |
-| `gh`/`git` 401 against GitHub | No token stored (Setup step 2), PAT expired, or PAT lacks access to that repository. |
+| `gh`/`git` 401 against GitHub | No token stored (Setup step 4, GitHub token), PAT expired, or PAT lacks access to that repository. |
 | TLS errors only for github.com | The agent doesn't trust the gateway CA: check `/ca/egress-gw-ca.pem` exists in the agent (`ls /ca`) and restart the agent after the gateway. |
 | `ENOSPC: no space left on device` | Host disk full. Free space (`docker system df`, logs) or grow the VM disk. |
 | UI login loops | `COOKIE_SECURE=1` forces a Secure cookie, which browsers drop over plain HTTP from another machine. Use the default `auto`, or HTTPS. |
