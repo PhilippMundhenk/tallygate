@@ -11,10 +11,12 @@ set of security fixes from two review rounds, quick actions and templates, help 
 coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you update.
 
 ### Security
-- **SNI on an IP literal:** an intercepted host (credential injection / read-only) could be reached without
-  interception by connecting to its IP as a literal and sending the host's name as the TLS SNI — skipping the
-  credential strip/inject and the read-only check. The passthrough is now refused when the SNI names an
-  intercepted host; reach those hosts by name (#108).
+- **IP literal to an intercepted host:** an intercepted host (credential injection / read-only) could be
+  reached without interception by connecting to its IP as a literal — with the host's name as the TLS SNI, a
+  mismatched SNI, or no SNI at all — skipping the credential strip/inject and the read-only check.
+  Interception is keyed on the name, so the gateway now learns the intercept hosts' IPs (resolved at start, on
+  a timer, and as they are used by name) and refuses any IP-literal connection to one; reach those hosts by
+  name (#108).
 - **Grant path scope:** `path_ok` decoded the request path only once, so a multiply-encoded traversal
   (`%252e%252e`) slipped past the check while the raw path decoded to `..` on a double-decoding upstream. The
   path is now decoded to a fixed point and a residual `%` is refused (#111).
