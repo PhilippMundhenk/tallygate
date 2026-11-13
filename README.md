@@ -56,7 +56,7 @@ only then let through, turned back, or held for you to decide.
 - **Learning mode.** Let a new task run for 30 minutes with public HTTPS allowed and recorded, then save the
   destinations it used as rules in one go. The LAN stays blocked; it ends by itself.
 - **Rule usage.** Hit counters per rule, unused rules offered for removal, and a permanent rule suggested when
-  you keep approving the same destination for an hour.
+  you keep approving the same destination temporarily.
 - **Log search and audit export.** Search the whole log by host, kind, action and time range, see new
   destinations and what decides each one, and export CSV or JSON.
 - **Policy history.** Every change is a version with author and time: see what changed since yesterday,

@@ -23,7 +23,7 @@ fmt:  ## auto-format
 	ruff check --fix .
 	ruff format .
 
-test-unit:  ## policy engine unit tests
+test-unit:  ## unit tests for every component (gateway, control, agent, tools)
 	$(PY) -m pytest tests/unit
 
 test-e2e:  ## gateway/control/notification end-to-end tests (no Docker needed; ttyd optional)

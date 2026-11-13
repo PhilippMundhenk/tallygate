@@ -10,7 +10,8 @@
 ├── config/gateway.yaml       # default static gateway config, built into the gateway image
 ├── gateway/                  # egress-gw container (build context: repository root)
 │   ├── run.py                #   API token on first start, builds the mitmdump command line
-│   ├── presets/              #   policy presets (baseline, open, lockdown)
+│   ├── presets/              #   policies (baseline, lockdown), internet shortcuts (open, internet) and
+│   │                         #   templates (python, node, go, rust, debian, containers, huggingface)
 │   └── egressgw/
 │       ├── addon.py          #   mitmproxy script entry point (thin loader)
 │       ├── core.py           #   hooks: server_connect, tls_clienthello, request, dns_request; approvals
@@ -19,6 +20,9 @@
 │       ├── availability.py   #   away mode, quiet hours, digest of refused requests
 │       ├── activity.py       #   what the agent says it is doing (context for approvals)
 │       ├── github.py         #   github_repos: GitHub access per repository
+│       ├── history.py        #   policy versions: diff, restore, export and import
+│       ├── learning.py       #   learning mode
+│       ├── usage.py          #   rule hit counters, unused rules, suggestions
 │       ├── store.py          #   SQLite event log, secrets store, header templating
 │       ├── api.py            #   management API (aiohttp, bearer token)
 │       └── agentapi.py       #   grant request API for the agent (agent network)
@@ -34,17 +38,16 @@
 ├── agent/                    # agent container
 │   ├── Dockerfile            #   Debian + Claude Code + gh (signed repo) + ttyd (checksummed)
 │   ├── entrypoint.sh         #   CA trust, placeholders, tmux/ttyd/Remote Control supervisor
-│   ├── status.py             #   status + isolation self-test endpoint
-│   ├── tallygate-cli.py      #   `tallygate` CLI: list and request grants, notes
-│   ├── tallygate-hook.py     #   PreToolUse hook: reports the running command to the gateway
 │   ├── status.py             #   status, isolation self-test and setup actions (agent network)
-│   ├── tallygate-cli.py      #   `tallygate` CLI: list and request grants
+│   ├── tallygate-cli.py      #   `tallygate` CLI: list and request grants, request status, notes
+│   ├── tallygate-hook.py     #   PreToolUse hook: reports the running command to the gateway
 │   ├── CLAUDE.md             #   managed memory: explains the gateway and grants to Claude
 │   └── managed-settings.json #   managed Claude Code settings (incl. the PreToolUse hook)
 ├── tests/
-│   ├── unit/                 # policy engine
+│   ├── unit/                 # unit tests for every component (gateway, control, agent, tools)
 │   ├── e2e/                  # real gateway + control on localhost, mock upstreams and bot APIs
 │   └── integration/bypass.sh # Docker-based isolation test against the running stack
+├── tools/coverage_gate.py    # coverage gate: fails when a module is below the minimum (`make coverage`)
 └── docs/                     # this documentation
 ```
 
@@ -88,7 +91,7 @@ curl -x http://127.0.0.1:3128 https://example.org/    # appears in Approvals at 
 
 | Level | What | Where | Runs in CI |
 |---|---|---|---|
-| Unit | Policy matching, hard deny, CIDR semantics, expiry, approvals, validation, presets, templating | `tests/unit` | ✅ |
+| Unit | Policy matching, hard deny, CIDR semantics, expiry, approvals, validation, presets, templating; grants, history, learning mode and rule usage; control (auth, password, setup checks, files, notifications, Web Push); the agent's CLI, hook and status server | `tests/unit` | ✅ |
 | E2E | Every enforcement path, held connections, injection incl. SNI spoofing and upstream cert verification, DNS, API auth, UI auth/CSRF/origin, console websocket, Telegram/Matrix flows | `tests/e2e` | ✅ |
 | Integration | Real images and networks, started with zero configuration: first-start secrets, structural hardening and egress probes from an independent container | `tests/integration/bypass.sh` | ✅ (`integration` job) |
 
@@ -102,21 +105,13 @@ Excluded: only process entry points that would replace the process or touch the 
 `gateway/run.py` (it `exec`s mitmdump; `build_args()` and `ensure_api_token()` are tested) and the
 `__main__` block of `agent/status.py` (its `main()` is tested). Nothing else carries `# pragma: no cover`.
 
-Measured on 2026-11-11 (424 tests):
-
-| Module | Lines |
-|---|---|
-| `gateway/egressgw/` (addon, agentapi, api, core, grants, policy, store), `gateway/run.py` | 100 % each |
-| `control/app/main.py`, `notify.py`, `passwd.py`, `control/hashpw.py` | 100 % each |
-| `control/app/bootstrap.py` | 98.3 % |
-| `agent/status.py` | 100 % |
-| `agent/tallygate-cli.py` | 98.9 % |
-| `tools/coverage_gate.py` | 100 % |
+Every Python module in `gateway/`, `control/`, `agent/` and `tools/` is gated this way, locally by
+`make coverage` and in CI. The current figures per module are in the `coverage` artifact of the latest CI run.
 
 ## Code style
 
 - Python ≥ 3.12, `ruff format` (line length 120) and `ruff check` (incl. bandit-style `S` rules).
-- Shell: `shellcheck`-clean, `set -uo pipefail`.
+- Shell: `shellcheck`-clean, `set -uo pipefail` (`setup.sh` also uses `-e`).
 - Frontend: no framework, no build step, CSP-compatible (no inline scripts).
 - `pre-commit install` runs the same checks on commit.
 

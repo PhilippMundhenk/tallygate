@@ -28,11 +28,11 @@ All variables are optional. Secrets are created on first start when they are not
 | `FILES_MAX_UPLOAD` | `52428800` (50 MiB) | Largest file the *Files* tab uploads into the workspace (bytes). |
 | `FILES_MAX_DOWNLOAD` | `209715200` (200 MiB) | Largest workspace file the *Files* tab downloads (bytes). |
 | `UPDATE_CHECK` | `1` | Control asks GitHub's releases API (`api.github.com`, from control's own network, never through the agent) whether a newer tallygate release exists, at most every 6 h (30 min after a failure), and shows it in the UI. `0` switches it off. |
-| `SESSION_IDLE` | `7200` | UI session idle timeout in seconds (absolute lifetime: `SESSION_TTL`, 12 h). Sessions are server-side: logout and restarts end them, and open event streams and consoles are closed within 10 s. |
+| `SESSION_IDLE` | `7200` | UI session idle timeout in seconds. The absolute lifetime is 12 h (`SESSION_TTL`, not wired in `compose.yaml`: add it to control's `environment:` to change it). Sessions are server-side: logout and restarts end them, and open event streams and consoles are closed within 10 s. |
 | `GW_API_TOKEN` | *(created in the `gw-token` volume)* | Bearer token between control and gateway (≥ 24 chars). |
 | `SESSION_SECRET` | *(created in `control-data`)* | HMAC key that signs session ids in the cookie. |
 | `TTYD_CREDENTIAL` | *(created in the `ttyd` volume)* | `user:password` shared by control and the agent's ttyd consoles. Added by control during the WebSocket handshake; the browser never sees it. |
-| `CONTROL_PASSWORD_HASH` | *(generated password)* | `scrypt:16:<salt>:<hash>` (scrypt N = 2^16), create with `python3 control/hashpw.py` or `docker compose exec control python -m app.passwd --print-hash`. Without it (and without `CONTROL_PASSWORD`), control generates a password on first start, prints it to its log (where it stays until the log is rotated) and keeps the hash in `control-data`; change that one with `docker compose exec control python -m app.passwd`, which also ends all open sessions. The legacy `scrypt:<salt>:<hash>` (N = 2^14) is still accepted; regenerate it. |
+| `CONTROL_PASSWORD_HASH` | *(generated password)* | `scrypt:16:<salt>:<hash>` (scrypt N = 2^16), create with `python3 control/hashpw.py` or `docker compose exec control python -m app.passwd --print-hash`. Without it (and without `CONTROL_PASSWORD` or `TRUST_PROXY_AUTH_HEADER`), control generates a password on first start, prints it to its log (where it stays until the log is rotated) and keeps the hash in `control-data`; change that one with `docker compose exec control python -m app.passwd`, which also ends all open sessions. The legacy `scrypt:<salt>:<hash>` (N = 2^14) is still accepted; regenerate it. |
 | `CONTROL_PASSWORD` | – | Plain-text password instead of a hash. Discouraged (logged as a warning). |
 | `TRUST_PROXY_AUTH_HEADER` | – | E.g. `Remote-User`: accept the user from this header set by an authenticating proxy (Authelia, oauth2-proxy). Requires `TRUSTED_PROXIES`; control refuses to start without it. Trust only the proxy container's own address: see [reverse proxy](operations.md#reverse-proxy). |
 | `TRUST_PROXY_SECRET` | – | Shared secret (≥ 16 characters) that the proxy sends as `X-Tallygate-Proxy-Secret`. When set, forwarded and auth headers are believed only from `TRUSTED_PROXIES` **and** with this header (compared in constant time). Recommended with `TRUST_PROXY_AUTH_HEADER`. |
@@ -81,6 +81,7 @@ TALLYGATE_VERSION=0.4
 GATEWAY_DATA=/srv/tallygate/gateway
 AGENT_HOME=/srv/tallygate/agent-home
 WORKSPACE=/srv/tallygate/workspace
+CONTROL_DATA=/srv/tallygate/control-data
 AGENT_MEM_LIMIT=4g
 AGENT_CPUS=2
 RC_NAME=homelab-agent
@@ -107,7 +108,7 @@ MATRIX_ALLOWED_USERS=@you:example.org
 
 ## `config/gateway.yaml`
 
-Every key with an example. The file in the repository lists them all, commented where the default applies.
+Every key with an example. The file in the repository lists them all, most of them commented at their default.
 
 | Key | Default | Example | Meaning |
 |---|---|---|---|
@@ -119,11 +120,11 @@ Every key with an example. The file in the repository lists them all, commented 
 | `learning_max_minutes` | `120` | `30` | Longest learning-mode session. |
 | `rule_stale_days` | `30` | `90` | A permanent rule that did not match for this many days is offered for removal. |
 | `suggest_min_approvals` | `3` | `5` | Temporary approvals of one destination that lead to a "make it permanent?" suggestion. |
-| `suggest_window_days` | `7` | `14` | The time window for those approvals. |
+| `suggest_window_days` | `7` | `14` | The time window for those approvals (at most `log_keep_days`: older approvals are forgotten). |
 | `policy_history_keep` | `500` | `100` | Policy versions kept for diff and rollback (at least 10); older ones are removed. |
-| `hard_deny_floor` | built-in list | `[203.0.113.7/32]` | **Added** to the built-in hard deny (your VPS's public IP). |
-| `readonly` | npm, Yarn, crates.io, Docker Hub, GHCR, Quay, Hugging Face | `[registry.npmjs.org, {host: ghcr.io, post_is_write: true}]` | Hosts where writes are refused: PUT/PATCH/DELETE, and with `post_is_write` also POST (except `read_posts`). See [Read-only hosts](#read-only-hosts). |
-| `inject` | GitHub entries | see below | Credential injection per host. |
+| `hard_deny_floor` | built-in list | `[203.0.113.7/32]` | **Added** to the built-in hard deny (your VPS's public IP; the example is a placeholder). |
+| `readonly` | `[]`; the shipped `gateway.yaml` lists npm, Yarn, crates.io, Docker Hub, GHCR, Quay, Hugging Face | `[registry.npmjs.org, {host: ghcr.io, post_is_write: true}]` | Hosts where writes are refused: PUT/PATCH/DELETE, and with `post_is_write` also POST (except `read_posts`). See [Read-only hosts](#read-only-hosts). |
+| `inject` | `[]`; the shipped `gateway.yaml` has the GitHub entries | see below | Credential injection per host. |
 | `github_repos` | `[]` (every repository) | `[acme/app, acme-tools/*]` | Limit GitHub to these repositories; others are refused before they reach GitHub. See [GitHub per repository](#github-per-repository). |
 | `github_graphql` | `false` | `true` | With `github_repos`: allow `/graphql` anyway (it can reach any repository the token can). |
 | `github_hosts` | `github.com`, `api.github.com`, `uploads.github.com` | `[github.example.org]` | Hosts `github_repos` applies to (GitHub Enterprise Server: your host). |
@@ -131,7 +132,7 @@ Every key with an example. The file in the repository lists them all, commented 
 | `services` | `[]` | `[{name: pg, listen: 15432, target: db.example.org:5432}]` | TCP service ports. |
 | `quiet_hours` | – | `{start: "22:00", end: "07:00", days: [mon, tue, wed, thu, fri], tz: Europe/Berlin}` | Daily period in which requests that need you are refused at once. See [Availability](#availability). |
 | `digest_minutes` | `30` | `0` | While away: a digest of what was refused every N minutes; `0` = only when you are back. |
-| `grants`, `grants_*`, `grant_*` | – | see [Grants](#grants) and [grants.md](grants.md) | Grants. |
+| `grants`, `grants_*`, `grant_*`, `activity_rate` | – | see [Grants](#grants) and [grants.md](grants.md) | Grants. |
 
 ### Read-only hosts
 
@@ -157,7 +158,8 @@ The default list and why:
 Not covered: Hugging Face's storage hosts (`*.hf.co`, Xet) accept chunk uploads by POST. Without a commit on
 `huggingface.co` such data is not attached to any repository, but it reaches Hugging Face's storage. Leave
 the Hugging Face template off if that matters to you. The templates are pull-only only as long as their
-hosts are in this list: a `gateway.yaml` of your own replaces the whole list.
+hosts are in this list: a `gateway.yaml` of your own replaces the whole list. The same goes for `inject`:
+without it in your file no GitHub token is added.
 
 
 ```yaml
@@ -197,10 +199,12 @@ services:                  # TCP service ports for non-proxy-aware clients
 ```
 
 Template syntax in `value`: `${name}` inserts the secret `name` (set via the UI/API); `${b64:…}` base64-encodes
-the rendered inner text. The agent's own `Authorization`/`Cookie` headers are **always removed** on inject
-hosts; if a referenced secret is missing the request goes out without credentials (fail closed).
+the rendered inner text. The agent's own headers named in `inject_strip_headers` (default `Authorization`,
+`Cookie`) and the injected header itself are **always removed** on inject hosts; if a referenced secret is
+missing the request goes out without credentials (fail closed).
 
-Every `inject` host must also be **allowed** by the policy (the baseline preset allows GitHub).
+Every `inject` host must also be **allowed** by the policy (the baseline preset allows `github.com` and
+`api.github.com`; `uploads.github.com`, used for release asset uploads, is asked).
 
 ### GitHub per repository
 
@@ -263,11 +267,11 @@ See [grants.md](grants.md) for the concept and examples. Keys in `config/gateway
 |---|---|---|
 | `grants` | – | Map `name → definition` (`description`, `targets`, `levels`, `approval`, `default_ttl`, `max_ttl`, `inject`). Read-only in the UI. |
 | `grants_lan_allow` | `[]` | CIDRs that **UI-defined** grants may reach with `lan: true`. Empty = UI grants cannot target the LAN. |
-| `grants_never` | loopback, link-local, multicast, unspecified | Never reachable through any grant. The stack's own networks (`GW_INTERNAL_NETS`) and the gateway's own listeners are refused in addition, whatever is set here. |
+| `grants_never` | loopback, link-local, multicast, unspecified | Never reachable through any grant. A list here **replaces** the default (unlike `hard_deny_floor`): repeat the defaults you want to keep. The stack's own networks (`GW_INTERNAL_NETS`) and the gateway's own listeners are refused in addition, whatever is set here. |
 | `grant_request_timeout` | `300` | Seconds a request waits for a decision. |
 | `grant_max_pending` | `3` | Open grant requests at once. |
 | `grant_api_rate` | `30` | Requests/minute on the agent grant API. |
-| `activity_rate` | `60` | Activity reports/minute (the agent's PreToolUse hook and `tallygate note`), counted separately from grant requests. Excess reports are dropped. |
+| `activity_rate` | `60` | Activity reports/minute (the agent's PreToolUse hook and `tallygate note`), counted separately from grant requests. Excess reports are refused with `429`. |
 
 Target fields: `host` (name, `*.domain` or IP), `port`, `scheme` (`https` default, `http`, `tcp`), `paths`
 (globs, default `/*`), `lan`, `address` (fixed IP), `tls_fingerprint` (SHA-256), `tls_verify`
@@ -282,7 +286,7 @@ The live policy, edited in the UI. Worked examples for hosts, ports, CIDRs and o
 default: ask               # allow | deny | ask
 ask_timeout: 60            # seconds to hold a connection while waiting for a decision (5..3600)
 hard_deny:                 # optional ADDITIONS to the floor (cannot remove floor entries)
-  - 203.0.113.7/32         # e.g. the Docker host's own public IP
+  - 203.0.113.7/32         # placeholder, e.g. the Docker host's own public IP
 rules:                     # first match wins
   - id: github             # optional, generated if missing; must be unique
     action: allow          # allow | deny | ask
@@ -338,11 +342,14 @@ rules:
 ```
 
 Add your own templates by mounting YAML files into the gateway's `/app/presets/`, e.g.
-`./presets/company.yaml:/app/presets/company.yaml:ro` in `compose.yaml`.
+`./presets/company.yaml:/app/presets/company.yaml:ro` in `compose.yaml`. The file name (without `.yaml`) is
+the preset name and may only contain letters, digits and `_` (no `-`). Without `category` a file is a
+`template`.
 
-## Component environment (set by `compose.yaml`)
+## Component environment
 
-These are wired by the compose file and normally need no change.
+Set by `compose.yaml` or the image, or left at the built-in default. They normally need no change; to change
+one that `compose.yaml` does not list, add it to that service's `environment:` block.
 
 | Container | Variable | Purpose |
 |---|---|---|
@@ -353,15 +360,20 @@ These are wired by the compose file and normally need no change.
 | egress-gw | `GW_INTERNAL_NETS` | The stack's own networks as comma-separated CIDRs (compose: the four `172.31.1x.0/24` networks). Never reachable through a grant, not even with `lan: true`. Change it together with the `networks:` subnets; an invalid entry stops the gateway. |
 | egress-gw | `GW_CONFIG`, `DATA_DIR`, `CA_EXPORT_DIR`, `PRESET_DIR` | Paths. |
 | egress-gw | `GW_EXTRA_ARGS` | Extra mitmdump arguments (advanced). |
+| egress-gw, control | `GW_API_TOKEN_FILE` | Token file in the `gw-token` volume (`/run/tallygate/gw/api-token`), used when `GW_API_TOKEN` is not set. |
 | egress-gw | `GW_TEST_STATIC_HOSTS` | **Test suite only.** Never set in production (logged as a warning). |
 | egress-gw | `GW_TEST_FLOOR_REPLACE` | **Test suite only.** `1` = `hard_deny_floor` replaces the built-in list (the e2e upstreams run on loopback). Never set in production (logged as a warning). |
 | control | `CONTROL_BIND_HOST` / `CONTROL_PORT` | UI bind address (mgmt network only) / port. |
 | control | `GW_URL` | Gateway API base URL. |
 | control | `AGENT_HOST`, `AGENT_STATUS_PORT`, `TERMINALS` | Agent address, status port, `name:port` list of ttyd consoles. |
 | control | `SESSION_TTL`, `LOG_LEVEL` | Session lifetime (s, default 12 h), log level. |
-| control | `CONTROL_DATA` | Control state directory (`/data`): session secret, password hash, VAPID key, push subscriptions. |
+| control | `SESSION_RECHECK` | Seconds between session re-checks of open event streams and consoles (10). |
+| control | `CONTROL_DATA` | Control state directory inside the container (`/data`): session secret, password hash, VAPID key, push subscriptions. Not the `.env` variable of the same name, which is the host path or volume mounted there. |
+| control, agent | `TTYD_CREDENTIAL_FILE` | Credential file in the `ttyd` volume (`/run/tallygate/ttyd/credential`), used when `TTYD_CREDENTIAL` is not set. |
+| control | `GITHUB_API_URL` | Releases API base URL for the update check (the test suite points it at a mock server). |
 | control | `TELEGRAM_API_BASE`, `PUSHOVER_API_BASE` | API base URLs (the test suite points them at mock servers). |
 | control | `PUSH_TEST_ALLOW_HTTP` | **Test suite only.** `1` = Web Push endpoints over plain HTTP are accepted (logged as a warning). |
 | agent | `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` (+ lowercase) | Route all tools through the gateway. |
+| agent | `STATUS_PORT` | Status server port (7680); must match control's `AGENT_STATUS_PORT`. |
 | agent | `SELFTEST_BLOCKED_PROBES` | Management endpoints the self-test expects to be unreachable. |
 | agent | `TALLYGATE_URL` | Grant API for the `tallygate` CLI (`http://172.31.10.2:8079`). |

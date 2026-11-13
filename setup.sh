@@ -3,7 +3,7 @@
 # first start. This script only
 #   - creates .env from .env.example (if missing), readable only by you, and
 #   - with a directory argument, keeps the state in host directories instead of Docker volumes:
-#       ./setup.sh /srv/tallygate      -> /srv/tallygate/{gateway,agent-home,workspace} with the right owners
+#       ./setup.sh /srv/tallygate      -> /srv/tallygate/{gateway,agent-home,workspace,control-data} with the right owners
 # Run it as your normal user; it uses sudo only to create and chown the state directories.
 set -euo pipefail
 cd "$(dirname "$0")"
