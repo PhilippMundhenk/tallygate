@@ -141,7 +141,7 @@ def test_never_reachable_is_one_list_in_the_ui(ui):
     """#121: built-in floor, config, own additions and the grant limits in one read-only list."""
     status, rows, _ = ui.call("GET", "/api/gw/never-reachable")
     assert status == 200 and all(set(r) == {"range", "source", "scope"} for r in rows)
-    assert {"range": "169.254.0.0/16", "source": "grants_config", "scope": "grants"} in rows  # the e2e config
+    assert {"range": "169.254.0.0/16", "source": "config", "scope": "all+lan"} in rows  # the e2e config (grants_never)
     assert any(r["source"] in ("builtin", "config") and r["scope"] == "all" for r in rows)
     page = ui.call("GET", "/")[1]
     assert b'id="neverBody"' in page and b'id="hardDeny"' in page and b"hardDenyFloor" not in page

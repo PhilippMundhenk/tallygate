@@ -124,7 +124,7 @@ time out after `grant_request_timeout` (300 s). At most `grant_max_pending` (3) 
 ## How it is enforced
 
 1. A connection to a target of an **active** grant is checked before the normal rules. Names are resolved
-   (or `address` is used) and the resolved IPs are checked: `grants_never` always applies, the hard deny
+   (or `address` is used) and the resolved IPs are checked: the `never` ranges with `scope: all+lan` always apply, the hard deny
    applies unless `lan: true`, and for UI grants `grants_lan_allow` applies. The stack's own networks
    (`GW_INTERNAL_NETS`) and the gateway's own listeners are refused for every grant. The connection is then pinned
    to the checked IP.

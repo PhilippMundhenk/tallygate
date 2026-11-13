@@ -184,12 +184,12 @@ host that connects to the published port arrives from that address too, so trust
 whole host. That is acceptable for `X-Forwarded-For` on a single-user host, but **not** together with
 `TRUST_PROXY_AUTH_HEADER`: then use the [safe setup for an authenticating proxy](#authenticating-proxy) below.
 
-If the Docker host has a public IP (VPS), add it to `hard_deny_floor` in `config/gateway.yaml` so the agent
+If the Docker host has a public IP (VPS), add it to `never` in `config/gateway.yaml` so the agent
 cannot reach host services through the egress path. Entries there are added to the built-in list
 (RFC 1918, loopback, metadata, ...), which always stays in force:
 
 ```yaml
-hard_deny_floor: [203.0.113.7/32]   # your host's public IP; the built-in ranges still apply
+never: [203.0.113.7/32]   # your host's public IP; the built-in ranges still apply
 ```
 
 Caddy on the host, with SSO in front of the built-in password:

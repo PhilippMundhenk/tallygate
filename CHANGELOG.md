@@ -146,6 +146,11 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   on the emergency stop and on restart (#69).
 
 ### Changed
+- **One `never` list in the gateway config** replaces `hard_deny_floor` and `grants_never`: a plain range is
+  closed for every connection; `{range, scope: all+lan}` is closed for LAN grants too. The old keys still
+  work and are read as `never` (`grants_never` entries now also close every connection, not only grants); the
+  gateway logs once at start that they can be renamed, and `python -m egressgw.convert gateway.yaml` prints the
+  file in the new form (#122).
 - **One evaluation path (ADR-0014, first part):** whether a connection is intercepted and what each request on
   it may do is now decided in one place (`gateway/egressgw/model.py`), for read-only hosts, credential
   injection, repository limits and grants alike. No behaviour change: the model ran next to the old code on

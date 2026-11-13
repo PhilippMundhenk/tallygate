@@ -171,9 +171,9 @@
     <details class="card" id="usageCard"><summary>Rule usage and suggestions <span id="usageBadge" class="badge hidden"></span></summary><div id="usageBox"></div></details>
     <div class="table-wrap"><table class="rules"><thead><tr><th>#</th><th>Action</th><th>Match</th><th>Port</th><th>Note</th><th>Expires</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="rulesBody"></tbody></table></div>
     <details class="card" id="neverCard"><summary>Never reachable <span id="neverCount" class="muted"></span></summary>
-      <p class="hint">Every range that can never be reached, from every place that defines one. <b>All connections</b>:
-        never asked about, and no rule can open it; only a grant for one device on the local network is exempt.
-        <b>Grants</b>: closed for every grant too, local-network ones included.</p>
+      <p class="hint">Every range that can never be reached, from every place that defines one. Nothing is asked
+        about them and no rule can open them. <b>All connections</b>: a grant for one device on the local network
+        may be exempt. <b>LAN grants too</b>: closed even for those.</p>
       <div class="table-wrap"><table class="never"><thead><tr><th>Range</th><th>Applies to</th><th>Comes from</th><th>To change it</th></tr></thead>
         <tbody id="neverBody"></tbody></table></div>
       <p class="hint" id="hardDenyHint"><b>Add your own</b> (one range per line), e.g. your Docker host's public IP as
