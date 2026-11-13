@@ -66,6 +66,9 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - CI: actions pinned to commit SHAs, base images by digest, gitleaks secret scan, Trivy image scan (#18).
 
 ### Added
+- **How access works** (`docs/access.md`): the access model on one page — never reachable, on request, rules,
+  everything else, the limits inside a destination, who decides what, and why some settings are file-only
+  (#121).
 - **Docker Compose with published images** is the recommended installation. Multi-arch images
   `ghcr.io/philippmundhenk/tallygate-{gateway,control,agent}` (`linux/amd64`, `linux/arm64`) are published
   from `main` (`:main`) and for every release (`:X.Y.Z`, `:X.Y`, `:latest`). Releases attach `compose.yaml`,

@@ -145,6 +145,7 @@ Details: [docs/operations.md#from-source](docs/operations.md#from-source)
 | [Decisions (ADRs)](docs/adr/README.md) | Why it's built this way |
 | [Threat model](docs/threat-model.md) | What's protected, how, and what isn't |
 | [Operations](docs/operations.md) | Install, upgrade, backup, troubleshooting |
+| [How access works](docs/access.md) | The access model on one page: start here |
 | [User guide](docs/user-guide.md) | UI, approvals, Telegram/Matrix, rule cookbook |
 | [Rules by example](docs/rules.md) | How a connection is decided, with worked examples |
 | [Configuration](docs/configuration.md) | All settings, with examples |

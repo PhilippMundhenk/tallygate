@@ -4,6 +4,7 @@ Approving single connections works for the open internet. It is the wrong unit f
 Home Assistant" or "let it SSH into the NAS for ten minutes". A **grant** is a named, scoped,
 time-limited bundle of access that you define once. The agent requests it with a reason, and you approve
 it with one tap. When the time runs out, everything falls back to the normal policy and hard deny.
+[How access works](access.md) shows where grants sit next to rules and the never-reachable list.
 
 ```text
 agent:  tallygate request homeassistant --write --ttl 30m --reason "turn off the living room lights"

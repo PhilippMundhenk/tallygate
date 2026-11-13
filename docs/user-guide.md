@@ -4,6 +4,9 @@ The control UI is the operator's cockpit: approve connections, watch traffic, ed
 consoles into the agent, and run the setup wizard. Remote Control itself is used from the
 [Claude app](https://claude.ai/download) or [claude.ai/code](https://claude.ai/code) as usual.
 
+New here? [How access works](access.md) explains the model on one page: what is never reachable, what the
+agent has to ask for, what rules do, and where each is changed.
+
 - [Overview](#overview)
 - [Approvals](#approvals)
 - [Away mode and quiet hours](#away-mode-and-quiet-hours)
