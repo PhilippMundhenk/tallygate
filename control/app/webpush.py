@@ -1,7 +1,7 @@
 """Web Push for the installable UI (#72): VAPID (RFC 8292), message encryption (RFC 8291, aes128gcm),
 subscriptions, and single-use action tokens for the notification buttons.
 
-The notification's *Allow 2 min* / *Deny* buttons work without opening the UI. They are not approve URLs:
+The notification's *Allow once* / *Deny* buttons work without opening the UI. They are not approve URLs:
 each button carries a token that is signed with a key derived from the session secret, bound to one
 pending request, one decision and one subscription, valid for at most ACTION_TTL seconds and accepted once.
 The token travels end-to-end encrypted to the subscribed browser (the push service cannot read it) and is

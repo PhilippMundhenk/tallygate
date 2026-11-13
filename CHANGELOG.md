@@ -138,6 +138,11 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   on the emergency stop and on restart (#69).
 
 ### Changed
+- **Approval prompts are shorter:** *Allow once*, *Always allow* and *Deny* come first; *Allow 1 h*,
+  *Always (\*.domain)* and *Block forever* are behind **More** — in the web UI, in Telegram (*More…* adds them to
+  the same message) and in Matrix (three reactions are pre-seeded, the others still work). *Allow 2 min* is now
+  called *Allow once* and *Always (host)* *Always allow*; what they do is unchanged, and so are the keyboard
+  shortcuts and the Matrix text replies (#121).
 - **The UI is reachable on the LAN by default** (`CONTROL_PUBLISH=0.0.0.0:8080`) and the session cookie
   follows the connection (`COOKIE_SECURE=auto`): plain HTTP works out of the box, HTTPS keeps the cookie
   `Secure`, and the UI warns on unencrypted access from another machine. The agent still cannot reach the UI

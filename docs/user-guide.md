@@ -42,14 +42,16 @@ background (turn these on once with **Enable browser notifications** in the Setu
 notification on your phone ([without a chat bot](#phone-approvals-without-a-chat-bot)). The countdown shows
 when it will be denied automatically.
 
+Each request offers three choices. **More** shows three further ones on that card.
+
 | Button | Effect |
 |---|---|
-| Allow 2 min | This host:port for 2 minutes (covers follow-up connections of one operation) |
-| Allow 1 h | This host:port for one hour |
-| Always (host) | Permanent allow rule for exactly this host:port |
-| Always (*.example.com) | Permanent allow rule for the registrable domain and all subdomains. The button shows the exact pattern; it is not offered when the name has no registrable domain of its own (e.g. `github.io`, IPs). |
+| Allow once | This host:port for 2 minutes (covers the follow-up connections of one operation) |
+| Always allow | Permanent allow rule for exactly this host:port |
 | Deny | Deny for 2 minutes (the tool gets an error now; asking again later is possible) |
-| Block forever | Permanent deny rule |
+| *More:* Allow 1 h | This host:port for one hour |
+| *More:* Always (*.example.com) | Permanent allow rule for the registrable domain and all subdomains. The button shows the exact pattern; it is not offered when the name has no registrable domain of its own (e.g. `github.io`, IPs). |
+| *More:* Block forever | Permanent deny rule |
 
 **Why does the agent want this?** A card can show the agent's recent activity: the command or URL Claude
 Code was about to run when the connection started (`Bash curl … – Fetch the data`), or a note the agent
@@ -73,8 +75,8 @@ For approving a lot. The switches above the list are kept in this browser.
 | Key | Effect (Approvals tab, outside text fields) |
 |---|---|
 | `j` / `k` | Select the next / previous request |
-| `a` | Allow 2 min; approve a grant request |
-| `h` | Allow 1 h |
+| `a` | Allow once; approve a grant request |
+| `h` | Allow 1 h (also while it is hidden behind *More*) |
 | `d` | Deny |
 | `?` | List the keys (anywhere; `Esc` closes) |
 
@@ -338,8 +340,9 @@ password change runs on the Docker host.
 3. In `.env`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ALLOWED_USER_IDS=<your from.id>`.
 4. `docker compose up -d control`.
 
-Each request arrives with six buttons (five when the name has no registrable domain). After a decision the message is edited to show the outcome and who
-decided. Taps from users not in the allowlist are answered with "Not authorised".
+Each request arrives with **Allow once**, **Always allow**, **Deny** and **More…**; *More…* adds *Allow 1 h*,
+*Always (\*.domain)* (when the name has a registrable domain) and *Block forever* to the same message. After a
+decision the message is edited to show the outcome and who decided. Taps from users not in the allowlist are answered with "Not authorised".
 
 ## Matrix approvals
 
@@ -350,9 +353,10 @@ decided. Taps from users not in the allowlist are answered with "Not authorised"
    `MATRIX_ALLOWED_USERS=@you:example.org`.
 4. `docker compose up -d control`.
 
-Each request is posted as `🔐 #3 Agent wants to connect: host:port …` with pre-seeded reactions. Tap a
-reaction (👍 2 min · ⏰ 1 h · ✅ always · 🌐 domain · 👎 deny · ⛔ block) or reply `allow 3`, `hour 3`,
-`always 3`, `domain 3`, `deny 3` or `block 3`. The bot confirms the outcome in a reply.
+Each request is posted as `🔐 #3 Agent wants to connect: host:port …` with three pre-seeded reactions: tap
+👍 allow once, ✅ always allow or 👎 deny. The message lists the others, which you add yourself: ⏰ 1 h,
+🌐 domain, ⛔ block. Or reply `allow 3`, `hour 3`, `always 3`, `domain 3`, `deny 3` or `block 3`. The bot
+confirms the outcome in a reply.
 
 ## Phone approvals without a chat bot
 
@@ -362,7 +366,7 @@ notifications on this device**. Each request arrives as a notification:
 
 | Request | Buttons in the notification |
 |---|---|
-| Connection | **Allow 2 min**, **Deny** |
+| Connection | **Allow once**, **Deny** |
 | Grant, read level | **Approve read**, **Deny** |
 | Grant, write level | **Approve read-only** (if the grant offers read), **Deny**. Write access needs the UI or a chat bot. |
 

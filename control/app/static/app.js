@@ -83,8 +83,9 @@ $("#tabs").addEventListener("keydown", (e) => {  // arrow keys move between tabs
 });
 
 /* ---------------- approvals ---------------- */
-const SCOPES = [["once", "Allow 2 min", ""], ["hour", "Allow 1 h", ""], ["always", "Always (host)", ""],
-  ["domain", "Always (*.domain)", ""], ["deny", "Deny", "secondary"], ["deny_always", "Block forever", "danger"]];
+// Three choices up front; the other scopes are behind "More" (#121). [scope, label, class, behind "More"]
+const SCOPES = [["once", "Allow once", "", false], ["always", "Always allow", "", false], ["deny", "Deny", "secondary", false],
+  ["hour", "Allow 1 h", "", true], ["domain", "Always (*.domain)", "", true], ["deny_always", "Block forever", "danger", true]];
 let pending = [];
 async function loadPending() {
   pending = await gw("GET", "/pending");
@@ -134,12 +135,19 @@ function pendingCard(p) {
     ${p.idn ? `<div class="meta warn">⚠ internationalised (punycode) name – check for look-alikes</div>` : ""}
     <div class="meta">${esc(p.proto)} · IPs ${esc((p.ips || []).join(", ") || "not resolved yet")} · attempts ${esc(p.attempts)} ·
     <span class="countdown" data-exp="${Number(p.expires)}"></span></div><div class="btns"></div>`;
-  for (const [scope, label, cls] of SCOPES) {
+  const btns = $(".btns", el), more = document.createElement("button");
+  more.type = "button"; more.className = "secondary more"; more.textContent = "More"; more.setAttribute("aria-expanded", "false");
+  more.onclick = () => {
+    const open = el.classList.toggle("more-open");
+    more.setAttribute("aria-expanded", String(open)); more.textContent = open ? "Less" : "More";
+  };
+  for (const [scope, label, cls, extra] of SCOPES) {
     if (scope === "domain" && !p.domain) continue;  // no registrable domain (IP, public suffix)
-    const b = document.createElement("button"); if (cls) b.className = cls; b.dataset.scope = scope;
+    if (extra && !more.parentNode) btns.appendChild(more);  // after the three first choices
+    const b = document.createElement("button"); b.className = [cls, extra ? "extra" : ""].join(" ").trim(); b.dataset.scope = scope;
     b.textContent = scope === "domain" ? `Always (*.${p.domain})` : label;
     b.onclick = decide(el, async () => { await gw("POST", `/pending/${p.id}/decide`, { scope }); await loadPending(); });
-    $(".btns", el).appendChild(b);
+    btns.appendChild(b);
   }
   document.dispatchEvent(new CustomEvent("tg:card", { detail: { el, item: p, kind: "ask" } }));  // feature scripts
   return el;

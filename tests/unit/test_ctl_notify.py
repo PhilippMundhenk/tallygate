@@ -185,8 +185,10 @@ def test_telegram_prompt_carries_the_public_link_and_domain_button(make):
     ((_, _, params),) = n.chat.sent("tg", "sendMessage")
     assert params["text"].endswith("\nhttps://tally.example") and params["chat_id"] == "777"
     labels = [b["text"] for row in params["reply_markup"]["inline_keyboard"] for b in row]
-    assert "Always (*.example.com)" in labels and len(labels) == 6
-    assert n.msgs["p1"]["tg"] == 41
+    assert labels == ["Allow once", "Always allow", "Deny", "More…"]  # the other scopes are behind "More" (#121)
+    assert n.msgs["p1"]["tg"] == 41 and n.msgs["p1"]["domain"] == "example.com"
+    full = [b["text"] for row in n._tg_keyboard("p1", "example.com", full=True)["inline_keyboard"] for b in row]
+    assert full == ["Allow once", "Allow 1 h", "Always allow", "Always (*.example.com)", "Deny", "Block forever"]
 
 
 def test_telegram_prompt_without_a_domain_has_no_domain_button(make):
@@ -194,7 +196,9 @@ def test_telegram_prompt_without_a_domain_has_no_domain_button(make):
     run(n._on_ask(pending()))
     ((_, _, params),) = n.chat.sent("tg", "sendMessage")
     labels = [b["text"] for row in params["reply_markup"]["inline_keyboard"] for b in row]
-    assert not any(label.startswith("Always (*.") for label in labels) and len(labels) == 5
+    assert labels == ["Allow once", "Always allow", "Deny", "More…"]
+    full = [b["text"] for row in n._tg_keyboard("p1", None, full=True)["inline_keyboard"] for b in row]
+    assert not any(label.startswith("Always (*.") for label in full) and len(full) == 5
 
 
 @pytest.mark.parametrize("kind", ["ask", "grant"])
@@ -233,7 +237,7 @@ def test_slow_reaction_seeding_does_not_delay_the_next_prompt(make):
 
     run(go())
     keys = [c[3]["m.relates_to"]["key"] for c in n.chat.sent("mx", "m.reaction")]
-    assert len(keys) == 6 + 3 + 6
+    assert len(keys) == 3 + 3 + 3  # two connection prompts (three first choices each) and one grant prompt
 
 
 def test_expired_asks_and_grant_requests_are_not_sent(make, caplog):
@@ -337,6 +341,44 @@ def test_telegram_callbacks(make, no_sleep, caplog):
     assert "offset" not in polls[0] and polls[1]["offset"] == 18 and polls[2]["offset"] == 18
     assert "SECRET" not in caplog.text and "bot<token>/getUpdates" in caplog.text
     assert no_sleep == [5]
+
+
+def test_telegram_more_shows_every_scope_on_the_same_message(make, no_sleep):
+    n = make(TG)
+    run(n._on_ask(pending(domain="example.com")))
+    n.chat.script = [
+        [cq(1, "m:p1", message_id=41), cq(2, "m:gone", message_id=7), cq(3, "d:p1:hour", message_id=41)],
+        asyncio.CancelledError(),
+    ]
+
+    async def body():
+        with pytest.raises(asyncio.CancelledError):
+            await n._tg_poll()
+
+    run(body())
+    (edit,) = n.chat.sent("tg", "editMessageReplyMarkup")  # only for the prompt that is still open
+    assert edit[2]["message_id"] == 41 and edit[2]["chat_id"] == "777"
+    labels = [b["text"] for row in edit[2]["reply_markup"]["inline_keyboard"] for b in row]
+    assert labels == ["Allow once", "Allow 1 h", "Always allow", "Always (*.example.com)", "Deny", "Block forever"]
+    answers = [c[2]["text"] for c in n.chat.sent("tg", "answerCallbackQuery")]
+    assert answers == ["More choices", "already decided", "ok"]
+    assert n.d.calls == [("p1", "hour", "telegram:alice")]
+
+
+def test_matrix_prompt_seeds_the_three_first_choices_and_lists_the_rest(make):
+    n = make(MX)
+
+    async def body():
+        await n._on_ask(pending(domain="example.com"))
+        await asyncio.gather(*n.tasks)
+
+    run(body())
+    msg = n.chat.sent("mx", "m.room.message")[0][3]
+    assert "React: 👍 Allow once  ✅ Always allow  👎 Deny\n" in msg["body"]
+    assert "More: ⏰ Allow 1 h  🌐 Always (*.example.com)  ⛔ Block forever\n" in msg["body"]
+    assert "More: ⏰ Allow 1 h" in msg["formatted_body"]
+    seeded = [c[3]["m.relates_to"]["key"] for c in n.chat.sent("mx", "m.reaction")]
+    assert seeded == ["👍", "✅", "👎"]
 
 
 def test_telegram_revoke_of_an_ended_grant(make, no_sleep):
