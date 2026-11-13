@@ -1,5 +1,7 @@
 # Configuration reference
 
+Every setting and its default. For what the settings add up to, see [How access works](access.md).
+
 Configuration lives in three places:
 
 | File | Scope | Edited by |

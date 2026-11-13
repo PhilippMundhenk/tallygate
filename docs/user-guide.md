@@ -4,6 +4,9 @@ The control UI is the operator's cockpit: approve connections, watch traffic, ed
 consoles into the agent, and run the setup wizard. Remote Control itself is used from the
 [Claude app](https://claude.ai/download) or [claude.ai/code](https://claude.ai/code) as usual.
 
+New here? [How access works](access.md) explains the model on one page: what is never reachable, what the
+agent has to ask for, what rules do, and where each is changed.
+
 - [Overview](#overview)
 - [Approvals](#approvals)
 - [Away mode and quiet hours](#away-mode-and-quiet-hours)
@@ -336,7 +339,7 @@ password change runs on the Docker host.
 | Log in to Claude | *Start login* runs `claude auth login` in the agent (tmux session `tg-login`) and shows the link to Anthropic's login page. Sign in there and paste the code it shows. Only links to Anthropic's login pages are shown. Once logged in, the button reads *Log in again*. |
 | Git identity | *Use my GitHub identity* asks GitHub, through the gateway with the stored token, who you are (`gh api user`) and shows the name and the noreply address `<id>+<login>@users.noreply.github.com`; *Apply* sets them. Without a stored token, or when GitHub refuses it or cannot be reached, it says so and links to the token step. *Enter it yourself* is the fallback. Empty values are never written; a name or address that is set but empty (for example from a `git config` whose `$(…)` failed) is reported as such. |
 | Remote Control | *Enable Remote Control* answers Claude Code's one-time question `Enable Remote Control? (y/n)` with yes, trusts `/workspace` and restarts Remote Control. The step is done when it runs; it also tells you when Remote Control waits for an answer in the *rc* console. Switched off with `RC_ENABLE=0`. |
-| Starting policy | *Ask me* or *Strict* sets what happens with unknown destinations; *Shortcuts* opens them in the Rules tab. |
+| Starting policy | *Ask me* or *Strict* sets what happens with unknown destinations; *Shortcuts* opens them in the Rules tab. *Learn from a first task* takes you to [learning mode](#learning-mode), the quickest way to a working set of rules: run one task, then keep what it used. |
 | Phone notifications | Status of Telegram, Matrix, Web Push, ntfy, Gotify and Pushover; browser notifications. Web Push devices are managed in the *Notifications* card below the steps. |
 | Isolation self-test | Runs the in-agent self-test. |
 

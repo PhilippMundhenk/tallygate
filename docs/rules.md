@@ -1,7 +1,8 @@
 # Rules by example
 
 How the gateway decides, and about twenty worked examples: what a rule matches, what it does not, and the mistakes
-that are easy to make. The reference for every field is in [configuration.md](configuration.md#policyyaml).
+that are easy to make. The reference for every field is in [configuration.md](configuration.md#policyyaml). For how rules fit
+together with grants, read-only hosts and the never-reachable list, see [How access works](access.md).
 
 - [How a connection is decided](#how-a-connection-is-decided)
 - [Hosts](#hosts)
