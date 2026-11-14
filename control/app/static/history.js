@@ -15,7 +15,7 @@
     <div id="hiDiffOut" class="diff hidden" role="region" aria-label="Changes between the versions" tabindex="-1"></div>
     <div class="table-wrap"><table class="history"><thead><tr><th>Version</th><th>When</th><th>By</th><th>What</th>
       <th>Mode</th><th>Rules</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="hiBody"></tbody></table></div>
-    <button id="hiMore" class="small secondary">Older versions</button>
+    <button id="hiMore" class="small secondary">Load older</button>
     <h4>Export and import</h4>
     <p class="hint">One YAML file with the policy and the grants defined in the UI, to move a setup to another host
       or share it as a starting point. Secrets are not included. An import is checked like a normal policy change and

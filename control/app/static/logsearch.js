@@ -95,7 +95,7 @@
       <th>Action</th><th>Reason</th></tr></thead><tbody>${rows.map((e) => `<tr><td>${esc(fmtDate(e.ts))}</td><td>${esc(e.kind)}</td>
       <td>${e.host && e.kind !== "admin" && e.kind !== "grant" ? destButton(e.host, e.port) : `<code>${esc(dest(e))}</code>`}</td>
       <td class="a-${esc(e.action)}">${esc(e.action)}</td><td>${esc(e.reason)}</td></tr>`).join("")}</tbody></table></div>
-      ${more ? '<button id="lsMore" type="button" class="small secondary">More</button>' : ""}`;
+      ${more ? '<button id="lsMore" type="button" class="small secondary">Load older</button>' : ""}`;
     if (more) $("#lsMore").onclick = guard(() => search(true));
   }
   function renderDests(list) {

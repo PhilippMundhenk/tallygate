@@ -151,6 +151,7 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   on the emergency stop and on restart (#69).
 
 ### Changed
+- **Accessibility:** the filled buttons now meet WCAG AA contrast (the blue and red were 3.7:1 with white text; now 5.2:1 and 4.8:1), the Log tab shows an empty state instead of a bare table, the upgrade-command copy box is a labelled button for screen readers, the keyboard help matches the "Allow once" label, and "load the next page" reads *Load older* everywhere (#143).
 - **One `never` list in the gateway config** replaces `hard_deny_floor` and `grants_never`: a plain range is
   closed for every connection; `{range, scope: all+lan}` is closed for LAN grants too. The old keys still
   work and are read as `never` (`grants_never` entries now also close every connection, not only grants); the

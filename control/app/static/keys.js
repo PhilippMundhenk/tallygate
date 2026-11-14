@@ -1,6 +1,6 @@
 "use strict";
 /* Keyboard shortcuts, compact approval list and sound (#79).
-   Keys (on the Approvals tab): j / k select the next / previous request, a allow 2 min (approve a grant request),
+   Keys (on the Approvals tab): j / k select the next / previous request, a Allow once / 2 min (approve a grant request),
    h allow 1 h, d deny, ? shows the keys (anywhere). Single-key shortcuts can be switched off (WCAG 2.1.4). Settings
    are kept in this browser only (localStorage). */
 const KEY_SETTINGS = { keys: true, compact: false, sound: false };
@@ -8,7 +8,7 @@ const keyStore = {
   get(k) { try { const v = localStorage.getItem("tallygate." + k); return v === null ? KEY_SETTINGS[k] : v === "1"; } catch { return KEY_SETTINGS[k]; } },
   set(k, v) { try { localStorage.setItem("tallygate." + k, v ? "1" : "0"); } catch { /* private mode: not kept */ } },
 };
-const KEYS = [["j", "next request"], ["k", "previous request"], ["a", "allow 2 min (grant request: approve)"],
+const KEYS = [["j", "next request"], ["k", "previous request"], ["a", "Allow once / 2 min (grant request: approve)"],
   ["h", "allow 1 h"], ["d", "deny"], ["?", "show these keys"], ["Esc", "close this list"]];
 
 (() => {

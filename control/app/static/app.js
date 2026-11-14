@@ -206,8 +206,21 @@ async function loadLog(older = false) {
   rows.forEach((e) => addLogRow(e, !older));  // "Load older" may grow the table beyond 2000
   logLoaded = true;
   if (older && !rows.length) toast("No older events");
+  const empty = !$("#logBody").children.length;
+  $("#logEmpty").textContent = anyLogFilter() ? "No events match the filter." : "No events yet.";
+  $("#logEmpty").classList.toggle("hidden", !empty);
 }
-["#logFilter", "#logHideDns", "#logOnlyBlocked"].forEach((s) => $(s).addEventListener("input", () => $$("#logBody tr").forEach(applyLogFilter)));
+function anyLogFilter() {
+  return $("#logFilter").value.trim() || $("#logHideDns").checked || $("#logOnlyBlocked").checked;
+}
+["#logFilter", "#logHideDns", "#logOnlyBlocked"].forEach((s) =>
+  $(s).addEventListener("input", () => {
+    $$("#logBody tr").forEach(applyLogFilter);
+    const visible = $$("#logBody tr").some((r) => !r.classList.contains("hidden"));
+    $("#logEmpty").textContent = anyLogFilter() ? "No events match the filter." : "No events yet.";
+    $("#logEmpty").classList.toggle("hidden", visible || !logLoaded);
+  }),
+);
 $("#logMore").onclick = guard(() => loadLog(true));
 
 /* ---------------- rules ---------------- */

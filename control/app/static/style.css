@@ -13,8 +13,8 @@ main{padding:16px;max-width:1300px;margin:0 auto}
 h2{font-size:17px;margin:4px 0 8px}h3{font-size:14px;margin:0 0 8px}
 .hint{color:var(--muted);font-size:13px;margin:4px 0 12px}.muted{color:var(--muted)}.hidden{display:none!important}
 .badge{background:var(--amber);color:#000;border-radius:10px;padding:0 6px;font-size:12px;margin-left:4px}
-button{background:var(--blue);color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer;font:inherit}
-button.secondary{background:#2c313c}button.danger{background:var(--red)}button.small{padding:3px 8px;font-size:12px}
+button{background:#2563eb;color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer;font:inherit}
+button.secondary{background:#2c313c}button.danger{background:#dc2626}button.small{padding:3px 8px;font-size:12px}
 input,select,textarea{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font:inherit}
 textarea{width:100%;font-family:ui-monospace,monospace;font-size:12px;margin:8px 0}
 label{display:block;margin:6px 0;color:var(--muted)}label select,label input{display:block;margin-top:4px}
