@@ -245,6 +245,11 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   (#17, #18).
 
 ### Fixed
+- **Docs read-through** after the rework (#99): the user guide, rules and grants guides, API reference and
+  configuration reference now describe the single **Destinations** tab (the Rules tab was folded in), the
+  `/destinations` API (the old `/rules`/`/grants` CRUD is gone) and the `destinations:` config form. Added
+  `docs/screenshots.md` with a caption per surface; `rules.png` → `destinations.png`. The screenshot images
+  themselves still need a retake on a host with neutral demo data.
 - **Accessibility review** of the control UI (#143): data tables mark their header cells with `scope="col"` for
   screen readers, and the mobile navigation drawer honours `prefers-reduced-motion`. The review confirmed the
   rest is already WCAG AA — text contrast ≥ 4.5:1, a visible focus outline, the sidebar/tabs follow the
