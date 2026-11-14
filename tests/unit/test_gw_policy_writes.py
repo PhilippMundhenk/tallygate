@@ -17,6 +17,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from egressgw import api, core
 from egressgw.core import Pending
+from egressgw.policy import Rule
 
 TOKEN = "t" * 32
 PRESETS = Path(__file__).resolve().parents[2] / "gateway" / "presets"
@@ -85,7 +86,7 @@ def test_patch_validates_and_changes_nothing_on_error(gw, body, error):
 
 def test_patch_changes_only_mode_and_timeout(gw):
     # a copy the browser loaded earlier knows only "ok"; rules added since must survive a mode change
-    admin(gw, "POST", "/rules", {"id": "new", "action": "allow", "host": "new.example"})
+    gw.policy.add_rule(Rule(action="allow", host="new.example", id="new"))
     gw.policy.remove_rule("ok")
     status, data = admin(gw, "PATCH", "/policy", {"default": "deny"})
     assert status == 200 and data["default"] == "deny" and [r["id"] for r in data["rules"]] == ["new"]

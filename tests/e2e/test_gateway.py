@@ -189,7 +189,7 @@ def test_api_requires_token(gateway):
 def test_policy_validation_rejects_garbage(gateway):
     status, data, _ = gateway["api"].call("PUT", "/policy", {"default": "maybe"})
     assert status == 400 and "invalid default" in data["error"]
-    status, _, _ = gateway["api"].call("POST", "/rules", {"action": "allow"})
+    status, _, _ = gateway["api"].call("POST", "/destinations", {"access": "allow"})
     assert status == 400
 
 
@@ -204,7 +204,7 @@ def test_preset_with_ttl(gateway):
     _, pol, _ = gateway["api"].call("GET", "/policy")
     rule = next(r for r in pol["rules"] if r["id"] == "open:web")
     assert rule["expires"] == data["expires"]
-    gateway["api"].call("DELETE", "/rules/open:web")
+    gateway["api"].call("DELETE", "/destinations/open:web")
 
 
 def test_policy_presets_cannot_be_merged_on_top(gateway):
@@ -222,15 +222,16 @@ def test_presets_never_take_over_or_remove_other_rules(gateway):
     mine = {"id": "pypi", "action": "allow", "host": "pypi.org", "port": 443}  # same id as the baseline rule
     taken = {"id": "python:files", "action": "deny", "host": "files.pythonhosted.org", "port": 443}
     for r in (mine, taken):
-        assert api.call("POST", "/rules", {**r, "top": False})[0] == 201
+        d = {"id": r["id"], "access": r["action"], "match": {"host": r["host"], "port": r["port"]}, "top": False}
+        assert api.call("POST", "/destinations", d)[0] == 201
     status, data, _ = api.call("POST", "/presets/python", {})
     assert status == 409 and "python:files" in data["error"]
-    api.call("DELETE", "/rules/python:files")
+    api.call("DELETE", "/destinations/python:files")
     assert api.call("POST", "/presets/python", {})[0] == 200
     assert api.call("DELETE", "/presets/python")[1] == {"removed": ["python:pypi", "python:files"]}
     _, pol, _ = api.call("GET", "/policy")
     assert any(r["id"] == "pypi" and "source" not in r for r in pol["rules"])
-    api.call("DELETE", "/rules/pypi")
+    api.call("DELETE", "/destinations/pypi")
 
 
 def test_applying_again_with_a_ttl_limits_the_templates_own_rules(gateway):

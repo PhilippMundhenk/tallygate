@@ -206,7 +206,7 @@ function logRow(e) {
     for (const [action, label, cls] of [["allow", "allow", "small"], ["deny", "deny", "small secondary"]]) {
       const b = document.createElement("button"); b.textContent = label; b.className = cls;
       b.onclick = guard(async () => {
-        await gw("POST", "/rules", { action, host: e.host, port: e.port, note: "from log" }); toast(`${action} rule added for ${dest}`);
+        await gw("POST", "/destinations", { access: action, match: { host: e.host, port: e.port }, note: "from log" }); toast(`${action} rule added for ${dest}`);
       });
       cell.appendChild(b);
     }
@@ -536,7 +536,7 @@ function renderGrants() {
       const e = document.createElement("button"); e.className = "small secondary"; e.textContent = "Edit"; e.onclick = () => openGrantEditor(d); btns.appendChild(e);
       const x = document.createElement("button"); x.className = "small danger"; x.textContent = "Delete";
       x.setAttribute("aria-label", `Delete grant ${d.name}`);
-      x.onclick = confirmClick(x, `Delete grant ${d.name}?`, async () => { await gw("DELETE", `/grants/${d.name}`); await loadGrants(); });
+      x.onclick = confirmClick(x, `Delete grant ${d.name}?`, async () => { await gw("DELETE", `/destinations/grant/${d.name}`); await loadGrants(); });
       btns.appendChild(x);
     }
     defs.appendChild(el);
@@ -656,7 +656,7 @@ $("#geSave").onclick = guard(async () => {
     return t;
   });
   const body = { description: $("#geDesc").value.trim(), levels, approval, default_ttl: $("#geTtl").value.trim(), max_ttl: $("#geMaxTtl").value.trim(), targets };
-  await gw("PUT", `/grants/${encodeURIComponent(name)}`, body);
+  await gw("PUT", `/destinations/grant/${encodeURIComponent(name)}`, body);
   $("#grantEditor").classList.add("hidden"); toast(`Grant ${name} saved`); await loadGrants();
 });
 

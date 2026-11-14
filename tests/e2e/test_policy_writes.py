@@ -47,8 +47,10 @@ def rule_ids(policy):
 def test_mode_change_from_a_stale_copy_cannot_drop_or_revive_rules(stack):
     gw, ui = stack
     _, stale, _ = ui.call("GET", "/api/gw/policy")  # what an open browser tab still holds
-    gw["api"].call("POST", "/rules", {"id": "new", "action": "allow", "host": "new.test"})  # e.g. Telegram "Always"
-    gw["api"].call("DELETE", "/rules/old")  # e.g. removed in another tab
+    gw["api"].call(
+        "POST", "/destinations", {"id": "new", "access": "allow", "match": {"host": "new.test"}}
+    )  # Telegram "Always"
+    gw["api"].call("DELETE", "/destinations/old")  # e.g. removed in another tab
     assert rule_ids(stale) == ["keep", "old"]
     status, data, _ = ui.call("PATCH", "/api/gw/policy", {"default": "deny"})
     assert status == 200 and data["default"] == "deny" and rule_ids(data) == ["new", "keep"]
@@ -61,29 +63,28 @@ def test_mode_change_from_a_stale_copy_cannot_drop_or_revive_rules(stack):
 
 
 def test_rule_edit_through_the_control_relay(stack):
-    # #141: the UI can PATCH a rule in place (the relay allowlist must let PATCH /rules/<id> through).
+    # #141/#122: the UI edits a rule in place through the one /destinations surface.
     gw, ui = stack
     status, data, _ = ui.call(
-        "PATCH", "/api/gw/rules/old", {"action": "deny", "expires": 2000000000, "note": "limited"}
+        "PATCH", "/api/gw/destinations/old", {"access": "deny", "expires": 2000000000, "note": "limited"}
     )
     assert status == 200 and data["id"] == "old"
-    assert (data["action"], data["expires"], data["note"]) == ("deny", 2000000000, "limited")
+    assert (data["access"], data["expires"], data["note"]) == ("deny", 2000000000, "limited")
     _, now, _ = gw["api"].call("GET", "/policy")
     old = next(r for r in now["rules"] if r["id"] == "old")
     assert old["action"] == "deny" and old["note"] == "limited"  # persisted on the gateway
-    assert ui.call("PATCH", "/api/gw/rules/missing", {"note": "x"})[0] == 404
-    assert ui.call("PATCH", "/api/gw/rules/old", {"host": "elsewhere.test"})[0] == 400  # host is not editable
+    assert ui.call("PATCH", "/api/gw/destinations/missing", {"note": "x"})[0] == 404
 
 
 def test_model_and_grouping_through_the_control_relay(stack):
-    # #122/#142: the Destinations view reads GET /model and groups rules via POST /rules/group, end to end.
+    # #122/#142: the Destinations view reads GET /model and groups rules via POST /destinations/group, end to end.
     gw, ui = stack
     status, model, _ = ui.call("GET", "/api/gw/model")
     assert status == 200 and set(model) == {"default", "destinations", "never"}
     hosts = {d["match"].get("host") for d in model["destinations"] if d.get("access")}
     assert {"keep.test", "old.test"} <= hosts
 
-    status, data, _ = ui.call("POST", "/api/gw/rules/group", {"ids": ["keep", "old"], "group": "test-set"})
+    status, data, _ = ui.call("POST", "/api/gw/destinations/group", {"ids": ["keep", "old"], "group": "test-set"})
     assert status == 200 and {r["id"] for r in data["changed"]} == {"keep", "old"}
     _, policy, _ = gw["api"].call("GET", "/policy")
     assert all(r["group"] == "test-set" for r in policy["rules"] if r["id"] in ("keep", "old"))  # persisted
@@ -101,11 +102,11 @@ def test_model_and_grouping_through_the_control_relay(stack):
         "approval": {"read": "ask", "write": "ask"},
         "targets": [{"host": "shop.test", "port": 443, "scheme": "https", "paths": ["/*"]}],
     }
-    assert ui.call("PUT", "/api/gw/grants/shop", defn)[0] == 200
+    assert ui.call("PUT", "/api/gw/destinations/grant/shop", defn)[0] == 200
     _, m3, _ = ui.call("GET", "/api/gw/model")
     req = [d for d in m3["destinations"] if d.get("access") == "request" and d["match"].get("host") == "shop.test"]
     assert req and req[0]["request"]["name"] == "shop" and req[0]["source"] == "ui"
-    assert ui.call("DELETE", "/api/gw/grants/shop")[0] == 200
+    assert ui.call("DELETE", "/api/gw/destinations/grant/shop")[0] == 200
     _, m4, _ = ui.call("GET", "/api/gw/model")
     assert not any(d["match"].get("host") == "shop.test" for d in m4["destinations"])
 

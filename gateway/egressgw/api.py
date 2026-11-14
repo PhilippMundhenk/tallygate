@@ -85,54 +85,15 @@ def build_app(gw: Gateway) -> web.Application:
         by = str(body.get("by", "api") if isinstance(body, dict) else "api")[:64]
         return _json(emergency_stop(gw, by))
 
-    @routes.post("/rules")
-    async def add_rule(request):
-        body = await request.json()
-        top = bool(body.pop("top", True))
-        rule = gw.policy.add_rule(Rule.from_dict(body), top=top)
-        gw.save_policy(_by(request), f"rule {rule.id} added ({rule.action} {rule.host or rule.cidr})")
-        gw.record(kind="admin", action="rule+", host=rule.host or rule.cidr, reason=json.dumps(rule.to_dict()))
-        return _json(rule.to_dict(), 201)
-
-    @routes.post("/rules/group")
-    async def group_rules(request):
-        body = await request.json()
-        ids = body.get("ids")
-        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
-            raise ValueError("expected {ids: [rule id, ...], group: name}")
-        changed = gw.policy.set_group(ids, str(body.get("group", "")))
-        name = str(body.get("group", ""))
-        gw.save_policy(
-            _by(request), f"{len(changed)} rules grouped as {name!r}" if name else f"{len(changed)} rules ungrouped"
-        )
-        gw.record(kind="admin", action="rule~", reason=f"group {name!r}: {[r.id for r in changed]}")
-        return _json({"group": name, "changed": [r.to_dict() for r in changed]})
-
-    @routes.patch("/rules/{rid}")
-    async def edit_rule(request):
-        rule = gw.policy.update_rule(request.match_info["rid"], await request.json())
-        if rule is None:
-            return _json({"error": "not found"}, 404)
-        gw.save_policy(_by(request), f"rule {rule.id} edited ({rule.action} {rule.host or rule.cidr})")
-        gw.record(kind="admin", action="rule~", host=rule.host or rule.cidr, reason=json.dumps(rule.to_dict()))
-        return _json(rule.to_dict())
-
-    @routes.delete("/rules/{rid}")
-    async def del_rule(request):
-        rid = request.match_info["rid"]
-        if not gw.policy.remove_rule(rid):
-            return _json({"error": "not found"}, 404)
-        gw.save_policy(_by(request), f"rule {rid} removed")
-        gw.record(kind="admin", action="rule-", reason=f"rule {rid} removed")
-        return _json({"ok": True})
-
-    # ---- destinations: one CRUD surface over rules and on-request grants (ADR-0014) ----
+    # ---- destinations: the one CRUD surface over rules and on-request grants (ADR-0014) ----
     # An access destination (allow/ask/deny) is a policy rule; a `request` destination is a grant, addressed
-    # by the id `grant:<name>`. Properties-only destinations come from the read-only config and are not editable.
+    # by the id `grant:<name>` and its full definition via PUT /destinations/grant/{name}. The old per-mechanism
+    # routes (/rules*, PUT/DELETE /grants) are gone; properties come from the read-only config and are not
+    # editable here. The approval flow and presets still add rules in-process (not through this surface).
     def _rule_from_destination(d) -> Rule:
         return Rule(
             action=d.access, host=d.match.host, cidr=d.match.cidr, port=d.match.port,
-            note=d.note, expires=d.expires, group=d.group,
+            note=d.note, expires=d.expires, group=d.group, **({"id": d.id} if d.id else {}),
         )  # fmt: skip
 
     def _grant_from_destination(D, d):
@@ -224,6 +185,27 @@ def build_app(gw: Gateway) -> web.Application:
             return _json({"error": "not found"}, 404)
         gw.save_policy(_by(request), f"rule {did} removed")
         gw.record(kind="admin", action="rule-", reason=f"rule {did} removed")
+        return _json({"ok": True})
+
+    @routes.put("/destinations/grant/{name}")
+    async def put_grant_destination(request):
+        """Create or replace an on-request destination (a grant) from its full definition (targets, levels,
+        approval, durations). This is the grant-definition half of the one destinations surface."""
+        name = request.match_info["name"]
+        g = gw.grants.upsert_ui(name, await request.json())
+        gw.record(kind="admin", action="grant", host=name, reason=f"grant {name} defined via API")
+        gw.publish({"type": "grants"})
+        return _json(g.to_dict())
+
+    @routes.delete("/destinations/grant/{name}")
+    async def del_grant_destination(request):
+        name = request.match_info["name"]
+        try:
+            gw.grants.delete_ui(name)
+        except KeyError:
+            return _json({"error": "not found"}, 404)
+        gw.record(kind="admin", action="grant", host=name, reason=f"grant {name} deleted via API")
+        gw.publish({"type": "grants"})
         return _json({"ok": True})
 
     @routes.post("/presets/{name}")
@@ -610,22 +592,6 @@ def build_app(gw: Gateway) -> web.Application:
                 "auto_suspended": g.auto_suspended,
             }
         )
-
-    @routes.put("/grants/{name}")
-    async def put_grant(request):
-        name = request.match_info["name"]
-        d = gw.grants.upsert_ui(name, await request.json())
-        gw.record(kind="admin", action="grant", host=name, reason=f"grant {name} defined/changed via API")
-        gw.publish({"type": "grants"})
-        return _json(d.to_dict())
-
-    @routes.delete("/grants/{name}")
-    async def delete_grant(request):
-        name = request.match_info["name"]
-        gw.grants.delete_ui(name)
-        gw.record(kind="admin", action="grant", host=name, reason=f"grant {name} deleted via API")
-        gw.publish({"type": "grants"})
-        return _json({"deleted": name})
 
     @routes.post("/grants/{name}/activate")
     async def activate_grant(request):

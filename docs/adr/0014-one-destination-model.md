@@ -239,9 +239,12 @@ Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is
   now the slim flow surface** (active grants + secrets; connection/grant requests remain under Approvals).
   The Destinations table lists rules and file properties; on-request destinations (grants) are managed in the
   grant section below it.
-- Open: removing the old per-mechanism API routes (`/rules*`, `/grants*`, ...) — kept for now because they are
-  used pervasively by the approval flow, the agent and the tests, and the enforcement path is already unified;
-  migrating the gateway's own state files (`policy.yaml`/`grants.yaml`) to the destinations form with
+- 2026-11-14: the old per-mechanism CRUD routes are gone. `POST`/`PATCH`/`DELETE /rules`, `POST /rules/group`
+  and `PUT`/`DELETE /grants` are removed; the UI, the availability view and the log "allow/deny from here"
+  all go through `/destinations` (and `PUT`/`DELETE /destinations/grant/{name}` for grant definitions). The
+  approval flow and presets still add rules in-process (never through the API). `GET /rules/stats`,
+  `/rules/cleanup`, `GET /grants`, `/grants/{name}/activate` and the grant-flow routes stay.
+- Open: migrating the gateway's own state files (`policy.yaml`/`grants.yaml`) to the destinations form with
   `*.pre-0014` backups.
 
 ## Consequences

@@ -112,27 +112,23 @@ def test_every_policy_change_is_a_version_with_who_and_what(gw):  # noqa: F811
     first = gw.history.versions()
     assert len(first) == 1 and first[0]["by"] == "gateway" and first[0]["what"] == "policy at gateway start"
     app = api.build_app(gw)
-    assert (
-        call(
-            app,
-            "POST",
-            "/rules",
-            {"id": "n", "action": "allow", "host": "n.example"},
-            headers={"X-Tallygate-By": "web:admin"},
-        )[0]
-        == 201
-    )
+    status, created = call(
+        app, "POST", "/destinations", {"match": {"host": "n.example"}, "access": "allow"},
+        headers={"X-Tallygate-By": "web:admin"},
+    )  # fmt: skip
+    assert status == 201
+    rid = created["id"]
     assert admin(gw, "PATCH", "/policy", {"default": "deny"})[0] == 200
-    assert admin(gw, "DELETE", "/rules/n")[0] == 200
+    assert admin(gw, "DELETE", f"/destinations/{rid}")[0] == 200
     vs = admin(gw, "GET", "/policy/history?limit=10")[1]
     assert vs["keep"] == 500
     assert [(v["by"], v["what"]) for v in vs["versions"][:3]] == [
-        ("api", "rule n removed"),
+        ("api", f"rule {rid} removed"),
         ("api", "mode deny, approval timeout 60 s"),
-        ("web:admin", "rule n added (allow n.example)"),
+        ("web:admin", f"rule {rid} added (allow n.example)"),
     ]
     one = admin(gw, "GET", f"/policy/history/{vs['versions'][2]['id']}")[1]
-    assert [r["id"] for r in one["policy"]["rules"]] == ["n", "ok"] and "hard_deny_floor" not in one["policy"]
+    assert [r["id"] for r in one["policy"]["rules"]] == [rid, "ok"] and "hard_deny_floor" not in one["policy"]
     assert admin(gw, "GET", "/policy/history/999") == (404, {"error": "no policy version 999"})
 
 

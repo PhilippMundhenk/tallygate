@@ -84,6 +84,12 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - CI: actions pinned to commit SHAs, base images by digest, gitleaks secret scan, Trivy image scan (#18).
 
 ### Added
+- **One management surface** (ADR-0014): the old per-mechanism API routes are removed — `POST`/`PATCH`/`DELETE
+  /rules`, `POST /rules/group` and `PUT`/`DELETE /grants` are gone. Rules and on-request destinations are
+  created, edited, deleted and grouped through one surface: `POST`/`PATCH`/`DELETE /destinations`,
+  `POST /destinations/group` and `PUT`/`DELETE /destinations/grant/{name}`, with `GET /model` as the single
+  read. The approval flow and presets are unchanged (they add rules in-process). **Breaking** for any external
+  script that called the old routes.
 - **One destination model** (ADR-0014, in progress): the gateway config accepts a single `destinations:`
   list — each entry a match plus its properties (access, methods, paths, credentials, repository scope,
   `request` grants, scheme/lan/tls) — as an alternative to the separate `readonly`, `inject`, `github_repos`
