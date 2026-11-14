@@ -300,7 +300,17 @@ def translate(gw: Gateway) -> Model:
                 )
             )
 
-    # Properties only (from the read-only config file): read-only hosts, repositories, credentials.
+    # Properties only, from the read-only config file: read-only hosts, repositories, credentials.
+    dests += file_destinations(gw)
+
+    return Model(destinations=dests, default=gw.policy.default, never=_never(gw))
+
+
+def file_destinations(gw: Gateway) -> list[Destination]:
+    """The properties-only destinations from the read-only gateway config (read-only hosts, repository scope,
+    credentials). They carry no `access`: they add limits to whatever host matches, as `readonly`/`inject`/
+    `github_repos` do today. The config is read-only at runtime, so this is stable and can be built once."""
+    dests: list[Destination] = []
     for ro in gw.readonly:
         dests.append(
             Destination(
@@ -322,8 +332,7 @@ def translate(gw: Gateway) -> Model:
                 source="file",
             )
         )
-
-    return Model(destinations=dests, default=gw.policy.default, never=_never(gw))
+    return dests
 
 
 def _never(gw: Gateway) -> list[dict]:

@@ -12,35 +12,35 @@ the merge of read-only, repository and credential properties first.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
 from egressgw.model import Limits
 from egressgw.policy import host_matches
 
-if False:  # typing only, no runtime import cycle
-    from egressgw.destinations import Model
+if TYPE_CHECKING:
+    from egressgw.destinations import Destination
 
 _READONLY_METHODS = ("no-writes", "no-writes+post")
 
 
-def host_limits(model: Model, host: str, strip_headers: list[str]) -> Limits:
-    """The limits a destination has by itself, computed from the model's property-only entries (access is
-    None): read-only methods, repository scope and credential injection. Mirrors `Access.host_limits`.
+def host_limits(dests: Iterable[Destination], host: str, strip_headers: list[str]) -> Limits:
+    """The limits a destination has by itself, computed from the properties-only entries (access is None):
+    read-only methods, repository scope and credential injection. Mirrors the old `Access.host_limits`.
 
-    `host` is a checked name (an IP literal has no host limits). Entries are matched with the one matcher
-    (`host_matches`), so a non-wildcard host is an exact match and `*.example.com` covers its subdomains."""
+    `dests` are the file properties (`destinations.file_destinations`). `host` is a checked name (an IP
+    literal has no host limits). Entries are matched with the one matcher (`host_matches`), so a non-wildcard
+    host is an exact match and `*.example.com` covers its subdomains."""
+    dests = [d for d in dests if d.access is None]
     lim = Limits(host=host, add_needs_https_host=True)
 
-    ro = next(
-        (d for d in model.destinations if d.access is None and d.methods in _READONLY_METHODS and _matches(d, host)),
-        None,
-    )
+    ro = next((d for d in dests if d.methods in _READONLY_METHODS and _matches(d, host)), None)
     if ro is not None:
         lim.no_writes, lim.post_is_write, lim.read_posts = True, ro.methods == "no-writes+post", tuple(ro.read_paths)
 
-    lim.repos = any(d.repos and d.access is None and _matches(d, host) for d in model.destinations)
+    lim.repos = any(d.repos and _matches(d, host) for d in dests)
 
-    creds = [
-        c for d in model.destinations if d.access is None and d.credentials and _matches(d, host) for c in d.credentials
-    ]
+    creds = [c for d in dests if d.credentials and _matches(d, host) for c in d.credentials]
     if creds:
         own = tuple(header for header, _ in creds)
         lim.strip = (*own, *strip_headers)

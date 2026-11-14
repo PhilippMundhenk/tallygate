@@ -29,7 +29,7 @@ from mitmproxy import ctx, dns, http, tls
 from mitmproxy.net.dns import response_codes
 from mitmproxy.proxy import server_hooks
 
-from egressgw import api
+from egressgw import api, destinations
 from egressgw.activity import Activity
 from egressgw.availability import Availability, Unavailable
 from egressgw.github import RepoScope
@@ -241,6 +241,9 @@ class Gateway:
         self.readonly = parse_readonly(self.config.get("readonly") or [])
         self.github = RepoScope(self.config)  # github_repos (#78); an invalid entry stops the gateway
         self.strip_headers = [str(h) for h in self.config.get("inject_strip_headers") or ["Authorization", "Cookie"]]
+        # the read-only config's destination properties as one model (ADR-0014); built once, the config does
+        # not change at runtime. A destination's own request limits are decided from this (decide.host_limits).
+        self.file_model = destinations.file_destinations(self)
         self.max_pending = int(self.config.get("max_pending", 10))
         # rule usage (#70): matches per rule id since the last flush to the event log, as [count, last ts]
         self.hits: dict[str, list] = {}
