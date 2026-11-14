@@ -90,6 +90,10 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   and `grants` keys. The two forms are not mixed in one file. `python -m egressgw.convert <config>` rewrites a
   config in the new form. Access rules and the mode stay in the policy; the gateway reads either form with no
   change in behaviour (#122).
+- **Destinations tab** (ADR-0014): one place that lists every destination — access rules, on-request grants,
+  read-only hosts, credentials and repository scope — from a new `GET /model`. Access rules are added, edited,
+  deleted and grouped here; grants open on the Grants tab; config-file properties are shown read-only. The
+  first step of folding the separate Rules and Grants editing into one surface (#122).
 - **Group rules into a named set** in the Rules tab: tick several rules, name a set and group them, so related
   allows (e.g. all the used-car shops) are shown and managed together. A rule's group is editable like its
   other fields and round-trips in the destination model (#142).

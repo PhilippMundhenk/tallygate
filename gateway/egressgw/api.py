@@ -607,6 +607,14 @@ def build_app(gw: Gateway) -> web.Application:
 
         return _json(access.overview(gw))
 
+    @routes.get("/model")
+    async def destination_model(_):
+        """The whole configuration as one destination model (ADR-0014): every destination with its properties,
+        the mode and the never list. The single source for the Destinations view."""
+        from egressgw import destinations
+
+        return _json(destinations.translate(gw).to_dict())
+
     @routes.get("/never-reachable")
     async def never_reachable(_):
         return _json(gw.never_reachable())
