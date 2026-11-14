@@ -51,6 +51,76 @@ def gw(tmp_path, monkeypatch):
     return core.Gateway()
 
 
+def build_gw(d, monkeypatch, config, policy=None):
+    d.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(core, "DATA_DIR", d)
+    monkeypatch.setattr(core, "CONFIG_PATH", d / "config.yaml")
+    monkeypatch.setattr(core, "STATIC_HOSTS", {})
+    (d / "config.yaml").write_text(yaml.safe_dump(config))
+    (d / "policy.yaml").write_text(yaml.safe_dump(policy or {"default": "ask", "rules": []}))
+    return core.Gateway()
+
+
+OLD_KEYS = {
+    "readonly": ["ro.example", {"host": "*.oci.example", "post_is_write": True, "read_posts": ["/q/*"]}],
+    "inject": [{"host": "api.example", "header": "X-Token", "value": "Bearer ${t}"}],
+    "github_repos": ["me/app"],
+    "github_hosts": ["git.example"],
+    "github_graphql": True,
+    "grants": {
+        "ha": {
+            "targets": [{"host": "ha.example", "port": 443, "paths": ["/api/*"]}],
+            "levels": ["read", "write"],
+            "approval": {"read": "auto", "write": "ask"},
+            "inject": [{"host": "ha.example", "header": "X-HA", "value": "${t}"}],
+        }
+    },
+}
+
+
+def test_a_destinations_config_loads_like_the_old_keys(tmp_path, monkeypatch):
+    from egressgw import convert
+
+    new, _ = convert.convert(OLD_KEYS)  # the same config in the destinations form
+    assert "destinations" in new and not any(k in new for k in config_keys())
+
+    a = build_gw(tmp_path / "a", monkeypatch, OLD_KEYS)
+    b = build_gw(tmp_path / "b", monkeypatch, new)
+
+    assert {r.host: (r.post_is_write, r.read_posts) for r in a.readonly} == {
+        r.host: (r.post_is_write, r.read_posts) for r in b.readonly
+    }
+    assert sorted(a.inject, key=str) == sorted(b.inject, key=str)
+    assert (set(a.github.patterns), a.github.hosts, a.github.graphql) == (
+        set(b.github.patterns),
+        b.github.hosts,
+        b.github.graphql,
+    )
+    ga, gb = a.grants.defs["ha"], b.grants.defs["ha"]
+    assert (ga.levels, ga.approval, ga.default_ttl, ga.max_ttl) == (gb.levels, gb.approval, gb.default_ttl, gb.max_ttl)
+    assert [t.to_dict() for t in ga.targets] == [t.to_dict() for t in gb.targets] and ga.inject == gb.inject
+    for host in ("ro.example", "x.oci.example", "api.example", "git.example", "other.example"):
+        assert b.access.host_limits(host) == a.access.host_limits(host), host
+
+
+def test_destinations_cannot_be_mixed_with_old_keys(tmp_path, monkeypatch):
+    cfg = {"destinations": [{"match": {"host": "a.example"}, "methods": "no-writes"}], "readonly": ["b.example"]}
+    with pytest.raises(ValueError, match="cannot be combined with the old keys"):
+        build_gw(tmp_path, monkeypatch, cfg)
+
+
+def test_access_rules_are_refused_in_the_gateway_config(tmp_path, monkeypatch):
+    cfg = {"destinations": [{"match": {"host": "a.example"}, "access": "allow"}]}
+    with pytest.raises(ValueError, match="belong in the policy"):
+        build_gw(tmp_path, monkeypatch, cfg)
+
+
+def config_keys():
+    from egressgw.destinations import CONFIG_KEYS
+
+    return CONFIG_KEYS
+
+
 def by_match(model, host=None, cidr=None, port=None):
     """The destinations whose match names this host/cidr (and port, if given), in model order."""
     out = []

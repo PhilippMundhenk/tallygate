@@ -84,6 +84,12 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - CI: actions pinned to commit SHAs, base images by digest, gitleaks secret scan, Trivy image scan (#18).
 
 ### Added
+- **One destination model** (ADR-0014, in progress): the gateway config accepts a single `destinations:`
+  list — each entry a match plus its properties (access, methods, paths, credentials, repository scope,
+  `request` grants, scheme/lan/tls) — as an alternative to the separate `readonly`, `inject`, `github_repos`
+  and `grants` keys. The two forms are not mixed in one file. `python -m egressgw.convert <config>` rewrites a
+  config in the new form. Access rules and the mode stay in the policy; the gateway reads either form with no
+  change in behaviour (#122).
 - **How access works** (`docs/access.md`): the access model on one page — never reachable, on request, rules,
   everything else, the limits inside a destination, who decides what, and why some settings are file-only
   (#121).
