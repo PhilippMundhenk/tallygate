@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from egressgw import history, learning, usage
-from egressgw.policy import ACTIONS, SCOPES, Decision, Policy, Rule, is_ip, load_preset, valid_hostname
+from egressgw.policy import ACTIONS, SCOPES, Decision, Policy, Rule, clamp_ttl, is_ip, load_preset, valid_hostname
 from egressgw.store import summarize
 
 if TYPE_CHECKING:
@@ -293,10 +293,18 @@ def build_app(gw: Gateway) -> web.Application:
         scope = body.get("scope")
         if scope not in SCOPES:
             return _json({"error": f"scope must be one of {list(SCOPES)}"}, 400)
+        ttl = body.get("ttl")
+        if ttl is not None:
+            try:  # a ttl, if present, must be a valid integer whatever the scope (#173)
+                ttl = clamp_ttl(ttl)
+            except ValueError as e:
+                return _json({"error": str(e)}, 400)
         try:
-            res = gw.answer(request.match_info["pid"], scope, str(body.get("by", "api"))[:64])
+            res = gw.answer(request.match_info["pid"], scope, str(body.get("by", "api"))[:64], ttl)
         except KeyError:
             return _json({"error": "no such pending request (already decided or timed out)"}, 404)
+        except ValueError as e:  # e.g. scope "allow" without a ttl, or a host with no registrable domain
+            return _json({"error": str(e)}, 400)
         return _json(res)
 
     @routes.post("/test")

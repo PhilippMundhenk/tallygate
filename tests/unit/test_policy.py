@@ -8,8 +8,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gateway"))
 
 from egressgw.policy import (
     DEFAULT_HARD_DENY,
+    TTL_MAX,
+    TTL_MIN,
     Policy,
     Rule,
+    clamp_ttl,
     host_matches,
     load_preset,
     registrable_domain,
@@ -87,6 +90,59 @@ def test_approval_scopes():
     assert registrable_domain("a.b.example.co.uk") == "example.co.uk"
     with pytest.raises(ValueError):
         rule_for_approval("x.org", 443, "bogus")
+
+
+def test_clamp_ttl_validates_and_clamps():
+    assert clamp_ttl(3600) == 3600
+    assert clamp_ttl(TTL_MIN) == TTL_MIN and clamp_ttl(TTL_MAX) == TTL_MAX
+    assert clamp_ttl(1) == TTL_MIN  # below the floor -> 1 minute
+    assert clamp_ttl(TTL_MAX + 9999) == TTL_MAX  # above the ceiling -> 30 days
+    for bad in ("3600", 3600.0, True, False, None, [60]):
+        with pytest.raises(ValueError, match="ttl must be an integer"):
+            clamp_ttl(bad)
+
+
+def test_custom_duration_allow_installs_a_temporary_rule():
+    before = time.time()
+    r = rule_for_approval("host.example", 443, "allow", ttl=1800)
+    assert r.action == "allow" and r.host == "host.example" and r.source == "approval"
+    assert r.expires is not None and 1800 - 2 <= r.expires - before <= 1800 + 2
+    # "allow" has no default lifetime, so it must be given a ttl
+    with pytest.raises(ValueError, match="requires a ttl"):
+        rule_for_approval("host.example", 443, "allow")
+
+
+def test_temporary_deny_rule_has_custom_or_default_expiry():
+    before = time.time()
+    r = rule_for_approval("block.example", 443, "deny", ttl=600)
+    assert r.action == "deny" and r.host == "block.example"
+    assert r.expires is not None and 600 - 2 <= r.expires - before <= 600 + 2
+    # no ttl keeps the unchanged 120 s default (still a temporary deny that may be re-asked)
+    r2 = rule_for_approval("block.example", 443, "deny")
+    assert r2.action == "deny" and r2.expires is not None and r2.expires - before <= 120 + 2
+
+
+def test_permanent_and_fixed_scopes_ignore_a_supplied_ttl():
+    # permanent scopes stay permanent even if a ttl is sent
+    for scope in ("always", "domain", "deny_always"):
+        host = "api.github.com" if scope == "domain" else "host.example"
+        assert rule_for_approval(host, 443, scope, ttl=600).expires is None
+    # once/hour keep their fixed durations (backward compat): a ttl does not move them
+    assert rule_for_approval("host.example", 443, "once", ttl=99999).expires - time.time() <= 120
+    assert 3600 - 5 <= rule_for_approval("host.example", 443, "hour", ttl=60).expires - time.time() <= 3600
+
+
+def test_temporary_deny_suppresses_reask_until_it_expires():
+    p = Policy()
+    p.default = "ask"
+    r = rule_for_approval("block.example", 443, "deny", ttl=600)
+    p.add_rule(r, top=True)
+    # while the rule is live the destination is denied, not re-asked
+    assert p.evaluate_name("block.example", 443).action == "deny"
+    # once it expires the rule no longer decides and the destination may be asked again
+    r.expires = time.time() - 1
+    assert p.evaluate_name("block.example", 443).action == "ask"
+    assert p.prune_expired() and p.rules == []
 
 
 def test_validation_rejects_garbage():

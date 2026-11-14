@@ -434,14 +434,30 @@ class Policy:
 
 
 # ---------- approvals ----------
+# Bounds for a caller-supplied approval duration (#173): 1 minute .. 30 days.
+TTL_MIN = 60
+TTL_MAX = 2_592_000
+
+
+def clamp_ttl(ttl: Any) -> int:
+    """Validate and clamp an approval ttl (whole seconds) to [TTL_MIN, TTL_MAX].
+
+    Only a plain integer is a ttl: bools (a bool is an int subclass), floats, strings and None are garbage
+    and raise ValueError, so the API answers them with 400 rather than silently coercing a typo."""
+    if not isinstance(ttl, int) or isinstance(ttl, bool):
+        raise ValueError("ttl must be an integer number of seconds")
+    return max(TTL_MIN, min(TTL_MAX, ttl))
+
+
 SCOPES = {
-    # scope: (action, ttl seconds or None, host pattern builder)
-    "once": ("allow", 120, "exact"),
-    "hour": ("allow", 3600, "exact"),
-    "always": ("allow", None, "exact"),
-    "domain": ("allow", None, "domain"),
-    "deny": ("deny", 120, "exact"),
-    "deny_always": ("deny", None, "exact"),
+    # scope: (action, default ttl seconds or None, host pattern builder, a caller ttl overrides the default)
+    "once": ("allow", 120, "exact", False),
+    "hour": ("allow", 3600, "exact", False),
+    "allow": ("allow", None, "exact", True),  # custom-duration allow: a ttl is required
+    "always": ("allow", None, "exact", False),
+    "domain": ("allow", None, "domain", False),
+    "deny": ("deny", 120, "exact", True),  # temporary deny: ttl optional, defaults to 120 s
+    "deny_always": ("deny", None, "exact", False),
 }
 
 
@@ -455,10 +471,18 @@ def registrable_domain(host: str) -> str | None:
     return _psl().privatesuffix(h)
 
 
-def rule_for_approval(host: str, port: int, scope: str) -> Rule:
+def rule_for_approval(host: str, port: int, scope: str, ttl: int | None = None) -> Rule:
+    """The rule a decision installs. `ttl` (seconds) sets a custom lifetime for the scopes that take one
+    (`allow`, `deny`); the fixed scopes (`once`, `hour`) and the permanent ones (`always`, `domain`,
+    `deny_always`) ignore it. `allow` has no default lifetime and so requires a ttl. A caller ttl is expected
+    to be already clamped (`clamp_ttl`); a temporary deny is a normal deny rule with an `expires`, so it
+    suppresses re-asking (the rule decides `deny`, not `ask`) until it expires and is pruned."""
     if scope not in SCOPES:
         raise ValueError(f"invalid scope {scope!r}")
-    action, ttl, kind = SCOPES[scope]
+    action, default_ttl, kind, ttl_overrides = SCOPES[scope]
+    ttl = ttl if (ttl_overrides and ttl is not None) else default_ttl
+    if scope == "allow" and ttl is None:
+        raise ValueError("scope 'allow' requires a ttl (seconds)")
     if is_ip(host):
         pattern_rule = Rule(action=action, cidr=str(ip_addr(host)), port=port)
     elif kind == "domain":
