@@ -106,7 +106,7 @@ function renderPolicy(pol) {
   if (!pol.ok) return step("st-policy", "info", esc(pol.e.message), "bad");
   const mode = pol.v.default;
   $$("#st-policy [data-policy]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.policy === mode)));
-  step("st-policy", "done", { ask: "Unknown destinations: you are asked.", deny: "Unknown destinations are blocked.", allow: "⚠ Unknown destinations are allowed (log only)." }[mode] || esc(mode));
+  step("st-policy", "done", { ask: "New destinations: you are asked each time.", deny: "New destinations are blocked.", allow: "⚠ New destinations are allowed (log only)." }[mode] || esc(mode));
 }
 
 function renderNotify(meta) {
@@ -204,7 +204,7 @@ $("#gitPreview").onclick = guard(async () => {
   const r = await api("GET", "/api/agent/setup/git-identity");
   if (!r.ok) {
     const hint = r.reason === "token" ? gotoBtn("st-gh", "Check the GitHub token")
-      : r.reason === "network" ? " Is <code>api.github.com</code> allowed? Check it under <i>Rules → Test a destination</i>." : "";
+      : r.reason === "network" ? " Is <code>api.github.com</code> allowed? Check it under <i>Destinations → Test a destination</i>." : "";
     return stepStatus("st-git", `✖ ${esc(r.message)}.${hint} Or enter it yourself below.`, "bad");
   }
   wz.preview = { name: r.name, email: r.email };
@@ -234,7 +234,7 @@ $$(".wizard [data-term]").forEach((b) => (b.onclick = () => openTerm(b.dataset.t
 $$("#st-policy [data-policy]").forEach((b) => (b.onclick = guard(async () => {
   await gw("PATCH", "/policy", { default: b.dataset.policy }); toast("Mode saved"); await loadWizard();
 })));
-// Learning mode is started on the Rules tab, where its time limit and what it opens are shown and confirmed.
+// Learning mode is started on the Quick start tab, where its time limit and what it opens are shown and confirmed.
 $("#wzLearn").onclick = () => { showTab("destinations"); const c = $("#learnCard"); c.scrollIntoView({ behavior: "smooth" }); c.focus(); };
 $("#wzTemplates").onclick = () => { showTab("destinations"); const t = $("#qaTemplates"); t.scrollIntoView({ behavior: "smooth" }); };
 
