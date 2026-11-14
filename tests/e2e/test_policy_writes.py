@@ -110,6 +110,42 @@ def test_model_and_grouping_through_the_control_relay(stack):
     assert not any(d["match"].get("host") == "shop.test" for d in m4["destinations"])
 
 
+def test_destinations_crud_through_the_control_relay(stack):
+    # ADR-0014: the Destinations tab uses one CRUD surface (POST/PATCH/DELETE /destinations) end to end.
+    gw, ui = stack
+    # add an access rule as a destination
+    status, d, _ = ui.call("POST", "/api/gw/destinations", {"match": {"host": "shop.test"}, "access": "allow"})
+    assert status == 201 and d["access"] == "allow"
+    rid = d["id"]
+    _, pol, _ = gw["api"].call("GET", "/policy")
+    assert any(r["id"] == rid and r["host"] == "shop.test" for r in pol["rules"])
+    # edit it through the same surface
+    assert ui.call("PATCH", f"/api/gw/destinations/{rid}", {"access": "deny", "note": "n"})[0] == 200
+    _, pol2, _ = gw["api"].call("GET", "/policy")
+    assert next(r for r in pol2["rules"] if r["id"] == rid)["action"] == "deny"
+    # add an on-request destination; it appears in /model as a ui request destination
+    req = {
+        "match": {"host": "svc2.test", "port": 443},
+        "access": "request",
+        "scheme": "https",
+        "request": {
+            "name": "svc2",
+            "levels": ["read"],
+            "approval": {"read": "ask"},
+            "default_ttl": 3600,
+            "max_ttl": 14400,
+        },
+    }
+    assert ui.call("POST", "/api/gw/destinations", req)[0] == 201
+    _, model, _ = ui.call("GET", "/api/gw/model")
+    assert any(x["match"].get("host") == "svc2.test" and x.get("id") == "grant:svc2" for x in model["destinations"])
+    # delete both through the surface
+    assert ui.call("DELETE", f"/api/gw/destinations/{rid}")[0] == 200
+    assert ui.call("DELETE", "/api/gw/destinations/grant:svc2")[0] == 200
+    _, model2, _ = ui.call("GET", "/api/gw/model")
+    assert not any(x["match"].get("host") in ("shop.test", "svc2.test") for x in model2["destinations"])
+
+
 def wait_for(fn, timeout=5.0):
     deadline = time.time() + timeout
     while time.time() < deadline:

@@ -81,12 +81,12 @@
       const actions = tr.lastElementChild;
       if (isRule(d)) {
         const e = mkbtn("edit", () => editRow(tr, d));
-        const del = mkbtn("delete", guard(async () => { await gw("DELETE", `/rules/${d.id}`); await load(); }));
+        const del = mkbtn("delete", guard(async () => { await gw("DELETE", `/destinations/${d.id}`); await load(); }));
         actions.append(e, del);
       } else if (d.access === "request") {
         actions.append(mkbtn("edit", () => showTab("grants")));  // multi-target / credential editing lives there
-        if (d.source === "ui" && d.request) {
-          actions.append(mkbtn("delete", guard(async () => { await gw("DELETE", `/grants/${d.request.name}`); await load(); })));
+        if (d.source === "ui" && d.id) {
+          actions.append(mkbtn("delete", guard(async () => { await gw("DELETE", `/destinations/${d.id}`); await load(); })));
         }
       } else {
         actions.innerHTML = '<span class="muted small-text">config file</span>';
@@ -121,7 +121,8 @@
         const t = tr.querySelector(".eT").value.trim();
         if (t) { if (!/^\d+$/.test(t) || +t <= 0) throw new Error("Expiry: whole seconds from now, or blank for permanent"); changes.expires = Date.now() / 1000 + +t; }
         else changes.expires = null;
-        await gw("PATCH", `/rules/${d.id}`, changes); toast("Rule updated"); await load();
+        const dest = { access: changes.action, match: { port: changes.port }, note: changes.note, group: changes.group, expires: changes.expires };
+        await gw("PATCH", `/destinations/${d.id}`, dest); toast("Rule updated"); await load();
       })),
       mkbtn("cancel", () => load()),
     );
@@ -134,7 +135,7 @@
     const ids = selectedIds();
     if (!ids.length) throw new Error("Tick one or more access rules first");
     if (name && !$("#dGroupName").value.trim()) throw new Error("Enter a group name");
-    await gw("POST", "/rules/group", { ids, group: name });
+    await gw("POST", "/destinations/group", { ids, group: name });
     toast(name ? `${ids.length} rule(s) grouped as “${name}”` : `${ids.length} rule(s) ungrouped`);
     $("#dGroupName").value = ""; await load();
   }
@@ -143,21 +144,23 @@
   $("#dAdd").onclick = guard(async () => {
     const action = $("#dAction").value, kind = $("#dKind").value, match = $("#dMatch").value.trim();
     checkMatch(kind, match);
+    const port = parsePort($("#dPort").value);
     if (action === "request") {
       // a simple on-request destination (grant); multi-target / credential grants are edited on the Grants tab
       if (kind !== "host") throw new Error("on-request destinations need a host, not a CIDR");
       const name = $("#dReqName").value.trim();
       if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(name)) throw new Error("name: a short id of letters, digits, - or _");
-      const port = parsePort($("#dPort").value);
       if (typeof port !== "number") throw new Error("on-request destinations need one port, e.g. 443");
-      const def = { description: $("#dNote").value || "", levels: ["read", "write"], approval: { read: "ask", write: "ask" },
-        targets: [{ host: match, port, scheme: "https", paths: ["/*"] }] };
-      await gw("PUT", `/grants/${name}`, def); toast(`On-request destination “${name}” added`);
+      const dest = { match: { host: match, port }, access: "request", scheme: "https", paths: ["/*"],
+        note: $("#dNote").value || "",
+        request: { name, levels: ["read", "write"], approval: { read: "ask", write: "ask" }, default_ttl: 3600, max_ttl: 14400 } };
+      await gw("POST", "/destinations", dest); toast(`On-request destination “${name}” added`);
     } else {
-      const rule = { action, [kind]: match, port: parsePort($("#dPort").value) };
-      if ($("#dNote").value) rule.note = $("#dNote").value;
-      if (+$("#dTtl").value > 0) rule.expires = Date.now() / 1000 + +$("#dTtl").value;
-      await gw("POST", "/rules", rule); toast("Rule added");
+      const dest = { match: { [kind]: match }, access: action };
+      if (port !== "*") dest.match.port = port;
+      if ($("#dNote").value) dest.note = $("#dNote").value;
+      if (+$("#dTtl").value > 0) dest.expires = Date.now() / 1000 + +$("#dTtl").value;
+      await gw("POST", "/destinations", dest); toast("Rule added");
     }
     $("#dMatch").value = ""; $("#dReqName").value = ""; await load();
   });

@@ -337,6 +337,7 @@ def grant_destinations(defs) -> list[Destination]:
                     tls_fingerprint=t.tls_fingerprint,
                     tls_verify=t.tls_verify,
                     note=g.description,
+                    id=f"grant:{g.name}",  # all targets of a grant share its id: the grant is the unit of edit
                     source=g.source,
                 )
             )
