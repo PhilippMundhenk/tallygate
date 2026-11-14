@@ -21,9 +21,11 @@
     <button data-tab="approvals" id="tabbtn-approvals" role="tab" aria-selected="false" aria-controls="tab-approvals">Approvals <span id="pendingCount" class="badge hidden">0</span></button>
     <button data-tab="log" id="tabbtn-log" role="tab" aria-selected="false" aria-controls="tab-log">Log</button>
     <button data-tab="destinations" id="tabbtn-destinations" role="tab" aria-selected="false" aria-controls="tab-destinations">Destinations</button>
+    <button data-tab="quickstart" id="tabbtn-quickstart" role="tab" aria-selected="false" aria-controls="tab-quickstart">Quick start</button>
     <button data-tab="grants" id="tabbtn-grants" role="tab" aria-selected="false" aria-controls="tab-grants">Grants <span id="grantActiveCount" class="badge ok hidden">0</span></button>
     <button data-tab="console" id="tabbtn-console" role="tab" aria-selected="false" aria-controls="tab-console">Console</button>
     <button data-tab="files" id="tabbtn-files" role="tab" aria-selected="false" aria-controls="tab-files">Files</button>
+    <button data-tab="settings" id="tabbtn-settings" role="tab" aria-selected="false" aria-controls="tab-settings">Settings</button>
     <button data-tab="setup" id="tabbtn-setup" role="tab" aria-selected="false" aria-controls="tab-setup">Setup</button>
   </nav>
 <main>
@@ -39,6 +41,7 @@
         <div><h4>Top destinations</h4><div class="table-wrap"><table class="ov-table"><thead><tr><th scope="col">Destination</th><th scope="col">Connections</th><th scope="col">Allowed / denied</th></tr></thead><tbody id="ovTop"></tbody></table></div></div>
         <div><h4>New destinations</h4><p class="hint">Seen for the first time in the kept log.</p><ul id="ovNew" class="ov-list"></ul></div>
       </div></div>
+    <details class="card" id="usageCard"><summary>Rule usage <span id="usageBadge" class="badge hidden"></span></summary><div id="usageBox"></div></details>
     <div class="card" id="ovVersionsCard"><h3>Versions</h3><div id="ovVersions" class="muted">…</div></div>
     <div class="card"><h3>Shortcuts</h3><div class="row wrap">
       <button id="ovStop" class="danger">Emergency stop</button>
@@ -90,13 +93,32 @@
     <div class="table-wrap"><table class="log"><thead><tr><th scope="col">Time</th><th scope="col">Kind</th><th scope="col">Proto</th><th scope="col">Destination</th><th scope="col">Action</th><th scope="col">Reason</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody id="logBody"></tbody></table></div>
     <p id="logEmpty" class="muted hidden">No events yet.</p>
+    <details class="card" id="historyCard"><summary>History, export and import</summary><div id="historyBox"></div></details>
   </section>
 
   <!-- RULES -->
   <section id="tab-destinations" role="tabpanel" aria-labelledby="tabbtn-destinations" class="hidden">
     <h2>Destinations</h2>
     <div id="destBox"></div>
-    <details class="card" id="accessCard"><summary>What the agent can reach</summary><div id="accessBox"></div></details>
+    <div class="card">
+      <h3>Test a destination</h3>
+      <p class="hint">Dry run: what would happen if the agent connected now? Shows the decision and what made it.</p>
+      <div class="row"><input id="testHost" aria-label="Host or IP to test" placeholder="host or IP"><input id="testPort" type="number" value="443" class="port" aria-label="Port"><button id="testBtn">Test</button></div>
+      <pre id="testOut" class="muted"></pre>
+    </div>
+    <details class="card" id="neverCard"><summary>Never reachable <span id="neverCount" class="muted"></span></summary>
+      <p class="hint">Every range that can never be reached, from every place that defines one. Nothing is asked
+        about them and no rule can open them. <b>All connections</b>: a grant for one device on the local network
+        may be exempt. <b>LAN grants too</b>: closed even for those.</p>
+      <div class="table-wrap"><table class="never"><thead><tr><th scope="col">Range</th><th scope="col">Applies to</th><th scope="col">Comes from</th><th scope="col">To change it</th></tr></thead>
+        <tbody id="neverBody"></tbody></table></div>
+      <p class="hint" id="hardDenyHint"><b>Add your own</b> (one range per line), e.g. your Docker host's public IP as
+        <code>&lt;address&gt;/32</code> or a provider range. They apply to all connections and can only add to the list.</p>
+      <textarea id="hardDeny" rows="5" aria-labelledby="hardDenyHint"></textarea><button id="saveHard">Save my additions</button></details>
+  </section>
+
+  <!-- QUICK START (shortcuts + learning) -->
+  <section id="tab-quickstart" role="tabpanel" aria-labelledby="tabbtn-quickstart" class="hidden">
     <div class="card" id="quick">
       <h3>Shortcuts</h3>
       <p class="hint">Common changes in one click. A shortcut adds normal rules, tagged with its name, which you can see in
@@ -105,6 +127,7 @@
       <div class="row wrap">
         <button data-preset="open" data-ttl="900">Allow web (HTTP/HTTPS) for 15 min</button>
         <button data-preset="open" data-ttl="3600">Allow web for 1 h</button>
+        <button data-preset="open">Allow web permanently</button>
         <button data-preset="internet" data-ttl="900" class="secondary">Allow all ports for 15 min</button>
       </div>
       <div class="row wrap" role="group" aria-label="What happens with unknown destinations">
@@ -131,39 +154,12 @@
       <div id="qaTemplates" class="templates"></div>
     </div>
     <div class="card" id="learnCard" tabindex="-1"><h3>Learning mode</h3><div id="learnBox"></div></div>
-    <div class="grid2">
-      <div class="card">
-        <h3>Mode</h3>
-        <label>Default action for unmatched destinations
-          <select id="defaultAction"><option value="ask">ask (human-in-the-loop)</option><option value="deny">deny (allowlist)</option><option value="allow">allow (blocklist)</option></select></label>
-        <label>Approval timeout (s) <input type="number" id="askTimeout" min="5" max="3600"></label>
-        <button id="saveMode">Save</button>
-      </div>
-      <div class="card">
-        <h3>Test a destination</h3>
-        <p class="hint">Dry run: what would happen if the agent connected now? Shows the decision and what made it.</p>
-        <div class="row"><input id="testHost" aria-label="Host or IP to test" placeholder="host or IP"><input id="testPort" type="number" value="443" class="port" aria-label="Port"><button id="testBtn">Test</button></div>
-        <pre id="testOut" class="muted"></pre>
-      </div>
-    </div>
-    <details class="card" id="usageCard"><summary>Rule usage and suggestions <span id="usageBadge" class="badge hidden"></span></summary><div id="usageBox"></div></details>
-    <details class="card" id="neverCard"><summary>Never reachable <span id="neverCount" class="muted"></span></summary>
-      <p class="hint">Every range that can never be reached, from every place that defines one. Nothing is asked
-        about them and no rule can open them. <b>All connections</b>: a grant for one device on the local network
-        may be exempt. <b>LAN grants too</b>: closed even for those.</p>
-      <div class="table-wrap"><table class="never"><thead><tr><th scope="col">Range</th><th scope="col">Applies to</th><th scope="col">Comes from</th><th scope="col">To change it</th></tr></thead>
-        <tbody id="neverBody"></tbody></table></div>
-      <p class="hint" id="hardDenyHint"><b>Add your own</b> (one range per line), e.g. your Docker host's public IP as
-        <code>&lt;address&gt;/32</code> or a provider range. They apply to all connections and can only add to the list.</p>
-      <textarea id="hardDeny" rows="5" aria-labelledby="hardDenyHint"></textarea><button id="saveHard">Save my additions</button></details>
-    <details class="card"><summary>Advanced: raw policy JSON</summary>
-      <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><div class="row"><button id="saveRaw">Replace policy</button>
-        <button id="reloadRaw" class="secondary">Reload from the gateway</button></div></details>
-    <details class="card" id="historyCard"><summary>History, export and import</summary><div id="historyBox"></div></details>
+  </section>
+
+  <!-- GRANTS -->
+  <section id="tab-grants" role="tabpanel" aria-labelledby="tabbtn-grants" class="hidden">
     <h2>Defined grants</h2>
-    <p class="hint">A grant bundles targets (host:port, optionally HTTP paths), access levels (<b>read</b> = GET/HEAD/OPTIONS
-      only, <b>write</b> = everything), LAN access, credential injection and how each level is approved. The agent can
-      request them with <code>tallygate request &lt;name&gt;</code>; grants from the config file are read-only here.</p>
+    <p class="hint">A grant is on-request access the agent asks for by name (<code>tallygate request &lt;name&gt;</code>): one or more targets (host:port, optionally paths), an access level (<b>read</b> = GET/HEAD/OPTIONS, <b>write</b> = everything) and how each use is approved. Grants from the config file are read-only here.</p>
     <div id="grantDefs"></div>
     <button id="grantNew">New grant</button>
 
@@ -234,10 +230,7 @@
         <button id="geSave">Save grant</button><button id="geCancel" class="secondary">Cancel</button>
       </div>
     </div>
-  </section>
 
-  <!-- GRANTS -->
-  <section id="tab-grants" role="tabpanel" aria-labelledby="tabbtn-grants" class="hidden">
     <h2>Active grants</h2>
     <p id="autoSuspended" class="meta warn hidden" role="status"></p>
     <div id="activeGrants"></div>
@@ -273,6 +266,30 @@
     <div class="table-wrap"><table class="files"><thead><tr><th scope="col">Name</th><th scope="col">Size</th><th scope="col">Modified</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody id="fileBody"></tbody></table></div>
     <p id="fileTruncated" class="hint hidden">Only the first 2000 entries are shown.</p>
+  </section>
+
+
+  <!-- SETTINGS -->
+  <section id="tab-settings" role="tabpanel" aria-labelledby="tabbtn-settings" class="hidden">
+    <h2>Settings</h2>
+    <p class="hint">How unmatched destinations are handled, the gateway behaviour tunables, and the raw policy. Trust-critical settings (credential injection, LAN access, the never-reachable floor) stay in the read-only gateway config by design.</p>
+    <div class="card">
+      <h3>Mode</h3>
+      <label>Default action for unmatched destinations
+        <select id="defaultAction"><option value="ask">ask (human-in-the-loop)</option><option value="deny">deny (allowlist)</option><option value="allow">allow (blocklist)</option></select></label>
+      <label>Approval timeout (s) <input type="number" id="askTimeout" min="5" max="3600"></label>
+      <button id="saveMode">Save</button>
+    </div>
+    <details class="card" id="settingsCard"><summary>Behaviour settings</summary>
+      <p class="hint">Tunables the gateway owns — log retention, learning mode, rule suggestions and grant-request
+        limits. Saved here without editing a file or restarting; a few take effect only after a restart (marked).
+        Trust-critical settings (credential injection, LAN access, the never-reachable floor) stay in the
+        read-only gateway config by design.</p>
+      <div id="settingsBox"></div>
+    </details>
+    <details class="card"><summary>Advanced: raw policy JSON</summary>
+      <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><div class="row"><button id="saveRaw">Replace policy</button>
+        <button id="reloadRaw" class="secondary">Reload from the gateway</button></div></details>
   </section>
 
   <!-- SETUP (wizard.js) -->
@@ -340,13 +357,6 @@
       <p class="hint">Browser notifications appear for new requests while this tab is in the background.</p>
       <button id="notifyBtnCard" class="secondary notify-btn">Enable browser notifications</button> <span id="notifyPermCard" class="muted notify-perm"></span>
       <div id="pushSetup"></div></div>
-    <details class="card" id="settingsCard"><summary>Behaviour settings</summary>
-      <p class="hint">Tunables the gateway owns — log retention, learning mode, rule suggestions and grant-request
-        limits. Saved here without editing a file or restarting; a few take effect only after a restart (marked).
-        Trust-critical settings (credential injection, LAN access, the never-reachable floor) stay in the
-        read-only gateway config by design.</p>
-      <div id="settingsBox"></div>
-    </details>
   </section>
 </main>
 </div>
@@ -363,7 +373,6 @@
 <script src="/static/files.js"></script>
 <script src="/static/history.js"></script>
 <script src="/static/usage.js"></script>
-<script src="/static/access.js"></script>
 <script src="/static/destinations.js"></script>
 <script src="/static/logsearch.js"></script>
 <script src="/static/learning.js"></script>
