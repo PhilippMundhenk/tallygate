@@ -24,6 +24,7 @@ from mitmproxy.test import tflow, tutils
 from egressgw import core
 from egressgw.grants import Target
 from egressgw.model import Req, Verdict
+from egressgw.readonly import ReadOnly
 
 
 @pytest.fixture
@@ -662,7 +663,7 @@ def test_dns_requests_are_answered_nxdomain_and_logged(make):
 # ------------------------------------------------------------------ read-only hosts (#58)
 def test_readonly_entries_are_validated():
     ro = core.parse_readonly(["Reg.Example.", {"host": "*.q.example", "post_is_write": True, "read_posts": ["/s/*"]}])
-    assert ro[0] == core.ReadOnly("reg.example") and ro[1].read_posts == ("/s/*",)
+    assert ro[0] == ReadOnly("reg.example") and ro[1].read_posts == ("/s/*",)
     for bad in (
         [42],
         [{"host": "x.example", "methods": ["POST"]}],
