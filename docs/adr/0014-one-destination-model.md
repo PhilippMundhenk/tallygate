@@ -70,7 +70,8 @@ destinations:
 | rule `allow` / `ask` / `deny` | `access` |
 | grant | `access: request` plus `request:` (name, levels, approval, durations) |
 | `readonly` entry, grant level `read` | `methods` |
-| grant `paths`, `read_posts`, `github_repos` | `paths` (and `read_paths` for POSTs that only read) |
+| grant `paths`, `read_posts` | `paths` (and `read_paths` for POSTs that only read) |
+| `github_repos`, `github_graphql` | `repos: {patterns, graphql}` — its own property, not `paths`: the check is by method and canonical repo path (`github.RepoScope`), which a glob cannot express without changing behaviour |
 | `inject`, grant `inject` | `credentials` |
 | grant `lan`, `address`, `tls_fingerprint`, `tls_verify` | `lan`, `address`, `tls` |
 | mode | the last entry: `match: {host: "*"}` with `access: ask` (kept as `default` in the file for readability) |
@@ -215,6 +216,10 @@ Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is
   The step-2 equivalence test plus the full unit and e2e suite hold the behaviour. Grants and rules still read
   the live mutable state (`gw.grants`, `gw.policy`): they are the source of truth until the file format makes
   the model the source, which is when they move over too.
+- 2026-11-14: repository scope is its own destination property `repos: {patterns, graphql}` (not `paths`):
+  `github_repos`/`github_graphql` would change `RepoScope`'s by-method, canonical-repo-path check if flattened
+  to a glob, which the "no behaviour change" rule forbids. The model now carries it faithfully and round-trips
+  it; the §1 mapping table is updated. `decide.host_limits` still only needs its presence.
 - Open: grant limits and the connection decision from the model; the file format (gateway reads and writes
   `destinations:`), migration, API and UI.
 

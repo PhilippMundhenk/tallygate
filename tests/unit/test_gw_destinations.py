@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gateway"))
 pytest.importorskip("mitmproxy")
 
 from egressgw import core
-from egressgw.destinations import Destination, Match, Model, Request, translate
+from egressgw.destinations import Destination, Match, Model, RepoScopeSpec, Request, translate
 
 CONFIG = {
     "inject": [{"host": "api.example", "header": "X-Token", "value": "Bearer ${tok}"}],
@@ -84,7 +84,7 @@ def test_translate_lists_rules_then_grants_then_properties(gw):
     assert ro.access is None and ro.methods == "no-writes" and ro.read_paths == ()
     oci = by_match(m, host="*.oci.example")[0]
     assert oci.methods == "no-writes+post" and oci.read_paths == ("/q/*",)
-    assert by_match(m, host="git.example")[0].repos is True
+    assert by_match(m, host="git.example")[0].repos == RepoScopeSpec(["me/app"], graphql=False)
     inj = [d for d in by_match(m, host="api.example") if d.credentials]
     assert inj and inj[0].credentials == (("X-Token", "Bearer ${tok}"),) and inj[0].access is None
 
@@ -112,7 +112,7 @@ def test_destination_serialisation_keeps_only_set_fields():
         paths=["/x/*"],
         read_paths=("/q",),
         credentials=(("Authorization", "Bearer ${t}"),),
-        repos=True,
+        repos=RepoScopeSpec(["me/app", "org/*"], graphql=True),
         scheme="https",
         lan=True,
         address="1.2.3.4",
@@ -137,6 +137,15 @@ def test_request_destination_round_trips():
         scheme="https",
     )
     assert Destination.from_dict(d.to_dict()) == d
+
+
+def test_repo_scope_spec_round_trips_and_graphql_is_optional():
+    assert RepoScopeSpec(["me/app", "org/*"]).to_dict() == {"patterns": ["me/app", "org/*"]}  # graphql off is omitted
+    assert RepoScopeSpec(["me/app"], graphql=True).to_dict() == {"patterns": ["me/app"], "graphql": True}
+    d = Destination(match=Match(host="git.example"), repos=RepoScopeSpec(["me/app"], graphql=True))
+    assert Destination.from_dict(d.to_dict()) == d
+    with pytest.raises(ValueError, match="unknown repos keys"):
+        RepoScopeSpec.from_dict({"patterns": ["me/app"], "grafql": True})
 
 
 def test_validation_errors():
