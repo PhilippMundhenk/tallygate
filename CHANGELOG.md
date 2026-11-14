@@ -16,6 +16,9 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - **Request paths with `#` or `;` are refused** (grants, read-only `read_posts`, `github_repos`): they were
   stripped before the canonical check while the raw path was forwarded, so a server that normalises `..`
   across a `#`, or `..;`, could step outside the allowed path (#137).
+- **Revoking or expiring a grant now cuts its open tunnels:** a raw-TCP or WebSocket tunnel opened while a
+  grant was active used to keep carrying traffic after the grant ended (new HTTP requests were already
+  refused). It is now closed on the next message, so no further data flows (also on the emergency stop) (#137).
 - **A request is checked against its connection's target, not the host it names:** an absolute-form
   `https://` request sent to the plain proxy (no CONNECT) is refused, so it cannot be checked against the host
   in its URL instead of a real, gated destination and thereby skip a grant's or an intercepted host's limits.

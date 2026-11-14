@@ -173,6 +173,15 @@ def test_an_ended_grant_lets_nothing_through(gw):
     assert gw.access.limits(v).gone
 
 
+def test_grant_live(gw):
+    assert gw.access.grant_live(None) and gw.access.grant_live(Verdict("ok.example", 443))  # not a grant
+    v = grant(gw, "ha")
+    assert gw.access.grant_live(v) is True
+    assert gw.access.grant_live(v, now=__import__("time").time() + 601) is False  # expired
+    gw.grants.revoke(v.grant)
+    assert gw.access.grant_live(v) is False  # revoked
+
+
 def test_raw_traffic_and_websockets(gw):
     m = gw.access
     assert m.raw_problem(grant(gw, "ha")) == "non-HTTP traffic to an HTTP grant target"

@@ -262,6 +262,13 @@ class Access:
             return "non-HTTP traffic to an HTTP grant target"
         return None
 
+    def grant_live(self, v: Verdict | None, now: float | None = None) -> bool:
+        """True while the grant carrying this connection is still active (not revoked or expired)."""
+        if not v or not v.grant:
+            return True  # not a grant connection: nothing to end
+        a = self.gw.grants.active.get(v.grant)
+        return a is not None and a.expires > (now or time.time())
+
     def websocket_problem(self, v: Verdict | None) -> str | None:
         if v and v.grant:
             a = self.gw.grants.active.get(v.grant)
