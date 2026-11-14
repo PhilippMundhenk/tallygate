@@ -22,7 +22,7 @@ import ipaddress
 import re
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -358,6 +358,23 @@ class Policy:
         before = len(self.rules)
         self.rules = [r for r in self.rules if r.id != rule_id]
         return len(self.rules) != before
+
+    EDITABLE = ("action", "port", "note", "expires")
+
+    def update_rule(self, rule_id: str, changes: dict) -> Rule | None:
+        """Change an existing rule's action, port, note or expiry in place, keeping its id and position (e.g.
+        put a time limit on a permanent rule instead of deleting it). Returns the new rule, or None if there
+        is no such rule. What a rule matches (host/cidr) is not editable - that is a different rule."""
+        unknown = set(changes) - set(self.EDITABLE)
+        if unknown:
+            raise ValueError(f"cannot edit {sorted(unknown)}; editable fields: {list(self.EDITABLE)}")
+        for i, r in enumerate(self.rules):
+            if r.id == rule_id:
+                new = replace(r, **changes)
+                new.validate()
+                self.rules[i] = new
+                return new
+        return None
 
     # ---------- serialisation ----------
     def to_dict(self) -> dict:

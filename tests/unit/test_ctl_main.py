@@ -339,13 +339,15 @@ def test_mode_patch_and_emergency_stop_are_relayed_and_attributed(load):
             r = await c.post("/api/gw/emergency-stop", json={"by": "spoofed", "skip": ["revoke"]}, headers=CSRF)
             assert r.status == 200
             assert (await c.post("/api/gw/emergency-stop", headers=CSRF)).status == 200  # no body
-            assert (await c.patch("/api/gw/rules/x", json={}, headers=CSRF)).status == 404
+            assert (await c.patch("/api/gw/rules/x", json={"note": "n"}, headers=CSRF)).status == 200  # #141: relayed
+            assert (await c.put("/api/gw/rules/x", json={}, headers=CSRF)).status == 404  # but only PATCH, not PUT
 
     run(body())
     assert world.seen == [
         ("PATCH", "/gw/policy", {}, {"default": "deny"}),
         ("POST", "/gw/emergency-stop", {}, {"by": "web:admin"}),
         ("POST", "/gw/emergency-stop", {}, {"by": "web:admin"}),
+        ("PATCH", "/gw/rules/x", {}, {"note": "n"}),  # not attributed: rules carry no `by`
     ]
 
 

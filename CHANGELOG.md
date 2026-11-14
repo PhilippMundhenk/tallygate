@@ -95,6 +95,9 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - **Quick actions** in the Rules tab: allow the web or all ports for a while, choose what happens with unknown
   destinations, an emergency stop, a guided path to a local-network grant, and **templates** for Python,
   Node.js, Go, Rust, Debian/Ubuntu apt, container registries and Hugging Face (#34, #59, #61).
+- **Edit a rule in place** in the Rules tab (and `PATCH /rules/{id}`): change a rule's action, port, note or
+  expiry without deleting and re-adding it — e.g. put a time limit on a permanent *Always allow* from the log,
+  keeping its id and its place in the list. What a rule matches (host/cidr) stays fixed (#141).
 - **Help and examples:** [docs/rules.md](docs/rules.md) with about 20 worked examples, an example for every
   setting, field help and explanations in the UI, *Test a destination* says what decided (#35).
 - `compose.build.yaml` to build the images from a checkout (`make up`) (#16).
