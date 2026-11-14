@@ -53,7 +53,7 @@ from egressgw.policy import (
     valid_hostname,
 )
 from egressgw.readonly import parse_readonly
-from egressgw.store import EventLog, Secrets
+from egressgw.store import EventLog, Secrets, atomic_write
 
 log = logging.getLogger("egressgw")
 
@@ -183,10 +183,10 @@ class Gateway:
             initial = self.config.get("initial_preset", "baseline")
             preset = PRESET_DIR / f"{initial}.yaml"
             self.policy = load_preset(preset)[1] if preset.exists() else Policy()
-            self.policy.save(self.policy_path)
+            self._write_policy_file()
             what = f"initial policy (preset {initial})"
         else:
-            self.policy = Policy.load(self.policy_path)
+            self.policy = self._load_policy_file()
             what = (
                 "policy.yaml changed while the gateway was stopped"
                 if self.history.latest
@@ -241,6 +241,24 @@ class Gateway:
         self.subscribers: set[asyncio.Queue] = set()
         self.api_token = os.environ.get("GW_API_TOKEN", "")
         self._tasks: list[asyncio.Task] = []
+
+    def _write_policy_file(self) -> None:
+        """Write policy.yaml in the destinations form (ADR-0014)."""
+        atomic_write(self.policy_path, yaml.safe_dump(destinations.policy_to_file(self.policy), sort_keys=False))
+
+    def _load_policy_file(self) -> Policy:
+        """Load policy.yaml in either form; a pre-0014 file (with `rules`) is migrated once - backed up next to
+        it as `*.pre-0014` and rewritten as destinations. A file that cannot be translated stops the gateway."""
+        raw = yaml.safe_load(self.policy_path.read_text())
+        policy = Policy.from_dict(destinations.policy_from_file(raw))
+        if not (raw or {}).get("destinations") and (raw or {}).get("rules"):  # old form with rules: migrate once
+            backup = self.policy_path.with_suffix(self.policy_path.suffix + ".pre-0014")
+            if not backup.exists():
+                atomic_write(backup, self.policy_path.read_text())
+            self.policy = policy
+            self._write_policy_file()
+            log.info("migrated %s to the destinations form (backup at %s)", self.policy_path, backup)
+        return policy
 
     def _read_destinations(self) -> None:
         """ADR-0014 §5: a `destinations:` block in the gateway config is an alternative to the old property
@@ -490,7 +508,7 @@ class Gateway:
         return s
 
     def save_policy(self, by: str = "api", what: str = "policy changed") -> None:
-        self.policy.save(self.policy_path)
+        self._write_policy_file()  # destinations form (ADR-0014)
         self._history(by, what)
         self.publish({"type": "policy"})
 

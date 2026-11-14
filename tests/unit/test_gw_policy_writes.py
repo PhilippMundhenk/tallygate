@@ -92,8 +92,8 @@ def test_patch_changes_only_mode_and_timeout(gw):
     assert status == 200 and data["default"] == "deny" and [r["id"] for r in data["rules"]] == ["new"]
     status, data = admin(gw, "PATCH", "/policy", {"ask_timeout": 120})
     assert data["default"] == "deny" and data["ask_timeout"] == 120
-    saved = yaml.safe_load((core.DATA_DIR / "policy.yaml").read_text())
-    assert saved["default"] == "deny" and saved["ask_timeout"] == 120 and len(saved["rules"]) == 1
+    saved = yaml.safe_load((core.DATA_DIR / "policy.yaml").read_text())  # on disk in the destinations form (ADR-0014)
+    assert saved["default"] == "deny" and saved["ask_timeout"] == 120 and len(saved["destinations"]) == 1
     assert gw.events.recent(1)[0]["reason"] == "mode deny, approval timeout 120 s via API"
 
 

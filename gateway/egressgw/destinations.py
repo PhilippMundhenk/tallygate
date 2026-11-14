@@ -477,6 +477,71 @@ def _never(gw: Gateway) -> list[dict]:
     return out
 
 
+def policy_to_file(policy) -> dict:
+    """The gateway's `policy.yaml` in the destinations form (ADR-0014 §5): the mode, the approval timeout, the
+    operator's never additions (`hard_deny`, scope `all`) and the access rules as destinations. The read-only
+    floor is not stored."""
+    out: dict = {"default": policy.default, "ask_timeout": policy.ask_timeout}
+    if policy.hard_deny:
+        out["never"] = [{"range": c, "scope": "all"} for c in policy.hard_deny]
+    out["destinations"] = [d.to_dict() for d in from_rules(policy.rules)]
+    return out
+
+
+def policy_from_file(data: dict | None) -> dict:
+    """Parse `policy.yaml` in either form into `Policy.from_dict` kwargs. The new form has `destinations`; the
+    old form ({default, ask_timeout, hard_deny, rules}) is passed through so pre-0014 files keep loading."""
+    data = data or {}
+    if "destinations" not in data:
+        return data
+    rules = []
+    for e in data["destinations"]:
+        d = Destination.from_dict(e)
+        if d.access not in ("allow", "ask", "deny"):
+            raise ValueError("a policy destination must be an access rule (allow/ask/deny), not a property or grant")
+        r: dict = {"action": d.access, "port": d.match.port}
+        r["host" if d.match.host else "cidr"] = d.match.host or d.match.cidr
+        if d.note:
+            r["note"] = d.note
+        if d.expires is not None:
+            r["expires"] = d.expires
+        if d.group:
+            r["group"] = d.group
+        if d.id:
+            r["id"] = d.id
+        if d.source and d.source != "file":
+            r["source"] = d.source
+        rules.append(r)
+    never = data.get("never") or []
+    hard = [
+        (e if isinstance(e, str) else e.get("range"))
+        for e in never
+        if isinstance(e, str) or e.get("scope", "all") == "all"
+    ]
+    return {
+        "default": data.get("default", "ask"),
+        "ask_timeout": data.get("ask_timeout", 60),
+        "hard_deny": hard,
+        "rules": rules,
+    }
+
+
+def grants_to_file(ui_defs: dict) -> dict:
+    """The gateway's UI `grants.yaml` in the destinations form: each grant's targets as `access: request`
+    destinations. `ui_defs` is {name: GrantDef}."""
+    return {"destinations": [d.to_dict() for d in grant_destinations(ui_defs)]}
+
+
+def grants_from_file(data: dict | None) -> dict:
+    """Parse UI `grants.yaml` in either form into {name: grant-def-dict} for `GrantDef.from_dict`. The new form
+    has `destinations` (request entries); the old form ({name: def}) is passed through."""
+    data = data or {}
+    if "destinations" not in data:
+        return data
+    dests = [Destination.from_dict(e) for e in data["destinations"]]
+    return destinations_to_config(dests).get("grants", {})
+
+
 def from_rules(rules: list[Rule]) -> list[Destination]:
     """The access destinations for a list of rules (used by tests and the converter)."""
     return [
