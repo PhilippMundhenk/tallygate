@@ -202,7 +202,14 @@ Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is
   never-reachable ranges as one ordered model. It is data only: nothing in the evaluation path reads it yet,
   so it changes no behaviour; `model.Access` still reads the old structures. Tests translate the fixtures and
   round-trip every entry through the format.
-- Open: the file format (gateway reads and writes `destinations:`), migration, API and UI.
+- 2026-11-14: shadow of the derived limits: `egressgw/decide.py` recomputes a destination's request limits
+  (`host_limits`) from a `Model` alone, and a test asserts it equals `model.Access.host_limits` for every host
+  the fixtures touch (read-only, repositories, two credentials on one host, a wildcard that covers the apex,
+  and hosts that match nothing). Not wired into enforcement yet; it proves the merge of the file properties
+  before the switch. Access entries are not shadowed here - they map one-to-one from rules and the model's own
+  tests round-trip them.
+- Open: deciding the connection and grant limits from the model, then the switch; the file format (gateway
+  reads and writes `destinations:`), migration, API and UI.
 
 ## Consequences
 
