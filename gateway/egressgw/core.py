@@ -610,10 +610,10 @@ class Gateway:
                 self.publish({"type": "resolved", "id": p.id, "action": "deny", "reason": "timeout"})
             return p.future.result()
 
-    def answer(self, pending_id: str, scope: str, by: str) -> dict:
+    def answer(self, pending_id: str, scope: str, by: str, ttl: int | None = None) -> dict:
         for key, p in list(self.pending.items()):
             if p.id == pending_id:
-                rule = rule_for_approval(p.host, p.port, scope)
+                rule = rule_for_approval(p.host, p.port, scope, ttl)
                 self.policy.add_rule(rule, top=True)
                 self.save_policy(by, f"approval {scope} for {p.host}:{p.port}")
                 dec = Decision(rule.action, f"{scope} by {by}", rule.id)

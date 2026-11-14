@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -166,6 +167,79 @@ def test_preset_names_are_checked(gw):
 def test_pending_decisions(gw):
     assert admin(gw, "POST", "/pending/x/decide", {"scope": "forever"})[0] == 400
     assert admin(gw, "POST", "/pending/x/decide", {"scope": "once"})[0] == 404
+
+
+def decide(gw, host, port, body):
+    """Insert a pending request (with a future bound to the running loop) and POST a decision for it.
+    Returns (status, response, pending)."""
+
+    async def go():
+        app = api.build_app(gw)
+        async with TestClient(TestServer(app)) as c:
+            p = core.Pending(
+                host=host, port=port, ips=[], proto="http", client="c", timeout=60,
+                future=asyncio.get_running_loop().create_future(),
+            )  # fmt: skip
+            gw.pending[(host, port)] = p
+            r = await c.request(
+                "POST", f"/pending/{p.id}/decide", json=body, headers={"Authorization": f"Bearer {TOKEN}"}
+            )
+            return r.status, await r.json(), p
+
+    return asyncio.run(go())
+
+
+def test_decide_custom_allow_ttl_installs_a_temporary_rule(gw):
+    before = time.time()
+    status, res, p = decide(gw, "shop.example", 443, {"scope": "allow", "ttl": 1800})
+    assert status == 200 and res["rule"]["action"] == "allow" and res["rule"]["host"] == "shop.example"
+    rule = gw.policy.rules[0]  # approvals go on top, and are listed/revocable like any other rule
+    assert rule.id == res["rule"]["id"] and rule.source == "approval"
+    assert rule.expires is not None and 1800 - 2 <= rule.expires - before <= 1800 + 2
+    assert p.future.result().action == "allow"
+
+
+def test_decide_allow_ttl_is_clamped_and_requires_a_ttl(gw):
+    before = time.time()
+    status, res, _ = decide(gw, "shop.example", 443, {"scope": "allow", "ttl": 1})  # below the 60 s floor
+    assert status == 200 and 60 - 2 <= gw.policy.rules[0].expires - before <= 60 + 2
+    status, res, _ = decide(gw, "two.example", 443, {"scope": "allow", "ttl": 99_999_999})  # above 30 days
+    assert status == 200 and gw.policy.rules[0].expires - before <= 2_592_000 + 2
+    # "allow" with no ttl is rejected (the custom-duration scope needs a duration)
+    status, res, _ = decide(gw, "three.example", 443, {"scope": "allow"})
+    assert status == 400 and "ttl" in res["error"]
+
+
+def test_decide_rejects_garbage_ttl_with_400(gw):
+    for bad in ("3600", 3600.5, True):
+        status, res, _ = decide(gw, "bad.example", 443, {"scope": "allow", "ttl": bad})
+        assert status == 400 and "ttl must be an integer" in res["error"]
+    assert gw.policy.rules[0].id == "ok"  # nothing was installed by the rejected calls
+
+
+def test_decide_temporary_deny_suppresses_reask_then_asks_again(gw):
+    before = time.time()
+    status, res, _ = decide(gw, "block.example", 443, {"scope": "deny", "ttl": 600})
+    assert status == 200 and res["rule"]["action"] == "deny"
+    rule = gw.policy.rules[0]
+    assert rule.expires is not None and 600 - 2 <= rule.expires - before <= 600 + 2
+    # while live, the destination is denied (not re-asked); after expiry it may be asked again
+    assert gw.policy.evaluate_name("block.example", 443).action == "deny"
+    rule.expires = time.time() - 1
+    assert gw.policy.evaluate_name("block.example", 443).action == "ask"
+
+
+def test_decide_backward_compatible_scopes_still_work(gw):
+    status, res, _ = decide(gw, "a.example", 443, {"scope": "once"})  # no ttl field at all
+    assert status == 200 and res["rule"]["expires"] - time.time() <= 122
+    status, res, _ = decide(gw, "b.example", 443, {"scope": "always"})
+    assert status == 200 and "expires" not in res["rule"]
+    status, res, _ = decide(gw, "c.github.com", 443, {"scope": "domain"})
+    assert status == 200 and res["rule"]["host"] == "*.github.com" and "expires" not in res["rule"]
+    status, res, _ = decide(gw, "d.example", 443, {"scope": "deny_always"})
+    assert status == 200 and res["rule"]["action"] == "deny" and "expires" not in res["rule"]
+    status, res, _ = decide(gw, "e.example", 443, {"scope": "deny"})  # plain deny keeps the 120 s default
+    assert status == 200 and res["rule"]["expires"] - time.time() <= 122
 
 
 def test_policy_test_endpoint_never_resolves_names_that_are_not_allowed(gw, monkeypatch):
