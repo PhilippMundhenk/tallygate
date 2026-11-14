@@ -119,6 +119,11 @@ def test_policy_file_round_trips_and_reads_the_old_form():
     assert key(q) == key(p)
     # a pre-0014 file (with `rules`) is passed through so it keeps loading
     assert policy_from_file({"default": "ask", "rules": [{"action": "allow", "host": "x"}]})["rules"]
+    # a crafted policy.yaml cannot smuggle a grant or a credential destination into the policy (#137)
+    with pytest.raises(ValueError, match="must be an access rule"):
+        policy_from_file({"destinations": [{"match": {"host": "x"}, "access": "request", "request": {"name": "g"}}]})
+    with pytest.raises(ValueError, match="must be an access rule"):
+        policy_from_file({"destinations": [{"match": {"host": "x"}, "credentials": [{"value": "Bearer ${t}"}]}]})
 
 
 def test_grants_file_round_trips_and_reads_the_old_form():

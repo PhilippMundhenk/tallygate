@@ -101,6 +101,35 @@ def test_destinations_crud_for_rules_and_grants(gw):
     assert admin(gw, "POST", "/destinations", {"match": {"host": "x"}})[0] == 400  # no access -> error, not 500
 
 
+def test_destinations_api_cannot_set_file_only_grant_properties(gw):
+    # ADR-0014 trust split (#137): the API/UI may not set credentials, lan (outside lan_allow) or
+    # tls_verify:false, and may not change a config-file grant. Only the read-only config file may.
+    base = {"targets": [{"host": "x.example", "port": 443}], "levels": ["read"], "approval": {"read": "ask"}}
+    creds = {**base, "inject": [{"host": "x.example", "header": "Authorization", "value": "Bearer ${tok}"}]}
+    assert admin(gw, "PUT", "/destinations/grant/withcreds", creds)[0] == 400  # credential injection is file-only
+    noverify = {
+        "targets": [{"host": "x.example", "port": 443, "tls_verify": False}],
+        "levels": ["read"],
+        "approval": {"read": "ask"},
+    }
+    assert admin(gw, "PUT", "/destinations/grant/noverify", noverify)[0] == 400  # disabling TLS verify is file-only
+    lanone = {
+        "targets": [{"host": "x.example", "port": 443, "lan": True}],
+        "levels": ["read"],
+        "approval": {"read": "ask"},
+    }
+    assert admin(gw, "PUT", "/destinations/grant/lanone", lanone)[0] == 400  # LAN needs lan_allow in the config
+    assert admin(gw, "PUT", "/destinations/grant/nas", base)[0] == 400  # nas is a config-file grant, read-only here
+    assert admin(gw, "PUT", "/destinations/grant/ok2", base)[0] == 200 and gw.grants.defs["ok2"].source == "ui"
+    # the same credential injection smuggled through POST /destinations (a single-target request) is refused too
+    bad = {
+        "match": {"host": "x.example", "port": 443}, "access": "request", "scheme": "https",
+        "credentials": [{"header": "Authorization", "value": "Bearer ${tok}"}],
+        "request": {"name": "viapost", "levels": ["read"], "approval": {"read": "ask"}, "default_ttl": 3600, "max_ttl": 14400},
+    }  # fmt: skip
+    assert admin(gw, "POST", "/destinations", bad)[0] == 400
+
+
 def test_model_endpoint_returns_the_whole_destination_model(gw):
     status, model = admin(gw, "GET", "/model")
     assert status == 200 and set(model) == {"default", "destinations", "never"}
