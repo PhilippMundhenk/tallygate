@@ -160,15 +160,6 @@
       <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><div class="row"><button id="saveRaw">Replace policy</button>
         <button id="reloadRaw" class="secondary">Reload from the gateway</button></div></details>
     <details class="card" id="historyCard"><summary>History, export and import</summary><div id="historyBox"></div></details>
-  </section>
-
-  <!-- GRANTS -->
-  <section id="tab-grants" role="tabpanel" aria-labelledby="tabbtn-grants" class="hidden">
-    <h2>Active grants</h2>
-    <p id="autoSuspended" class="meta warn hidden" role="status"></p>
-    <div id="activeGrants"></div>
-    <p id="activeEmpty" class="muted">No grant is active.</p>
-
     <h2>Defined grants</h2>
     <p class="hint">A grant bundles targets (host:port, optionally HTTP paths), access levels (<b>read</b> = GET/HEAD/OPTIONS
       only, <b>write</b> = everything), LAN access, credential injection and how each level is approved. The agent can
@@ -243,6 +234,15 @@
         <button id="geSave">Save grant</button><button id="geCancel" class="secondary">Cancel</button>
       </div>
     </div>
+  </section>
+
+  <!-- GRANTS -->
+  <section id="tab-grants" role="tabpanel" aria-labelledby="tabbtn-grants" class="hidden">
+    <h2>Active grants</h2>
+    <p id="autoSuspended" class="meta warn hidden" role="status"></p>
+    <div id="activeGrants"></div>
+    <p id="activeEmpty" class="muted">No grant is active.</p>
+
 
     <details class="card"><summary>Secrets for credential injection</summary>
       <p class="hint">Write-only: values are stored in the gateway and can never be read back. Reference them in a

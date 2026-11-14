@@ -234,9 +234,15 @@ Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is
   templates, test, never-reachable list, raw-policy editor and history moved over, and the rules table/editor
   is now the Destinations table driving `/destinations`. The Grants tab still holds grant-flow (activation,
   requests, secrets) and multi-target/credential editing.
-- Open: fold the Grants tab's definition editing into Destinations and remove the old per-mechanism routes
-  (`/rules*`, `/grants*`, ...); migrating the gateway's own state files (`policy.yaml`/`grants.yaml`) to the
-  new form with `*.pre-0014` backups.
+- 2026-11-14: grant definitions folded into Destinations too. The defined-grants list and the full
+  multi-target/credential grant editor moved from the Grants tab to the Destinations tab; the **Grants tab is
+  now the slim flow surface** (active grants + secrets; connection/grant requests remain under Approvals).
+  The Destinations table lists rules and file properties; on-request destinations (grants) are managed in the
+  grant section below it.
+- Open: removing the old per-mechanism API routes (`/rules*`, `/grants*`, ...) — kept for now because they are
+  used pervasively by the approval flow, the agent and the tests, and the enforcement path is already unified;
+  migrating the gateway's own state files (`policy.yaml`/`grants.yaml`) to the destinations form with
+  `*.pre-0014` backups.
 
 ## Consequences
 
