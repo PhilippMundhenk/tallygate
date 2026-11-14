@@ -94,6 +94,20 @@ def build_app(gw: Gateway) -> web.Application:
         gw.record(kind="admin", action="rule+", host=rule.host or rule.cidr, reason=json.dumps(rule.to_dict()))
         return _json(rule.to_dict(), 201)
 
+    @routes.post("/rules/group")
+    async def group_rules(request):
+        body = await request.json()
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            raise ValueError("expected {ids: [rule id, ...], group: name}")
+        changed = gw.policy.set_group(ids, str(body.get("group", "")))
+        name = str(body.get("group", ""))
+        gw.save_policy(
+            _by(request), f"{len(changed)} rules grouped as {name!r}" if name else f"{len(changed)} rules ungrouped"
+        )
+        gw.record(kind="admin", action="rule~", reason=f"group {name!r}: {[r.id for r in changed]}")
+        return _json({"group": name, "changed": [r.to_dict() for r in changed]})
+
     @routes.patch("/rules/{rid}")
     async def edit_rule(request):
         rule = gw.policy.update_rule(request.match_info["rid"], await request.json())

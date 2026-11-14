@@ -173,7 +173,13 @@
       </details>
     </div>
     <details class="card" id="usageCard"><summary>Rule usage and suggestions <span id="usageBadge" class="badge hidden"></span></summary><div id="usageBox"></div></details>
-    <div class="table-wrap"><table class="rules"><thead><tr><th>#</th><th>Action</th><th>Match</th><th>Port</th><th>Note</th><th>Expires</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="rulesBody"></tbody></table></div>
+    <div class="rules-toolbar">
+      <input id="groupName" aria-label="Group name" placeholder="group name, e.g. used-car shops">
+      <button id="groupSel" class="small secondary">Group selected</button>
+      <button id="ungroupSel" class="small secondary">Ungroup selected</button>
+      <span class="muted">tick rules, name a set, and group them to see them together (#142)</span>
+    </div>
+    <div class="table-wrap"><table class="rules"><thead><tr><th><span class="sr-only">Select</span></th><th>#</th><th>Action</th><th>Match</th><th>Port</th><th>Note</th><th>Group</th><th>Expires</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="rulesBody"></tbody></table></div>
     <details class="card" id="neverCard"><summary>Never reachable <span id="neverCount" class="muted"></span></summary>
       <p class="hint">Every range that can never be reached, from every place that defines one. Nothing is asked
         about them and no rule can open them. <b>All connections</b>: a grant for one device on the local network

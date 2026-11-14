@@ -198,6 +198,7 @@ class Rule:
     port: Any = "*"
     note: str = ""
     expires: float | None = None  # unix ts, None = permanent
+    group: str = ""  # optional named set this rule belongs to (#142), for grouping in the UI
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     source: str = "user"  # user | approval | preset
 
@@ -243,13 +244,15 @@ class Rule:
             d["note"] = self.note
         if self.expires is not None:
             d["expires"] = round(self.expires)
+        if self.group:
+            d["group"] = self.group
         if self.source != "user":
             d["source"] = self.source
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> Rule:
-        known = {"action", "host", "cidr", "port", "note", "expires", "id", "source"}
+        known = {"action", "host", "cidr", "port", "note", "expires", "group", "id", "source"}
         unknown = set(d) - known
         if unknown:
             raise ValueError(f"unknown rule keys: {sorted(unknown)}")
@@ -359,7 +362,17 @@ class Policy:
         self.rules = [r for r in self.rules if r.id != rule_id]
         return len(self.rules) != before
 
-    EDITABLE = ("action", "port", "note", "expires")
+    EDITABLE = ("action", "port", "note", "expires", "group")
+
+    def set_group(self, rule_ids: list[str], group: str) -> list[Rule]:
+        """Put several rules in one named set (#142), or clear it with an empty name. Returns the rules that
+        changed; a rule id that is not found is skipped. Keeps each rule's position."""
+        changed = []
+        for rid in rule_ids:
+            r = self.update_rule(rid, {"group": str(group)})
+            if r is not None:
+                changed.append(r)
+        return changed
 
     def update_rule(self, rule_id: str, changes: dict) -> Rule | None:
         """Change an existing rule's action, port, note or expiry in place, keeping its id and position (e.g.
