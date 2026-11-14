@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 
 from egressgw.grants import READ_METHODS, Target, path_ok
 from egressgw.learning import REASON as LEARNING
-from egressgw.policy import Decision, host_matches, ip_addr, is_ip, valid_hostname
+from egressgw.policy import Decision, ip_addr, is_ip, valid_hostname
 from egressgw.store import render
 
 if TYPE_CHECKING:
@@ -182,20 +182,12 @@ class Access:
 
     # ---------------------------------------------------------------- limits of a destination
     def host_limits(self, host: str) -> Limits:
-        """The limits a destination has by itself (from the gateway config): read-only, credentials,
-        repositories. `host` is a checked name; an IP literal has none."""
-        gw = self.gw
-        lim = Limits(host=host, add_needs_https_host=True)
-        ro = next((r for r in gw.readonly if host_matches(r.host, host)), None)
-        if ro:
-            lim.no_writes, lim.post_is_write, lim.read_posts = True, ro.post_is_write, tuple(ro.read_posts)
-        lim.repos = gw.github.applies(host)
-        if host in gw.inject_hosts:
-            rules = [r for r in gw.inject if r["host"].lower().rstrip(".") == host]
-            own = tuple(r.get("header", "Authorization") for r in rules)
-            lim.strip = (*own, *gw.strip_headers)
-            lim.add = tuple((r.get("header", "Authorization"), r["value"]) for r in rules)
-        return lim
+        """The limits a destination has by itself (from the read-only gateway config): read-only, credentials,
+        repositories. `host` is a checked name; an IP literal has none. Decided from the destination model
+        (`gw.file_model`), not from the config lists directly (ADR-0014)."""
+        from egressgw import decide  # local: decide imports Limits from this module
+
+        return decide.host_limits(self.gw.file_model, host, self.gw.strip_headers)
 
     def grant_limits(self, v: Verdict, now: float | None = None) -> Limits:
         """The limits of a connection carried by a grant: the target's scheme and paths, the level that was

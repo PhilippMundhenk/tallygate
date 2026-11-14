@@ -208,8 +208,15 @@ Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is
   and hosts that match nothing). Not wired into enforcement yet; it proves the merge of the file properties
   before the switch. Access entries are not shadowed here - they map one-to-one from rules and the model's own
   tests round-trip them.
-- Open: deciding the connection and grant limits from the model, then the switch; the file format (gateway
-  reads and writes `destinations:`), migration, API and UI.
+- 2026-11-14: the switch begins with the file properties: `model.Access.host_limits` no longer reads the
+  config lists (`gw.readonly`, `gw.inject`, `gw.github`) directly; it decides from the destination model
+  (`gw.file_model`, built once from the read-only config via `destinations.file_destinations`) through
+  `decide.host_limits`. Interception and the TLS/request checks follow, since they go through `host_limits`.
+  The step-2 equivalence test plus the full unit and e2e suite hold the behaviour. Grants and rules still read
+  the live mutable state (`gw.grants`, `gw.policy`): they are the source of truth until the file format makes
+  the model the source, which is when they move over too.
+- Open: grant limits and the connection decision from the model; the file format (gateway reads and writes
+  `destinations:`), migration, API and UI.
 
 ## Consequences
 
