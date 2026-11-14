@@ -70,6 +70,7 @@ function showTab(name) {
   history.replaceState(null, "", "#" + name);
   if (name === "destinations") guard(loadPolicy)();  // the rules table
   if (name === "quickstart") guard(loadPolicy)();  // shortcuts/presets reflect the current policy
+  if (name === "settings") guard(loadPolicy)();  // Mode + raw policy JSON come from the policy
   if (name === "grants") { guard(loadGrants)(); guard(loadSecrets)(); }
   if (tabHooks[name]) guard(tabHooks[name])();
   if (name === "log" && !logLoaded) guard(loadLog)();

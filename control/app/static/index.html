@@ -25,6 +25,7 @@
     <button data-tab="grants" id="tabbtn-grants" role="tab" aria-selected="false" aria-controls="tab-grants">Grants <span id="grantActiveCount" class="badge ok hidden">0</span></button>
     <button data-tab="console" id="tabbtn-console" role="tab" aria-selected="false" aria-controls="tab-console">Console</button>
     <button data-tab="files" id="tabbtn-files" role="tab" aria-selected="false" aria-controls="tab-files">Files</button>
+    <button data-tab="settings" id="tabbtn-settings" role="tab" aria-selected="false" aria-controls="tab-settings">Settings</button>
     <button data-tab="setup" id="tabbtn-setup" role="tab" aria-selected="false" aria-controls="tab-setup">Setup</button>
   </nav>
 <main>
@@ -99,20 +100,11 @@
   <section id="tab-destinations" role="tabpanel" aria-labelledby="tabbtn-destinations" class="hidden">
     <h2>Destinations</h2>
     <div id="destBox"></div>
-    <div class="grid2">
-      <div class="card">
-        <h3>Mode</h3>
-        <label>Default action for unmatched destinations
-          <select id="defaultAction"><option value="ask">ask (human-in-the-loop)</option><option value="deny">deny (allowlist)</option><option value="allow">allow (blocklist)</option></select></label>
-        <label>Approval timeout (s) <input type="number" id="askTimeout" min="5" max="3600"></label>
-        <button id="saveMode">Save</button>
-      </div>
-      <div class="card">
-        <h3>Test a destination</h3>
-        <p class="hint">Dry run: what would happen if the agent connected now? Shows the decision and what made it.</p>
-        <div class="row"><input id="testHost" aria-label="Host or IP to test" placeholder="host or IP"><input id="testPort" type="number" value="443" class="port" aria-label="Port"><button id="testBtn">Test</button></div>
-        <pre id="testOut" class="muted"></pre>
-      </div>
+    <div class="card">
+      <h3>Test a destination</h3>
+      <p class="hint">Dry run: what would happen if the agent connected now? Shows the decision and what made it.</p>
+      <div class="row"><input id="testHost" aria-label="Host or IP to test" placeholder="host or IP"><input id="testPort" type="number" value="443" class="port" aria-label="Port"><button id="testBtn">Test</button></div>
+      <pre id="testOut" class="muted"></pre>
     </div>
     <details class="card" id="neverCard"><summary>Never reachable <span id="neverCount" class="muted"></span></summary>
       <p class="hint">Every range that can never be reached, from every place that defines one. Nothing is asked
@@ -123,9 +115,6 @@
       <p class="hint" id="hardDenyHint"><b>Add your own</b> (one range per line), e.g. your Docker host's public IP as
         <code>&lt;address&gt;/32</code> or a provider range. They apply to all connections and can only add to the list.</p>
       <textarea id="hardDeny" rows="5" aria-labelledby="hardDenyHint"></textarea><button id="saveHard">Save my additions</button></details>
-    <details class="card"><summary>Advanced: raw policy JSON</summary>
-      <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><div class="row"><button id="saveRaw">Replace policy</button>
-        <button id="reloadRaw" class="secondary">Reload from the gateway</button></div></details>
   </section>
 
   <!-- QUICK START (shortcuts + learning) -->
@@ -279,6 +268,30 @@
     <p id="fileTruncated" class="hint hidden">Only the first 2000 entries are shown.</p>
   </section>
 
+
+  <!-- SETTINGS -->
+  <section id="tab-settings" role="tabpanel" aria-labelledby="tabbtn-settings" class="hidden">
+    <h2>Settings</h2>
+    <p class="hint">How unmatched destinations are handled, the gateway behaviour tunables, and the raw policy. Trust-critical settings (credential injection, LAN access, the never-reachable floor) stay in the read-only gateway config by design.</p>
+    <div class="card">
+      <h3>Mode</h3>
+      <label>Default action for unmatched destinations
+        <select id="defaultAction"><option value="ask">ask (human-in-the-loop)</option><option value="deny">deny (allowlist)</option><option value="allow">allow (blocklist)</option></select></label>
+      <label>Approval timeout (s) <input type="number" id="askTimeout" min="5" max="3600"></label>
+      <button id="saveMode">Save</button>
+    </div>
+    <details class="card" id="settingsCard"><summary>Behaviour settings</summary>
+      <p class="hint">Tunables the gateway owns — log retention, learning mode, rule suggestions and grant-request
+        limits. Saved here without editing a file or restarting; a few take effect only after a restart (marked).
+        Trust-critical settings (credential injection, LAN access, the never-reachable floor) stay in the
+        read-only gateway config by design.</p>
+      <div id="settingsBox"></div>
+    </details>
+    <details class="card"><summary>Advanced: raw policy JSON</summary>
+      <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><div class="row"><button id="saveRaw">Replace policy</button>
+        <button id="reloadRaw" class="secondary">Reload from the gateway</button></div></details>
+  </section>
+
   <!-- SETUP (wizard.js) -->
   <section id="tab-setup" role="tabpanel" aria-labelledby="tabbtn-setup" class="hidden">
     <h2>First start</h2>
@@ -344,13 +357,6 @@
       <p class="hint">Browser notifications appear for new requests while this tab is in the background.</p>
       <button id="notifyBtnCard" class="secondary notify-btn">Enable browser notifications</button> <span id="notifyPermCard" class="muted notify-perm"></span>
       <div id="pushSetup"></div></div>
-    <details class="card" id="settingsCard"><summary>Behaviour settings</summary>
-      <p class="hint">Tunables the gateway owns — log retention, learning mode, rule suggestions and grant-request
-        limits. Saved here without editing a file or restarting; a few take effect only after a restart (marked).
-        Trust-critical settings (credential injection, LAN access, the never-reachable floor) stay in the
-        read-only gateway config by design.</p>
-      <div id="settingsBox"></div>
-    </details>
   </section>
 </main>
 </div>
