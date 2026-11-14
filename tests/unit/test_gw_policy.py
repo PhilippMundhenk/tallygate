@@ -158,6 +158,21 @@ def test_update_rule_edits_in_place_keeping_id_and_position():
     assert p.rules[0].action == "deny"  # a rejected edit leaves the rule untouched
 
 
+def test_group_rules_into_a_named_set():
+    # #142: put several allow rules in one named set, and clear it again.
+    p = Policy()
+    for h in ("a.example", "b.example", "c.example"):
+        p.add_rule(Rule(action="allow", host=h, id=h[0]), top=False)
+    changed = p.set_group(["a", "b", "x"], "used-car shops")  # "x" does not exist, skipped
+    assert [r.id for r in changed] == ["a", "b"]
+    assert {r.id: r.group for r in p.rules} == {"a": "used-car shops", "b": "used-car shops", "c": ""}
+    assert p.rules[0].to_dict()["group"] == "used-car shops"  # serialised only when set
+    assert "group" not in p.rules[2].to_dict()
+    assert Rule.from_dict(p.rules[0].to_dict()).group == "used-car shops"  # round-trips
+    p.set_group(["a", "b"], "")  # clear
+    assert all(r.group == "" for r in p.rules)
+
+
 def test_update_rule_can_clear_an_expiry():
     p = Policy()
     p.add_rule(Rule(action="allow", host="a.example", id="a", expires=100))

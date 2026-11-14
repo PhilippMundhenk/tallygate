@@ -190,6 +190,7 @@ def test_destination_serialisation_keeps_only_set_fields():
         tls_verify=False,
         note="n",
         expires=100,
+        group="shops",
         id="r2",
         source="config",
     )

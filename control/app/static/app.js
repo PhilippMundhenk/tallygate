@@ -299,9 +299,11 @@ async function loadPolicy(keepEdits = false) {
   const body = $("#rulesBody"); body.innerHTML = "";
   policy.rules.forEach((r, i) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${i + 1}</td><td class="a-${esc(r.action)}">${esc(r.action)}</td><td><code>${esc(r.host || r.cidr)}</code></td>
+    tr.innerHTML = `<td><input type="checkbox" class="rsel" aria-label="select rule"></td><td>${i + 1}</td><td class="a-${esc(r.action)}">${esc(r.action)}</td><td><code>${esc(r.host || r.cidr)}</code></td>
       <td>${esc(portText(r.port))}</td><td>${esc(r.note || "")}${r.source ? ` <span class="muted">[${esc(r.source)}]</span>` : ""}</td>
+      <td>${r.group ? `<span class="chip">${esc(r.group)}</span>` : ""}</td>
       <td>${r.expires ? esc(fmtDate(r.expires)) : "–"}</td><td></td>`;
+    tr.querySelector(".rsel").dataset.id = r.id;
     const e = document.createElement("button"); e.textContent = "edit"; e.className = "small secondary";
     e.onclick = () => editRule(tr, r);
     const b = document.createElement("button"); b.textContent = "delete"; b.className = "small secondary";
@@ -310,19 +312,34 @@ async function loadPolicy(keepEdits = false) {
   });
   await renderQuick();
 }
+function selectedRuleIds() {
+  return [...document.querySelectorAll("#rulesBody .rsel:checked")].map((c) => c.dataset.id);
+}
+async function groupSelected(group) {
+  const ids = selectedRuleIds();
+  if (!ids.length) throw new Error("Tick one or more rules first");
+  if (group && !$("#groupName").value.trim()) throw new Error("Enter a group name");
+  await gw("POST", "/rules/group", { ids, group });
+  toast(group ? `${ids.length} rule(s) grouped as “${group}”` : `${ids.length} rule(s) ungrouped`);
+  $("#groupName").value = ""; await loadPolicy();
+}
+$("#groupSel").onclick = guard(() => groupSelected($("#groupName").value.trim()));
+$("#ungroupSel").onclick = guard(() => groupSelected(""));
 // Edit a rule in place (#141): change action/port/note/expiry without deleting and re-adding, so a permanent
 // "always allow" from the log can be given a time limit later while keeping its id and its place in the list.
 // Host/cidr are not editable - what a rule matches is a different rule, add/remove for that.
 function editRule(tr, r) {
+  // columns: [0] select, [1] #, [2] action, [3] match, [4] port, [5] note, [6] group, [7] expires, [8] actions
   const left = esc(fmtLeft(r.expires));  // the editor is a row, built from trusted field values and esc()d
-  tr.cells[1].innerHTML = `<select class="eAction"><option${r.action === "allow" ? " selected" : ""}>allow</option><option${r.action === "deny" ? " selected" : ""}>deny</option><option${r.action === "ask" ? " selected" : ""}>ask</option></select>`;
-  tr.cells[3].innerHTML = `<input class="eP" size="7" value="${esc(portText(r.port))}">`;
-  tr.cells[4].innerHTML = `<input class="eN" value="${esc(r.note || "")}">`;
-  tr.cells[5].innerHTML = `<input class="eT" size="9" placeholder="${r.expires ? `${left} left` : "permanent"}"><span class="muted"> s, blank=∞</span>`;
-  const cell = tr.cells[6]; cell.innerHTML = "";
+  tr.cells[2].innerHTML = `<select class="eAction"><option${r.action === "allow" ? " selected" : ""}>allow</option><option${r.action === "deny" ? " selected" : ""}>deny</option><option${r.action === "ask" ? " selected" : ""}>ask</option></select>`;
+  tr.cells[4].innerHTML = `<input class="eP" size="7" value="${esc(portText(r.port))}">`;
+  tr.cells[5].innerHTML = `<input class="eN" value="${esc(r.note || "")}">`;
+  tr.cells[6].innerHTML = `<input class="eG" size="10" value="${esc(r.group || "")}" placeholder="group">`;
+  tr.cells[7].innerHTML = `<input class="eT" size="9" placeholder="${r.expires ? `${left} left` : "permanent"}"><span class="muted"> s, blank=∞</span>`;
+  const cell = tr.cells[8]; cell.innerHTML = "";
   const save = document.createElement("button"); save.textContent = "save"; save.className = "small";
   save.onclick = guard(async () => {
-    const changes = { action: tr.querySelector(".eAction").value, port: parsePort(tr.querySelector(".eP").value), note: tr.querySelector(".eN").value };
+    const changes = { action: tr.querySelector(".eAction").value, port: parsePort(tr.querySelector(".eP").value), note: tr.querySelector(".eN").value, group: tr.querySelector(".eG").value.trim() };
     const t = tr.querySelector(".eT").value.trim();
     if (t) { if (!/^\d+$/.test(t) || +t <= 0) throw new Error("Expiry: whole seconds from now, or blank for permanent"); changes.expires = Date.now() / 1000 + +t; }
     else changes.expires = null;  // blank clears the expiry: the rule becomes permanent

@@ -79,6 +79,19 @@ def test_rules_add_validate_and_delete(gw):
     assert "bad.example" not in (core.DATA_DIR / "policy.yaml").read_text()
 
 
+def test_group_rules_endpoint(gw):
+    # #142: POST /rules/group tags several rules with one name; an empty name clears it.
+    a = admin(gw, "POST", "/rules", {"action": "allow", "host": "a.example"})[1]
+    b = admin(gw, "POST", "/rules", {"action": "allow", "host": "b.example"})[1]
+    status, data = admin(gw, "POST", "/rules/group", {"ids": [a["id"], b["id"]], "group": "shops"})
+    assert status == 200 and data["group"] == "shops" and len(data["changed"]) == 2
+    assert all(r.group == "shops" for r in gw.policy.rules if r.id in (a["id"], b["id"]))
+    assert "shops" in (core.DATA_DIR / "policy.yaml").read_text()  # persisted
+    assert admin(gw, "POST", "/rules/group", {"ids": [a["id"]], "group": ""})[1]["changed"][0]["id"] == a["id"]
+    assert gw.policy.rules[0].group == "" or all(r.group == "" for r in gw.policy.rules if r.id == a["id"])
+    assert admin(gw, "POST", "/rules/group", {"ids": "notalist"})[0] == 400  # validation, not 500
+
+
 def test_rule_edit_in_place(gw):
     # #141: PATCH changes an existing rule's action/port/note/expiry, keeping its id.
     status, rule = admin(gw, "PATCH", "/rules/ok", {"action": "deny", "expires": 2000000000, "note": "limited"})

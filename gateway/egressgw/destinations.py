@@ -156,6 +156,7 @@ class Destination:
     tls_verify: bool = True
     note: str = ""
     expires: float | None = None  # unix ts, None = permanent
+    group: str = ""  # a rule's named set (#142)
     id: str = ""
     source: str = "file"  # file | user | approval | preset | grant | config
 
@@ -213,6 +214,8 @@ class Destination:
             d["note"] = self.note
         if self.expires is not None:
             d["expires"] = round(self.expires)
+        if self.group:
+            d["group"] = self.group
         if self.id:
             d["id"] = self.id
         if self.source != "file":
@@ -223,7 +226,7 @@ class Destination:
     def from_dict(cls, d: dict) -> Destination:
         known = {
             "match", "access", "methods", "paths", "read_paths", "credentials", "repos",
-            "request", "scheme", "lan", "address", "tls", "note", "expires", "id", "source",
+            "request", "scheme", "lan", "address", "tls", "note", "expires", "group", "id", "source",
         }  # fmt: skip
         unknown = set(d) - known
         if unknown:
@@ -250,6 +253,7 @@ class Destination:
             tls_verify=bool(tls.get("verify", True)),
             note=str(d.get("note", "")),
             expires=d.get("expires"),
+            group=str(d.get("group", "")),
             id=str(d.get("id", "")),
             source=str(d.get("source", "file")),
         )
@@ -294,6 +298,7 @@ def translate(gw: Gateway) -> Model:
                 access=r.action,
                 note=r.note,
                 expires=r.expires,
+                group=r.group,
                 id=r.id,
                 source=r.source,
             )
@@ -479,6 +484,7 @@ def from_rules(rules: list[Rule]) -> list[Destination]:
             access=r.action,
             note=r.note,
             expires=r.expires,
+            group=r.group,
             id=r.id,
             source=r.source,
         )

@@ -26,6 +26,8 @@ main{padding:16px;min-width:0;flex:1}
 h2{font-size:17px;margin:4px 0 8px}h3{font-size:14px;margin:0 0 8px}
 .hint{color:var(--muted);font-size:13px;margin:4px 0 12px}.muted{color:var(--muted)}.hidden{display:none!important}
 .badge{background:var(--amber);color:#000;border-radius:10px;padding:0 6px;font-size:12px;margin-left:4px}
+.chip{display:inline-block;background:#2c313c;color:var(--fg);border-radius:10px;padding:1px 8px;font-size:12px}
+.rules-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
 button{background:#2563eb;color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer;font:inherit}
 button.secondary{background:#2c313c}button.danger{background:#dc2626}button.small{padding:3px 8px;font-size:12px}
 input,select,textarea{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font:inherit}
