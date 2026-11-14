@@ -68,7 +68,7 @@ function showTab(name) {
     b.classList.toggle("active", on); b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1;
   });
   history.replaceState(null, "", "#" + name);
-  if (name === "destinations") guard(loadPolicy)();
+  if (name === "destinations") { guard(loadPolicy)(); guard(loadGrants)(); }  // grant defs + editor live here now
   if (name === "grants") { guard(loadGrants)(); guard(loadSecrets)(); }
   if (tabHooks[name]) guard(tabHooks[name])();
   if (name === "log" && !logLoaded) guard(loadLog)();
@@ -506,7 +506,7 @@ function renderGrants() {
   const act = $("#activeGrants"); act.innerHTML = "";
   const sus = grants.auto_suspended;
   $("#autoSuspended").classList.toggle("hidden", !sus);
-  if (sus) $("#autoSuspended").textContent = `Automatic approval is suspended since the emergency stop${sus.since ? " at " + fmtDate(sus.since) : ""}: every grant request needs you. Change the mode in the Rules tab to resume it.`;
+  if (sus) $("#autoSuspended").textContent = `Automatic approval is suspended since the emergency stop${sus.since ? " at " + fmtDate(sus.since) : ""}: every grant request needs you. Change the mode on the Destinations tab to resume it.`;
   $("#activeEmpty").classList.toggle("hidden", grants.active.length > 0);
   for (const a of grants.active) {
     const el = document.createElement("div"); el.className = "card row-between";

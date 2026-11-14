@@ -18,11 +18,10 @@
       here; on-request destinations (grants) are defined on the <i>Grants</i> tab; read-only hosts, added
       credentials and repository limits come from the gateway config file and are shown read-only.</p>
     <div class="toolbar">
-      <select id="dAction" aria-label="Access">${[...RULE_ACTIONS, "request"].map((a) => `<option>${a}</option>`).join("")}</select>
+      <select id="dAction" aria-label="Access">${RULE_ACTIONS.map((a) => `<option>${a}</option>`).join("")}</select>
       <select id="dKind" aria-label="Match by"><option value="host">host</option><option value="cidr">cidr</option></select>
       <input id="dMatch" aria-label="Host or CIDR" placeholder="*.example.com  or  203.0.113.0/24">
       <input id="dPort" aria-label="Ports" placeholder="port(s): 443 | 80,443 | *" class="portw">
-      <input id="dReqName" aria-label="On-request name" placeholder="on-request name" class="hidden">
       <input id="dNote" aria-label="Note" placeholder="note">
       <input id="dTtl" type="number" aria-label="TTL in seconds (optional)" placeholder="TTL s" class="port">
       <button id="dAdd">Add</button>
@@ -34,9 +33,10 @@
       <input id="dFilter" type="search" aria-label="Filter destinations" placeholder="filter">
     </div>
     <div class="table-wrap"><table class="dests"><thead><tr><th><span class="sr-only">Select</span></th>
-      <th>Destination</th><th>Access</th><th>Limits</th><th>On request</th><th>Group</th><th>Source</th>
+      <th>Destination</th><th>Access</th><th>Limits</th><th>Group</th><th>Source</th>
       <th><span class="sr-only">Actions</span></th></tr></thead><tbody id="destBody"></tbody></table></div>
-    <p class="hint" id="destMode"></p>`;
+    <p class="hint" id="destMode"></p>
+    <p class="hint">On-request destinations (grants) are managed below; active grants and secrets are on the <i>Grants</i> tab.</p>`;
 
   function matchText(d) {
     const host = d.match.host || d.match.cidr || "?";
@@ -57,37 +57,30 @@
     if (d.tls && d.tls.fingerprint) out.push("pinned TLS");
     return out.map((t) => `<div>${esc(t)}</div>`).join("") || '<span class="muted">–</span>';
   }
-  function requestText(d) {
-    if (d.access !== "request" || !d.request) return '<span class="muted">–</span>';
-    return `<div>${esc(d.request.name)} <span class="muted">(${esc((d.request.levels || []).join(" / "))})</span></div>`;
-  }
   const isRule = (d) => RULE_ACTIONS.includes(d.access) && d.id;
 
   function render() {
     const q = $("#dFilter").value.trim().toLowerCase(), body = $("#destBody");
     body.innerHTML = "";
     for (const d of model.destinations) {
-      const label = (d.match.host || d.match.cidr || "") + " " + (d.request ? d.request.name : "");
+      if (d.access === "request") continue;  // on-request destinations (grants) are managed in the section below
+      const label = d.match.host || d.match.cidr || "";
       if (q && !label.toLowerCase().includes(q)) continue;
       const [al, cls] = ACCESS[d.access] || ["property", "muted"];
       const tr = document.createElement("tr");
       tr.innerHTML = `<td>${isRule(d) ? '<input type="checkbox" class="dsel" aria-label="select rule">' : ""}</td>
         <td>${matchText(d)}</td>
         <td><span class="${cls}">${esc(al)}</span>${d.expires ? `<div class="muted small-text">ends in ${esc(fmtLeft(d.expires))}</div>` : ""}</td>
-        <td>${limitsText(d)}</td><td>${requestText(d)}</td>
+        <td>${limitsText(d)}</td>
         <td>${d.group ? `<span class="chip">${esc(d.group)}</span>` : ""}</td>
         <td class="muted small-text">${esc(d.source || "")}</td><td></td>`;
       if (isRule(d)) tr.querySelector(".dsel").dataset.id = d.id;
       const actions = tr.lastElementChild;
       if (isRule(d)) {
-        const e = mkbtn("edit", () => editRow(tr, d));
-        const del = mkbtn("delete", guard(async () => { await gw("DELETE", `/destinations/${d.id}`); await load(); }));
-        actions.append(e, del);
-      } else if (d.access === "request") {
-        actions.append(mkbtn("edit", () => showTab("grants")));  // multi-target / credential editing lives there
-        if (d.source === "ui" && d.id) {
-          actions.append(mkbtn("delete", guard(async () => { await gw("DELETE", `/destinations/${d.id}`); await load(); })));
-        }
+        actions.append(
+          mkbtn("edit", () => editRow(tr, d)),
+          mkbtn("delete", guard(async () => { await gw("DELETE", `/destinations/${d.id}`); await load(); })),
+        );
       } else {
         actions.innerHTML = '<span class="muted small-text">config file</span>';
       }
@@ -102,14 +95,14 @@
     b.textContent = text; b.className = "small secondary"; b.onclick = onclick;
     return b;
   }
-  // columns: [0] select, [1] destination, [2] access, [3] limits, [4] on request, [5] group, [6] source, [7] actions
+  // columns: [0] select, [1] destination, [2] access, [3] limits, [4] group, [5] source, [6] actions
   function editRow(tr, d) {
     tr.cells[2].innerHTML = `<select class="eA">${RULE_ACTIONS.map((a) => `<option${a === d.access ? " selected" : ""}>${a}</option>`).join("")}</select>`
       + `<input class="eP" size="6" value="${esc(portText(d.match.port))}" aria-label="ports">`;
     tr.cells[3].innerHTML = `<input class="eN" value="${esc(d.note || "")}" placeholder="note" aria-label="note">`
       + `<input class="eT" size="8" placeholder="${d.expires ? `${esc(fmtLeft(d.expires))} left` : "permanent"}" aria-label="expiry seconds"><span class="muted"> s</span>`;
-    tr.cells[5].innerHTML = `<input class="eG" size="10" value="${esc(d.group || "")}" placeholder="group" aria-label="group">`;
-    const cell = tr.cells[7]; cell.innerHTML = "";
+    tr.cells[4].innerHTML = `<input class="eG" size="10" value="${esc(d.group || "")}" placeholder="group" aria-label="group">`;
+    const cell = tr.cells[6]; cell.innerHTML = "";
     cell.append(
       mkbtn("save", guard(async () => {
         const changes = {
@@ -140,29 +133,16 @@
     $("#dGroupName").value = ""; await load();
   }
 
-  $("#dAction").onchange = () => $("#dReqName").classList.toggle("hidden", $("#dAction").value !== "request");
   $("#dAdd").onclick = guard(async () => {
     const action = $("#dAction").value, kind = $("#dKind").value, match = $("#dMatch").value.trim();
     checkMatch(kind, match);
     const port = parsePort($("#dPort").value);
-    if (action === "request") {
-      // a simple on-request destination (grant); multi-target / credential grants are edited on the Grants tab
-      if (kind !== "host") throw new Error("on-request destinations need a host, not a CIDR");
-      const name = $("#dReqName").value.trim();
-      if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(name)) throw new Error("name: a short id of letters, digits, - or _");
-      if (typeof port !== "number") throw new Error("on-request destinations need one port, e.g. 443");
-      const dest = { match: { host: match, port }, access: "request", scheme: "https", paths: ["/*"],
-        note: $("#dNote").value || "",
-        request: { name, levels: ["read", "write"], approval: { read: "ask", write: "ask" }, default_ttl: 3600, max_ttl: 14400 } };
-      await gw("POST", "/destinations", dest); toast(`On-request destination “${name}” added`);
-    } else {
-      const dest = { match: { [kind]: match }, access: action };
-      if (port !== "*") dest.match.port = port;
-      if ($("#dNote").value) dest.note = $("#dNote").value;
-      if (+$("#dTtl").value > 0) dest.expires = Date.now() / 1000 + +$("#dTtl").value;
-      await gw("POST", "/destinations", dest); toast("Rule added");
-    }
-    $("#dMatch").value = ""; $("#dReqName").value = ""; await load();
+    const dest = { match: { [kind]: match }, access: action };
+    if (port !== "*") dest.match.port = port;
+    if ($("#dNote").value) dest.note = $("#dNote").value;
+    if (+$("#dTtl").value > 0) dest.expires = Date.now() / 1000 + +$("#dTtl").value;
+    await gw("POST", "/destinations", dest); toast("Rule added");
+    $("#dMatch").value = ""; await load();
   });
   $("#dGroupSel").onclick = guard(() => group($("#dGroupName").value.trim()));
   $("#dUngroupSel").onclick = guard(() => group(""));

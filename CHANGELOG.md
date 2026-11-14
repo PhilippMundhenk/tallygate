@@ -95,7 +95,8 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   (`POST`/`PATCH`/`DELETE /destinations`). Access rules and simple on-request destinations are added, edited,
   deleted and grouped here; the mode, shortcuts, templates, test-a-destination, never-reachable list, raw-policy
   editor and policy history moved here too, and the separate **Rules tab is gone** (folded into Destinations).
-  Multi-target or credential grants are still edited on the Grants tab (#122).
+  Grant *definitions* (the list and the full multi-target/credential editor) also moved to the Destinations
+  tab; the **Grants tab is now a slim flow surface** — active grants and secrets (#122).
 - **Group rules into a named set** in the Rules tab: tick several rules, name a set and group them, so related
   allows (e.g. all the used-car shops) are shown and managed together. A rule's group is editable like its
   other fields and round-trips in the destination model (#142).
