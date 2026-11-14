@@ -472,11 +472,13 @@ $("#qaLan").onclick = guard(async () => {
   const g = await gw("GET", "/grants");
   const help = $("#qaLanHelp");
   if (!(g.lan_allow_ui || []).length) {
-    help.innerHTML = `Grants created in the UI may only reach local addresses inside <code>grants_lan_allow</code>, which is
-      empty. Add your home network to the gateway config and restart the gateway, e.g.
-      <pre>grants_lan_allow: [192.168.1.0/24]</pre> (see <i>Configuration</i> in the docs), or define the grant in the
-      config file itself.`;
-    help.classList.remove("hidden"); return;
+    // No LAN range is allowed for UI grants yet, so there is nothing to fill a form with: explain the one-time
+    // config step. A second click now dismisses it — it used to open and never close again (#178).
+    help.innerHTML = `Grants created in the UI may only reach local addresses inside <code>grants_lan_allow</code>, which
+      is empty. An admin adds your home network to the gateway config and restarts it, e.g.
+      <pre>grants_lan_allow: [192.168.1.0/24]</pre> (see <i>Configuration</i> in the docs), or defines the grant in the
+      config file itself. Once a range is set, this button opens a ready-made grant form.`;
+    help.classList.toggle("hidden"); return;
   }
   help.classList.add("hidden");
   showTab("grants");
@@ -616,9 +618,9 @@ function grantSimpleToAdvanced() {
   $("#geAccess").options[0].disabled = kind === "tcp";
   const full = $("#geAccess").value === "full";
   $("#geRead").checked = kind !== "tcp"; $("#geWrite").checked = full;
-  $("#geAccessHint").textContent = kind === "tcp" ? "Other protocols cannot be limited to reading."
-    : full ? "Full access: the agent can change things. You can still approve read-only each time."
-      : "Read-only: the agent can look but not change anything.";
+  $("#geAccessHint").textContent = kind === "tcp" ? "Raw TCP passes through as-is, so it cannot be limited to reading."
+    : full ? "Full access: every request method — the agent can change things. You can still approve read-only each time."
+      : "Read-only: GET, HEAD and OPTIONS only — the agent can look but not change anything.";
   $("#geTtl").value = $("#geDur").value; $("#geMaxTtl").value = $("#geDur").value;
 }
 function grantAdvancedToSimple() {
