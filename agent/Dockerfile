@@ -50,7 +50,10 @@ COPY entrypoint.sh status.py /usr/local/bin/
 COPY tallygate-cli.py /usr/local/bin/tallygate
 # PreToolUse hook (managed-settings.json): tells the gateway what is about to run, shown next to approvals
 COPY tallygate-hook.py /usr/local/bin/tallygate-hook
-RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/status.py /usr/local/bin/tallygate /usr/local/bin/tallygate-hook
+# `tallygate install` puts its rootless package prefix on PATH for every login shell (and entrypoint.sh)
+COPY profile.d-tallygate-install.sh /etc/profile.d/tallygate-install.sh
+RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/status.py /usr/local/bin/tallygate /usr/local/bin/tallygate-hook \
+ && chmod 644 /etc/profile.d/tallygate-install.sh
 
 ENV HOME=/home/agent DISABLE_AUTOUPDATER=1 TERM=xterm-256color
 USER 1000:1000

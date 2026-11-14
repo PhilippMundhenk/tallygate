@@ -160,6 +160,15 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   recorded; afterwards they are proposed as rules, grouped by domain, to save in one go. The hard deny, deny
   and ask rules, grants and name-first decisions stay in force; it is shown in the header and ends by itself,
   on the emergency stop and on restart (#69).
+- **Rootless package installs for the agent** (`tallygate install PKG…`): the agent can add Debian tools
+  (`shellcheck`, `sqlite3`, `dnsutils`, …) in the middle of a task without the operator rebuilding the image.
+  `apt` and `dpkg` run as uid 1000; the `.deb`s are downloaded through the proxy (held or allowed by the
+  Debian/apt template, so the human still decides) and unpacked into `~/.local/tallygate/root`, which
+  `entrypoint.sh` and `/etc/profile.d` add to `PATH`/`LD_LIBRARY_PATH`. The hardening is untouched: the root
+  filesystem stays read-only (checked by `bypass.sh`), no capabilities or setuid bits apply, and nothing
+  outside the home volume is written. Maintainer scripts are not run, so daemons, `sudo` and packages that
+  need fixed system paths or capabilities do not work. `--list`, `--remove PKG` and `--reset` manage the
+  prefix (#116).
 
 ### Changed
 - **Accessibility:** the filled buttons now meet WCAG AA contrast (the blue and red were 3.7:1 with white text; now 5.2:1 and 4.8:1), the Log tab shows an empty state instead of a bare table, the upgrade-command copy box is a labelled button for screen readers, the keyboard help matches the "Allow once" label, and "load the next page" reads *Load older* everywhere (#143).

@@ -34,3 +34,25 @@ It is shown for about two minutes next to the prompts your connections cause, la
 - The human may grant less than you asked for (e.g. read instead of write). Respect a denial; do not
   look for other ways around the gateway.
 - Credentials for granted services are added by the gateway; you will not see them and do not need them.
+
+## Installing packages
+
+The root filesystem is read-only and you have no `sudo`, so `apt-get install` and `sudo` do not work and
+never will. To add a tool (`shellcheck`, `sqlite3`, `dnsutils`, …), use:
+
+    tallygate install PKG...        # rootless: resolve, download and unpack into your home volume
+    tallygate install --list        # what you installed this way
+    tallygate install --remove PKG  # remove a package from the prefix
+    tallygate install --reset       # delete the whole prefix and start over
+
+- It runs `apt` as you (uid 1000), downloads the `.deb`s through the proxy and unpacks them under
+  `~/.local/tallygate/root`; nothing outside your home volume is written. The downloads use the
+  **Debian/apt** template, so if it is not active they are held for the operator like any destination.
+- `entrypoint.sh` and `/etc/profile.d` put the prefix on `PATH`/`LD_LIBRARY_PATH`. Start a new shell (or
+  re-run your command) after installing so the new tools are found.
+- Maintainer scripts are **not** run, so packages that need them, system services, fixed paths under
+  `/etc`, setuid bits or capabilities (daemons, `sudo`, `iputils-ping`) will not work. Most CLI tools and
+  libraries do. For tools you need every time, ask the operator to add them to the image
+  (`AGENT_EXTRA_PACKAGES`, see docs/operations.md#custom-agent-image).
+- Installed packages live on the home volume and survive restarts, like `pip install --user`. Python and
+  Node packages still use `pip install --user` and `npm install` as before.

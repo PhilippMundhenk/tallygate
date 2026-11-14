@@ -24,6 +24,13 @@ fi
 PERMISSION_MODE=${AGENT_PERMISSION_MODE:-bypassPermissions}
 RC_NAME=${RC_NAME:-tallygate}
 
+# Packages installed rootless with `tallygate install` live on the home volume; put them on PATH for the
+# consoles and Remote Control started below (the same snippet runs for interactive login shells).
+if [[ -f /etc/profile.d/tallygate-install.sh ]]; then
+  # shellcheck source=/dev/null
+  . /etc/profile.d/tallygate-install.sh
+fi
+
 # ---------------------------------------------------------------- CA of the egress gateway
 CA=/ca/egress-gw-ca.pem
 for _ in $(seq 1 30); do [[ -s $CA ]] && break; sleep 1; done

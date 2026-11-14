@@ -163,6 +163,31 @@ USER 1000:1000
 Build it (`docker build -t my-agent .`) and set `image: my-agent` for the `agent` service in a
 `compose.override.yaml`. When building from source, `AGENT_EXTRA_PACKAGES` in `.env` does the same.
 
+### Rootless package installs (`tallygate install`)
+
+For a tool the agent needs **once**, in the middle of a task, it does not have to interrupt you to rebuild
+the image. Inside the agent, `tallygate install PKG…` installs Debian packages without root:
+
+```bash
+tallygate install shellcheck sqlite3   # resolve, download and unpack into the home volume
+tallygate install --list               # what was installed this way
+tallygate install --remove shellcheck  # remove a package from the prefix
+tallygate install --reset              # delete the whole prefix and cache
+```
+
+`apt` and `dpkg` run as the agent user (uid 1000); the `.deb`s are downloaded through the egress proxy and
+unpacked under `~/.local/tallygate/root`, which `entrypoint.sh` and `/etc/profile.d` add to
+`PATH`/`LD_LIBRARY_PATH`. The hardening is untouched: the root filesystem stays read-only, no capabilities
+or setuid bits apply, and nothing outside the home volume is written (`bypass.sh` checks the root
+filesystem stays read-only). The downloads use the **Debian/apt** template, so if it is not active they
+are held for approval like any other destination.
+
+Because maintainer scripts are not run, packages that rely on them, on system services, on fixed paths under
+`/etc`, or on setuid/file capabilities (daemons, `sudo`, `iputils-ping`) do not work; most CLI tools and
+libraries do. Installed packages live on the home volume and survive restarts and image upgrades, like
+`pip install --user`. For tools the agent needs regularly, add them to the image with `AGENT_EXTRA_PACKAGES`
+or a custom image as above.
+
 ### Docker log rotation
 
 All three services set `max-size: 10m` themselves. To rotate other containers too, configure the host:
