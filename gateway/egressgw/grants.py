@@ -25,6 +25,7 @@ from pathlib import Path
 
 import yaml
 
+from egressgw import destinations
 from egressgw.policy import ip_addr, is_ip, parse_never, valid_hostname
 from egressgw.store import atomic_write
 
@@ -362,13 +363,21 @@ class Grants:
         for name, d in (config.get("grants") or {}).items():
             self.defs[name] = GrantDef.from_dict(name, d or {}, "config")
         if self.ui_path.exists():
-            for name, d in (yaml.safe_load(self.ui_path.read_text()) or {}).items():
+            raw = yaml.safe_load(self.ui_path.read_text()) or {}
+            old_form = "destinations" not in raw and bool(raw)  # a pre-0014 {name: def} file
+            for name, d in destinations.grants_from_file(raw).items():
                 if name in self.defs:
                     continue  # config wins
                 try:
                     self.defs[name] = GrantDef.from_dict(name, d or {}, "ui")
                 except ValueError as e:  # e.g. saved by an older version that allowed inject in UI grants
                     log.error("UI grant %s ignored: %s", name, e)
+            if old_form:  # migrate once: back up as *.pre-0014 and rewrite in the destinations form (ADR-0014)
+                backup = self.ui_path.with_suffix(self.ui_path.suffix + ".pre-0014")
+                if not backup.exists():
+                    atomic_write(backup, self.ui_path.read_text())
+                self.save_ui()
+                log.info("migrated %s to the destinations form (backup at %s)", self.ui_path, backup)
         self.active: dict[str, Active] = {}
         self.requests: dict[str, GrantRequest] = {}
         # Set by the emergency stop, cleared by the next mode change: while set, "auto" levels need a human.
@@ -400,12 +409,8 @@ class Grants:
 
     # ---------------------------------------------------------------- definitions (UI)
     def save_ui(self) -> None:
-        data = {
-            n: {k: v for k, v in g.to_dict().items() if k not in ("name", "source")}
-            for n, g in self.defs.items()
-            if g.source == "ui"
-        }
-        atomic_write(self.ui_path, yaml.safe_dump(data, sort_keys=False))
+        ui = {n: g for n, g in self.defs.items() if g.source == "ui"}
+        atomic_write(self.ui_path, yaml.safe_dump(destinations.grants_to_file(ui), sort_keys=False))
 
     def check_ui(self, name: str, d: dict) -> GrantDef:
         """Validate a UI grant definition without storing it."""

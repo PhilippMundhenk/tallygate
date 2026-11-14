@@ -103,6 +103,80 @@ def test_a_destinations_config_loads_like_the_old_keys(tmp_path, monkeypatch):
         assert b.access.host_limits(host) == a.access.host_limits(host), host
 
 
+def test_policy_file_round_trips_and_reads_the_old_form():
+    from egressgw.destinations import policy_from_file, policy_to_file
+    from egressgw.policy import Policy, Rule
+
+    p = Policy()
+    p.default, p.ask_timeout, p.hard_deny = "deny", 90, ["203.0.113.0/24"]
+    p.add_rule(Rule(action="allow", host="a.example", port=443, note="n", group="g", id="r1"), top=False)
+    p.add_rule(Rule(action="deny", cidr="10.0.0.0/8", id="r2"), top=False)
+    f = policy_to_file(p)
+    assert "destinations" in f and "rules" not in f and f["default"] == "deny" and f["ask_timeout"] == 90
+    q = Policy.from_dict(policy_from_file(f))
+    assert (q.default, q.ask_timeout, q.hard_deny) == ("deny", 90, ["203.0.113.0/24"])
+    key = lambda pol: [(r.id, r.action, r.host or r.cidr, r.port, r.note, r.group) for r in pol.rules]  # noqa: E731
+    assert key(q) == key(p)
+    # a pre-0014 file (with `rules`) is passed through so it keeps loading
+    assert policy_from_file({"default": "ask", "rules": [{"action": "allow", "host": "x"}]})["rules"]
+
+
+def test_grants_file_round_trips_and_reads_the_old_form():
+    from egressgw.destinations import grants_from_file, grants_to_file
+    from egressgw.grants import GrantDef
+
+    g = GrantDef.from_dict(
+        "ha",
+        {
+            "description": "d",
+            "levels": ["read", "write"],
+            "approval": {"read": "auto", "write": "ask"},
+            "targets": [
+                {"host": "ha.example", "port": 443, "paths": ["/api/*"]},
+                {"host": "ha2.example", "port": 8443},
+            ],
+        },
+        "ui",
+    )
+    f = grants_to_file({"ha": g})
+    assert "destinations" in f and len(f["destinations"]) == 2  # one request destination per target
+    g2 = GrantDef.from_dict("ha", grants_from_file(f)["ha"], "ui")
+    assert [t.to_dict() for t in g2.targets] == [t.to_dict() for t in g.targets]
+    assert (g2.levels, g2.approval, g2.default_ttl, g2.max_ttl) == (g.levels, g.approval, g.default_ttl, g.max_ttl)
+    # a pre-0014 file ({name: def}) is passed through
+    assert grants_from_file({"ha": {"targets": [{"host": "x", "port": 1}], "levels": ["read"]}})["ha"]
+
+
+def test_old_state_files_are_migrated_on_load(tmp_path, monkeypatch):
+    d = tmp_path / "mig"
+    d.mkdir()
+    monkeypatch.setattr(core, "DATA_DIR", d)
+    monkeypatch.setattr(core, "CONFIG_PATH", d / "config.yaml")
+    monkeypatch.setattr(core, "STATIC_HOSTS", {})
+    (d / "config.yaml").write_text("")
+    (d / "policy.yaml").write_text(
+        yaml.safe_dump({"default": "deny", "rules": [{"id": "r1", "action": "allow", "host": "a.example"}]})
+    )
+    (d / "grants.yaml").write_text(
+        yaml.safe_dump(
+            {"ha": {"targets": [{"host": "ha.example", "port": 443}], "levels": ["read"], "approval": "auto"}}
+        )
+    )
+    g = core.Gateway()
+    # policy.yaml migrated to the destinations form, old kept as *.pre-0014, rules preserved
+    pol = yaml.safe_load((d / "policy.yaml").read_text())
+    assert "destinations" in pol and "rules" not in pol
+    assert (d / "policy.yaml.pre-0014").exists() and "rules:" in (d / "policy.yaml.pre-0014").read_text()
+    assert [r.id for r in g.policy.rules] == ["r1"] and g.policy.default == "deny"
+    # grants.yaml migrated too
+    gr = yaml.safe_load((d / "grants.yaml").read_text())
+    assert "destinations" in gr and (d / "grants.yaml.pre-0014").exists()
+    assert "ha" in g.grants.defs and g.grants.defs["ha"].source == "ui"
+    # loading the already-migrated (new-form) files again changes nothing and makes no second backup
+    g2 = core.Gateway()
+    assert [r.id for r in g2.policy.rules] == ["r1"] and "ha" in g2.grants.defs
+
+
 def test_destinations_cannot_be_mixed_with_old_keys(tmp_path, monkeypatch):
     cfg = {"destinations": [{"match": {"host": "a.example"}, "methods": "no-writes"}], "readonly": ["b.example"]}
     with pytest.raises(ValueError, match="cannot be combined with the old keys"):

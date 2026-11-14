@@ -84,6 +84,10 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - CI: actions pinned to commit SHAs, base images by digest, gitleaks secret scan, Trivy image scan (#18).
 
 ### Added
+- **State files in the destinations form** (ADR-0014): the gateway writes its own `policy.yaml` and UI
+  `grants.yaml` as `destinations:`, and reads either form. A pre-0014 file is migrated once on first start —
+  backed up as `*.pre-0014` and rewritten — and a file that cannot be translated stops the gateway (fail
+  closed). Unattended updates keep working; the API is unchanged.
 - **One management surface** (ADR-0014): the old per-mechanism API routes are removed — `POST`/`PATCH`/`DELETE
   /rules`, `POST /rules/group` and `PUT`/`DELETE /grants` are gone. Rules and on-request destinations are
   created, edited, deleted and grouped through one surface: `POST`/`PATCH`/`DELETE /destinations`,

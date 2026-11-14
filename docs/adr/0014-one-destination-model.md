@@ -244,8 +244,13 @@ Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is
   all go through `/destinations` (and `PUT`/`DELETE /destinations/grant/{name}` for grant definitions). The
   approval flow and presets still add rules in-process (never through the API). `GET /rules/stats`,
   `/rules/cleanup`, `GET /grants`, `/grants/{name}/activate` and the grant-flow routes stay.
-- Open: migrating the gateway's own state files (`policy.yaml`/`grants.yaml`) to the destinations form with
-  `*.pre-0014` backups.
+- 2026-11-14: the gateway's own state files are migrated. `policy.yaml` and the UI `grants.yaml` are written
+  in the destinations form (`destinations.policy_to_file`/`grants_to_file`) and read in either form; a pre-0014
+  file is translated once on load, backed up next to it as `*.pre-0014`, and rewritten. A file that cannot be
+  translated stops the gateway (fail closed). The API's `/policy` view is unchanged.
+- Done: the one destination model, its file format and converter, the unified `/destinations` API and the
+  Destinations UI surface, the removal of the old per-mechanism routes, and the state-file migration. Remaining
+  per the build plan: the security review of the result (#137).
 
 ## Consequences
 
