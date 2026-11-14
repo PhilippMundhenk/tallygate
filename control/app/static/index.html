@@ -160,10 +160,12 @@
       <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><div class="row"><button id="saveRaw">Replace policy</button>
         <button id="reloadRaw" class="secondary">Reload from the gateway</button></div></details>
     <details class="card" id="historyCard"><summary>History, export and import</summary><div id="historyBox"></div></details>
+  </section>
+
+  <!-- GRANTS -->
+  <section id="tab-grants" role="tabpanel" aria-labelledby="tabbtn-grants" class="hidden">
     <h2>Defined grants</h2>
-    <p class="hint">A grant bundles targets (host:port, optionally HTTP paths), access levels (<b>read</b> = GET/HEAD/OPTIONS
-      only, <b>write</b> = everything), LAN access, credential injection and how each level is approved. The agent can
-      request them with <code>tallygate request &lt;name&gt;</code>; grants from the config file are read-only here.</p>
+    <p class="hint">A grant is on-request access the agent asks for by name (<code>tallygate request &lt;name&gt;</code>): one or more targets (host:port, optionally paths), an access level (<b>read</b> = GET/HEAD/OPTIONS, <b>write</b> = everything) and how each use is approved. Grants from the config file are read-only here.</p>
     <div id="grantDefs"></div>
     <button id="grantNew">New grant</button>
 
@@ -234,10 +236,7 @@
         <button id="geSave">Save grant</button><button id="geCancel" class="secondary">Cancel</button>
       </div>
     </div>
-  </section>
 
-  <!-- GRANTS -->
-  <section id="tab-grants" role="tabpanel" aria-labelledby="tabbtn-grants" class="hidden">
     <h2>Active grants</h2>
     <p id="autoSuspended" class="meta warn hidden" role="status"></p>
     <div id="activeGrants"></div>
