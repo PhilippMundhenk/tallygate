@@ -10,8 +10,8 @@
       the table below, grants on the <i>Grants</i> tab; read-only hosts, added credentials and repository limits
       come from the gateway config file.</p>
     <div class="toolbar"><input id="acFilter" type="search" aria-label="Filter destinations" placeholder="filter destination / grant"></div>
-    <div class="table-wrap"><table class="access"><thead><tr><th>Destination</th><th>Access</th><th>Limits</th>
-      <th>On request</th><th>Last used</th></tr></thead><tbody id="acBody"></tbody></table></div>`;
+    <div class="table-wrap"><table class="access"><thead><tr><th scope="col">Destination</th><th scope="col">Access</th><th scope="col">Limits</th>
+      <th scope="col">On request</th><th scope="col">Last used</th></tr></thead><tbody id="acBody"></tbody></table></div>`;
   const ACCESS = { allow: ["Allowed", "a-allow"], ask: ["Asks you", "a-ask"], deny: ["Blocked", "a-deny"],
     request: ["On request only", "a-ask"] };
   const MODE = { ask: "asks you", deny: "blocked", allow: "allowed (log only)" };

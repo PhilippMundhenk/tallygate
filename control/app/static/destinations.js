@@ -32,9 +32,9 @@
       <button id="dUngroupSel" class="small secondary">Ungroup selected</button>
       <input id="dFilter" type="search" aria-label="Filter destinations" placeholder="filter">
     </div>
-    <div class="table-wrap"><table class="dests"><thead><tr><th><span class="sr-only">Select</span></th>
-      <th>Destination</th><th>Access</th><th>Limits</th><th>Group</th><th>Source</th>
-      <th><span class="sr-only">Actions</span></th></tr></thead><tbody id="destBody"></tbody></table></div>
+    <div class="table-wrap"><table class="dests"><thead><tr><th scope="col"><span class="sr-only">Select</span></th>
+      <th scope="col">Destination</th><th scope="col">Access</th><th scope="col">Limits</th><th scope="col">Group</th><th scope="col">Source</th>
+      <th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody id="destBody"></tbody></table></div>
     <p class="hint" id="destMode"></p>
     <p class="hint">On-request destinations (grants) are managed below; active grants and secrets are on the <i>Grants</i> tab.</p>`;
 
