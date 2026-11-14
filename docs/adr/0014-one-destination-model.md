@@ -220,8 +220,16 @@ Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is
   `github_repos`/`github_graphql` would change `RepoScope`'s by-method, canonical-repo-path check if flattened
   to a glob, which the "no behaviour change" rule forbids. The model now carries it faithfully and round-trips
   it; the §1 mapping table is updated. `decide.host_limits` still only needs its presence.
-- Open: grant limits and the connection decision from the model; the file format (gateway reads and writes
-  `destinations:`), migration, API and UI.
+- 2026-11-14: the gateway config reads a `destinations:` block. `destinations.config_destinations` turns the
+  old keys into destinations and `destinations_to_config` turns a `destinations:` block back into the keys the
+  parsers expect, so the gateway reads either form (translated in memory, fail-closed) but not both mixed.
+  `python -m egressgw.convert` now writes the whole file in the new form (`destinations:` + `never:`). Access
+  rules and the mode stay in `policy.yaml`; `gateway.yaml` holds the file-only properties and `request`
+  grants. Repository scope (`github`) still needs its leaf module; read-only parsing moved to
+  `egressgw/readonly.py` for that. A gateway built from a converted config has the same read-only hosts,
+  credentials, repository scope and grants as one built from the old keys (unit test).
+- Open: grant limits and the connection decision from the model; migrating the gateway's own state files
+  (`policy.yaml`/`grants.yaml`) to the new form with `*.pre-0014` backups; the API and UI.
 
 ## Consequences
 

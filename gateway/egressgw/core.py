@@ -167,6 +167,7 @@ class Gateway:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.config = yaml.safe_load(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
         self.config = self.config or {}
+        self._read_destinations()  # ADR-0014: a `destinations:` block feeds the old keys the parsers expect
         self.policy_path = DATA_DIR / "policy.yaml"
         # The hard-deny floor comes only from the (read-only mounted) static config, never from the API:
         # the built-in list plus `hard_deny_floor`. Validated here: a broken entry must stop the gateway.
@@ -211,7 +212,7 @@ class Gateway:
         self.strip_headers = [str(h) for h in self.config.get("inject_strip_headers") or ["Authorization", "Cookie"]]
         # the read-only config's destination properties as one model (ADR-0014); built once, the config does
         # not change at runtime. A destination's own request limits are decided from this (decide.host_limits).
-        self.file_model = destinations.file_destinations(self)
+        self.file_model = destinations.file_destinations(self.readonly, self.github, self.inject)
         self.max_pending = int(self.config.get("max_pending", 10))
         # rule usage (#70): matches per rule id since the last flush to the event log, as [count, last ts]
         self.hits: dict[str, list] = {}
@@ -240,6 +241,27 @@ class Gateway:
         self.subscribers: set[asyncio.Queue] = set()
         self.api_token = os.environ.get("GW_API_TOKEN", "")
         self._tasks: list[asyncio.Task] = []
+
+    def _read_destinations(self) -> None:
+        """ADR-0014 §5: a `destinations:` block in the gateway config is an alternative to the old property
+        keys. It is translated in memory into those keys (`readonly`/`inject`/`github_*`/`grants`) so the
+        rest of the gateway is unchanged. To keep the meaning unambiguous it may not be mixed with them; a
+        broken entry stops the gateway (fail closed), as the old keys do. `python -m egressgw.convert` writes
+        a config in this form."""
+        entries = self.config.get("destinations")
+        if not entries:
+            return
+        clash = [k for k in destinations.CONFIG_KEYS if self.config.get(k)]
+        if clash:
+            raise ValueError(
+                f"`destinations:` cannot be combined with the old keys {clash}; convert the whole file "
+                "(python -m egressgw.convert <config>)"
+            )
+        if not isinstance(entries, list):
+            raise ValueError("destinations: expected a list of entries")
+        dests = [destinations.Destination.from_dict(e) for e in entries]
+        self.config.update(destinations.destinations_to_config(dests))
+        del self.config["destinations"]
 
     def adopt(self, policy: Policy) -> Policy:
         """Attach the static parts (floor, service exceptions) to a policy loaded from file/API."""
