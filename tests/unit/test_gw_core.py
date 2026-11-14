@@ -502,6 +502,22 @@ def test_host_binding(make):
 
 
 # ------------------------------------------------------------------ websocket / http
+def test_tcp_message_cuts_a_tunnel_after_the_grant_ends(make):
+    from mitmproxy.test import tflow
+
+    gw = make({"grants": GRANTS})
+    t = Target(host="nas.example", port=443, scheme="tcp")
+    a = gw.grants.activate("nas", "write", 600, "", "t")
+    flow = tflow.ttcpflow()
+    gw.verdicts[flow.server_conn.id] = Verdict("nas.example", 443, a.id, t)
+    gw.tcp_message(flow)
+    assert flow.killable and flow.error is None  # grant still active: the tunnel is not cut
+    gw.grants.revoke(a.id)
+    gw.tcp_message(flow)
+    assert not flow.killable  # killed once the grant is gone
+    assert any(e["reason"] == "grant ended: tunnel closed" for e in gw.events.recent(5))
+
+
 def test_websocket_refused_on_read_grants_only(make):
     gw = make({"grants": GRANTS})
     t = Target(host="nas.example", port=443)

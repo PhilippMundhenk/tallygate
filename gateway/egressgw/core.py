@@ -900,6 +900,20 @@ class Gateway:
         if why := self.access.websocket_problem(v):
             self._refuse_raw(flow, v, why)
 
+    @fail_closed
+    def tcp_message(self, flow) -> None:
+        # A raw tunnel stays open after its grant is revoked or expires; cut it on the next message, so no
+        # more data flows once the grant has ended (#137). Killing it here, inside a message hook, closes it.
+        v = self.verdicts.get(flow.server_conn.id)
+        if v and v.grant and not self.access.grant_live(v):
+            self._refuse_raw(flow, v, "grant ended: tunnel closed")
+
+    @fail_closed
+    def websocket_message(self, flow: http.HTTPFlow) -> None:
+        v = self.verdicts.get(flow.server_conn.id)
+        if v and v.grant and not self.access.grant_live(v):
+            self._refuse_raw(flow, v, "grant ended: websocket closed")
+
     def _refuse_raw(self, flow, v: Verdict, reason: str) -> None:
         flow.kill()
         self.record(
