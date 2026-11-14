@@ -131,10 +131,8 @@ def test_what_the_agent_can_reach_is_one_table(ui):
     assert rows["sec.test"]["grants"][0]["name"] == "sec" and rows["sec.test"]["grants"][0]["credentials"] is True
     lan = rows["lanecho.test"]
     assert lan["access"] == "request" and {g["name"] for g in lan["grants"]} == {"lanhttp", "nolan"}
-    page = ui.call("GET", "/")[1]
-    assert b'id="accessCard"' in page and b'src="/static/access.js"' in page
-    status, js, _ = ui.call("GET", "/static/access.js")
-    assert status == 200 and b'gw("GET", "/access")' in js
+    # The separate "What the agent can reach" card was removed as redundant (#176); the reachability
+    # the /api/gw/access view computes is to be folded into the one rules table (#177).
 
 
 def test_never_reachable_is_one_list_in_the_ui(ui):
