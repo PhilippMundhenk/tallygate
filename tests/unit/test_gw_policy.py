@@ -141,6 +141,29 @@ def test_add_rule_top_or_bottom_and_remove():
     assert p.evaluate_name("b.example", 443).rule_id == "catchall"
 
 
+def test_update_rule_edits_in_place_keeping_id_and_position():
+    # #141: give a permanent "always allow" a time limit later, instead of deleting and re-adding it.
+    p = Policy()
+    p.add_rule(Rule(action="allow", host="a.example", id="a"))
+    p.add_rule(Rule(action="deny", host="b.example", id="b"), top=False)
+    new = p.update_rule("a", {"expires": 100, "action": "deny", "port": [80, 443], "note": "limited"})
+    assert [r.id for r in p.rules] == ["a", "b"]  # id and position unchanged
+    assert (new.action, new.port, new.note, new.expires) == ("deny", [80, 443], "limited", 100)
+    assert p.rules[0].expires == 100  # the rule in the list is the edited one
+    assert p.update_rule("gone", {"note": "x"}) is None  # no such rule
+    with pytest.raises(ValueError, match="cannot edit"):
+        p.update_rule("a", {"host": "c.example"})  # host/cidr are not editable
+    with pytest.raises(ValueError):
+        p.update_rule("a", {"action": "permit"})  # the result is still validated
+    assert p.rules[0].action == "deny"  # a rejected edit leaves the rule untouched
+
+
+def test_update_rule_can_clear_an_expiry():
+    p = Policy()
+    p.add_rule(Rule(action="allow", host="a.example", id="a", expires=100))
+    assert p.update_rule("a", {"expires": None}).expires is None  # blank in the UI makes it permanent again
+
+
 def test_policy_from_dict_validation():
     with pytest.raises(ValueError, match=r"unknown policy keys: \['rule'\]"):
         Policy.from_dict({"rule": []})

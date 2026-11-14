@@ -60,6 +60,21 @@ def test_mode_change_from_a_stale_copy_cannot_drop_or_revive_rules(stack):
     assert now["default"] == "deny" and rule_ids(now) == ["new", "keep"]
 
 
+def test_rule_edit_through_the_control_relay(stack):
+    # #141: the UI can PATCH a rule in place (the relay allowlist must let PATCH /rules/<id> through).
+    gw, ui = stack
+    status, data, _ = ui.call(
+        "PATCH", "/api/gw/rules/old", {"action": "deny", "expires": 2000000000, "note": "limited"}
+    )
+    assert status == 200 and data["id"] == "old"
+    assert (data["action"], data["expires"], data["note"]) == ("deny", 2000000000, "limited")
+    _, now, _ = gw["api"].call("GET", "/policy")
+    old = next(r for r in now["rules"] if r["id"] == "old")
+    assert old["action"] == "deny" and old["note"] == "limited"  # persisted on the gateway
+    assert ui.call("PATCH", "/api/gw/rules/missing", {"note": "x"})[0] == 404
+    assert ui.call("PATCH", "/api/gw/rules/old", {"host": "elsewhere.test"})[0] == 400  # host is not editable
+
+
 def wait_for(fn, timeout=5.0):
     deadline = time.time() + timeout
     while time.time() < deadline:

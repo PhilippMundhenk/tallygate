@@ -79,6 +79,19 @@ def test_rules_add_validate_and_delete(gw):
     assert "bad.example" not in (core.DATA_DIR / "policy.yaml").read_text()
 
 
+def test_rule_edit_in_place(gw):
+    # #141: PATCH changes an existing rule's action/port/note/expiry, keeping its id.
+    status, rule = admin(gw, "PATCH", "/rules/ok", {"action": "deny", "expires": 2000000000, "note": "limited"})
+    assert status == 200 and rule["id"] == "ok"
+    assert (rule["action"], rule["expires"], rule["note"]) == ("deny", 2000000000, "limited")
+    assert gw.policy.rules[0].id == "ok" and gw.policy.rules[0].action == "deny"
+    assert gw.events.recent(1)[0]["action"] == "rule~"
+    assert "limited" in (core.DATA_DIR / "policy.yaml").read_text()  # persisted
+    assert admin(gw, "PATCH", "/rules/nope", {"note": "x"})[0] == 404  # no such rule
+    assert admin(gw, "PATCH", "/rules/ok", {"host": "elsewhere.example"})[0] == 400  # host is not editable
+    assert admin(gw, "PATCH", "/rules/ok", {"action": "permit"})[0] == 400  # still validated
+
+
 def test_preset_names_are_checked(gw):
     assert admin(gw, "POST", "/presets/..%2Fpolicy")[0] in (400, 404)
     assert admin(gw, "POST", "/presets/not-an-identifier") == (400, {"error": "bad preset"})

@@ -94,6 +94,15 @@ def build_app(gw: Gateway) -> web.Application:
         gw.record(kind="admin", action="rule+", host=rule.host or rule.cidr, reason=json.dumps(rule.to_dict()))
         return _json(rule.to_dict(), 201)
 
+    @routes.patch("/rules/{rid}")
+    async def edit_rule(request):
+        rule = gw.policy.update_rule(request.match_info["rid"], await request.json())
+        if rule is None:
+            return _json({"error": "not found"}, 404)
+        gw.save_policy(_by(request), f"rule {rule.id} edited ({rule.action} {rule.host or rule.cidr})")
+        gw.record(kind="admin", action="rule~", host=rule.host or rule.cidr, reason=json.dumps(rule.to_dict()))
+        return _json(rule.to_dict())
+
     @routes.delete("/rules/{rid}")
     async def del_rule(request):
         rid = request.match_info["rid"]

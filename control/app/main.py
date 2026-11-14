@@ -83,6 +83,7 @@ GW_ALLOW = [
     ("POST", r"/policy/import"),
     ("POST", r"/emergency-stop"),
     ("POST", r"/rules"),
+    ("PATCH", r"/rules/[A-Za-z0-9_:-]+"),
     ("DELETE", r"/rules/[A-Za-z0-9_:-]+"),  # template rules are <preset>:<id>
     ("GET", r"/rules/stats"),
     ("POST", r"/rules/cleanup"),

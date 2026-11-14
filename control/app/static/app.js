@@ -282,11 +282,35 @@ async function loadPolicy(keepEdits = false) {
     tr.innerHTML = `<td>${i + 1}</td><td class="a-${esc(r.action)}">${esc(r.action)}</td><td><code>${esc(r.host || r.cidr)}</code></td>
       <td>${esc(portText(r.port))}</td><td>${esc(r.note || "")}${r.source ? ` <span class="muted">[${esc(r.source)}]</span>` : ""}</td>
       <td>${r.expires ? esc(fmtDate(r.expires)) : "–"}</td><td></td>`;
+    const e = document.createElement("button"); e.textContent = "edit"; e.className = "small secondary";
+    e.onclick = () => editRule(tr, r);
     const b = document.createElement("button"); b.textContent = "delete"; b.className = "small secondary";
     b.onclick = guard(async () => { await gw("DELETE", `/rules/${r.id}`); await loadPolicy(); });
-    tr.lastElementChild.appendChild(b); body.appendChild(tr);
+    tr.lastElementChild.append(e, b); body.appendChild(tr);
   });
   await renderQuick();
+}
+// Edit a rule in place (#141): change action/port/note/expiry without deleting and re-adding, so a permanent
+// "always allow" from the log can be given a time limit later while keeping its id and its place in the list.
+// Host/cidr are not editable - what a rule matches is a different rule, add/remove for that.
+function editRule(tr, r) {
+  const left = esc(fmtLeft(r.expires));  // the editor is a row, built from trusted field values and esc()d
+  tr.cells[1].innerHTML = `<select class="eAction"><option${r.action === "allow" ? " selected" : ""}>allow</option><option${r.action === "deny" ? " selected" : ""}>deny</option><option${r.action === "ask" ? " selected" : ""}>ask</option></select>`;
+  tr.cells[3].innerHTML = `<input class="eP" size="7" value="${esc(portText(r.port))}">`;
+  tr.cells[4].innerHTML = `<input class="eN" value="${esc(r.note || "")}">`;
+  tr.cells[5].innerHTML = `<input class="eT" size="9" placeholder="${r.expires ? `${left} left` : "permanent"}"><span class="muted"> s, blank=∞</span>`;
+  const cell = tr.cells[6]; cell.innerHTML = "";
+  const save = document.createElement("button"); save.textContent = "save"; save.className = "small";
+  save.onclick = guard(async () => {
+    const changes = { action: tr.querySelector(".eAction").value, port: parsePort(tr.querySelector(".eP").value), note: tr.querySelector(".eN").value };
+    const t = tr.querySelector(".eT").value.trim();
+    if (t) { if (!/^\d+$/.test(t) || +t <= 0) throw new Error("Expiry: whole seconds from now, or blank for permanent"); changes.expires = Date.now() / 1000 + +t; }
+    else changes.expires = null;  // blank clears the expiry: the rule becomes permanent
+    await gw("PATCH", `/rules/${r.id}`, changes); toast("Rule updated"); await loadPolicy();
+  });
+  const cancel = document.createElement("button"); cancel.textContent = "cancel"; cancel.className = "small secondary";
+  cancel.onclick = () => loadPolicy();
+  cell.append(save, cancel);
 }
 // PUT /policy replaces every rule. The browser's copy goes stale (other tab, Telegram "Always", approvals),
 // so only the raw editor and the hard deny use it, and both start from the policy as it is now.
