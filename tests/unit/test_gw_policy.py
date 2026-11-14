@@ -86,17 +86,19 @@ def test_a_cidr_deny_wins_over_a_host_allow_wherever_it_stands():
     assert p.evaluate("x.example", 443, ["8.8.8.8"]).rule_id == "open"  # an expired deny decides nothing
     assert p.evaluate("x.example", 443, ["9.9.9.9"]).rule_id == "open"  # another port
     assert p.evaluate_name("evil.example", 443).action == "allow"  # the name alone: still resolved, then refused
-    # IP literals keep the plain order: the first matching rule decides
+    # IP literals too: a CIDR deny wins over any allow above it (a host pattern, or a broader CIDR allow) (#137)
+    assert p.evaluate("93.184.0.7", 443, ["93.184.0.7"]).rule_id == "net"  # the `*` allow does not shadow it
     q = Policy.from_dict(
         {
             "rules": [
-                {"id": "a", "action": "allow", "cidr": "93.184.0.7/32"},
+                {"id": "a", "action": "allow", "cidr": "93.184.0.7/32"},  # a narrower allow above
                 {"id": "d", "action": "deny", "cidr": "93.184.0.0/16"},
             ]
         }
     )
-    assert q.evaluate("93.184.0.7", 443, ["93.184.0.7"]).rule_id == "a"
+    assert q.evaluate("93.184.0.7", 443, ["93.184.0.7"]).rule_id == "d"  # the deny still wins
     assert q.evaluate("93.184.0.8", 443, ["93.184.0.8"]).rule_id == "d"
+    assert q.evaluate("9.9.9.9", 443, ["9.9.9.9"]).reason == "default"  # outside the deny: the mode decides
 
 
 def test_cidr_allow_needs_every_address_inside_deny_any():

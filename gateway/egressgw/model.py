@@ -147,6 +147,20 @@ class Access:
         names = self.gw.grants.defined_for(host, port)
         return f"available via grant {', '.join(names)} (agent: tallygate request {names[0]})" if names else None
 
+    def request_without_verdict(self, host: str, port: int, scheme: str) -> tuple[Verdict | None, str | None]:
+        """A request on a connection that has no stored verdict: a plain-HTTP proxy request (its hooks run
+        before the server connection exists). The destination is the request's own host, which the agent
+        chose, so it is re-authorised here rather than trusted (#137). Returns (verdict, None), or (None,
+        reason) to refuse."""
+        if scheme == "https":
+            # A legitimate https request arrives through a CONNECT tunnel, where server_connect has gated the
+            # destination and stored a verdict, and TLS is intercepted or bound to the SNI. No verdict here
+            # means an absolute-form `https://` proxy request, which skips all of that and would be checked
+            # against the host it names rather than the connection's checked target (#137).
+            return None, "https over the plain proxy must use CONNECT"
+        m = self.grant_for(host, port)
+        return (Verdict(host, port, m[0].id, m[2]) if m else Verdict(host, port)), None
+
     @staticmethod
     def grant_addresses(t: Target, host: str) -> list[str] | None:
         """The addresses of a grant target that need no lookup (a pinned address, an IP literal), else None."""
