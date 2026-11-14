@@ -1,8 +1,17 @@
 # ADR-0015: Configuration tiers and a backend-owned config file
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-14
 - Issue: #147
+
+## Outcome
+
+Accepted by the maintainer. First implementation: the tier-2 behaviour tunables (log retention, learning,
+suggestions, grant-request limits, policy-history depth, pending caps) move to a backend-owned `settings.yaml`
+in the data volume, seeded once from `gateway.yaml`/env and then edited in the UI (*Setup → Behaviour
+settings*, `GET`/`PATCH /settings`), with no file edit and no restart for the live ones. The trust-critical
+tier stays file-only in `gateway.yaml`; `settings.yaml` refuses any non-tier-2 key, and a broken file stops the
+gateway (fail closed). Deeper tier-1 derivation and the `settings.yaml` schema beyond these keys remain open.
 
 ## Context
 

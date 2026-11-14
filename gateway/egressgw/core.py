@@ -53,6 +53,7 @@ from egressgw.policy import (
     valid_hostname,
 )
 from egressgw.readonly import parse_readonly
+from egressgw.settings import Settings
 from egressgw.store import EventLog, Secrets, atomic_write
 
 log = logging.getLogger("egressgw")
@@ -178,7 +179,9 @@ class Gateway:
         builtin = [] if FLOOR_REPLACE and configured else DEFAULT_HARD_DENY
         self.hard_deny_floor = parse_cidrs([*builtin, *configured], "never")
         self.floor_configured = [c for c in configured if c not in builtin]  # for the "never reachable" view
-        self.history = PolicyHistory(DATA_DIR / "policy-history.db", int(self.config.get("policy_history_keep", 500)))
+        # ADR-0015: behaviour tunables live in a backend-owned settings.yaml, edited in the UI (not file-only).
+        self.settings = Settings(DATA_DIR / "settings.yaml", self.config)
+        self.history = PolicyHistory(DATA_DIR / "policy-history.db", int(self.settings.get("policy_history_keep")))
         if not self.policy_path.exists():
             initial = self.config.get("initial_preset", "baseline")
             preset = PRESET_DIR / f"{initial}.yaml"
@@ -196,14 +199,14 @@ class Gateway:
         self._history("gateway", what)  # nothing is stored when it equals the latest version
         self.events = EventLog(
             DATA_DIR / "events.db",
-            int(self.config.get("log_keep_days", 30)),
-            int(self.config.get("log_max_events", 500_000)),
+            int(self.settings.get("log_keep_days")),
+            int(self.settings.get("log_max_events")),
         )
         self.secrets = Secrets(DATA_DIR / "secrets.json")
         self.learning = Learning(
             self.events.db,
-            parse_ports(self.config.get("learning_ports", [80, 443])),
-            int(self.config.get("learning_max_minutes", 120)),
+            parse_ports(self.settings.get("learning_ports")),
+            int(self.settings.get("learning_max_minutes")),
         )
         self.inject = [dict(i) for i in self.config.get("inject") or []]
         self.inject_hosts = {i["host"].lower().rstrip(".") for i in self.inject}
@@ -213,14 +216,16 @@ class Gateway:
         # the read-only config's destination properties as one model (ADR-0014); built once, the config does
         # not change at runtime. A destination's own request limits are decided from this (decide.host_limits).
         self.file_model = destinations.file_destinations(self.readonly, self.github, self.inject)
-        self.max_pending = int(self.config.get("max_pending", 10))
+        self.max_pending = int(self.settings.get("max_pending"))
         # rule usage (#70): matches per rule id since the last flush to the event log, as [count, last ts]
         self.hits: dict[str, list] = {}
-        self.stale_days = int(self.config.get("rule_stale_days", 30))
-        self.suggest_min = int(self.config.get("suggest_min_approvals", 3))
-        self.suggest_days = int(self.config.get("suggest_window_days", 7))
+        self.stale_days = int(self.settings.get("rule_stale_days"))
+        self.suggest_min = int(self.settings.get("suggest_min_approvals"))
+        self.suggest_days = int(self.settings.get("suggest_window_days"))
         self._dups: dict[tuple, list] = {}
         self.grants = Grants(self.config, DATA_DIR)
+        self.grants.request_timeout = int(self.settings.get("grant_request_timeout"))
+        self.grants.max_requests = int(self.settings.get("grant_max_pending"))
         self.availability = Availability(self.config, DATA_DIR)
         self.activity = Activity()
         self._unavailable = self.availability.mode()[0]  # last state seen by availability_tick
@@ -506,6 +511,19 @@ class Gateway:
             self.record(kind="admin", action="learning", reason=f"learning mode ended: {why} ({by})")
             self.publish({"type": "learning"})
         return s
+
+    def apply_settings(self, changes: dict, by: str = "api") -> list[str]:
+        """Persist UI behaviour settings (ADR-0015) and apply the live-reloadable ones at once. Returns the
+        keys that only take effect after a restart."""
+        restart = self.settings.update(changes)
+        self.max_pending = int(self.settings.get("max_pending"))
+        self.stale_days = int(self.settings.get("rule_stale_days"))
+        self.suggest_min = int(self.settings.get("suggest_min_approvals"))
+        self.suggest_days = int(self.settings.get("suggest_window_days"))
+        self.grants.request_timeout = int(self.settings.get("grant_request_timeout"))
+        self.grants.max_requests = int(self.settings.get("grant_max_pending"))
+        self.record(kind="admin", action="settings", reason=f"settings changed by {by}: {sorted(changes)}")
+        return restart
 
     def save_policy(self, by: str = "api", what: str = "policy changed") -> None:
         self._write_policy_file()  # destinations form (ADR-0014)

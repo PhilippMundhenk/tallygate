@@ -122,6 +122,15 @@ Every key with an example. The file in the repository lists them all, most of th
 | Key | Default | Example | Meaning |
 |---|---|---|---|
 | `initial_preset` | `baseline` | `lockdown` | Preset that creates `policy.yaml` on the very first start. |
+
+> **Behaviour settings move to the UI (ADR-0015).** `log_keep_days`, `log_max_events`, `learning_ports`,
+> `learning_max_minutes`, `rule_stale_days`, `suggest_min_approvals`, `suggest_window_days`,
+> `grant_request_timeout`, `grant_max_pending`, `policy_history_keep` and `max_pending` are now edited in the UI
+> under *Setup → Behaviour settings* and persisted to a backend-owned `settings.yaml` in the data volume. The
+> values below are the built-in defaults; a value here (or the matching env var) only **seeds** `settings.yaml`
+> on first start — after that the UI owns them and you need not set them. The trust-critical settings
+> (`inject`, `tls_verify`, `never`, `grants_lan_allow`, `GW_INTERNAL_NETS`) stay file-only.
+
 | `log_keep_days` | `30` | `7` | Event log retention. |
 | `log_max_events` | `500000` | `100000` | Hard cap on stored events. |
 | `max_pending` | `10` | `5` | Open approvals at once; more unknown destinations are denied immediately. |

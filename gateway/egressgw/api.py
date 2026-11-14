@@ -85,6 +85,16 @@ def build_app(gw: Gateway) -> web.Application:
         by = str(body.get("by", "api") if isinstance(body, dict) else "api")[:64]
         return _json(emergency_stop(gw, by))
 
+    @routes.get("/settings")
+    async def get_settings(_):
+        """Behaviour settings the UI owns (ADR-0015): current values, defaults, and which need a restart."""
+        return _json(gw.settings.describe())
+
+    @routes.patch("/settings")
+    async def patch_settings(request):
+        restart = gw.apply_settings(await request.json(), _by(request))  # bad key/range -> 400 via the middleware
+        return _json({**gw.settings.describe(), "restart_needed": restart})
+
     # ---- destinations: the one CRUD surface over rules and on-request grants (ADR-0014) ----
     # An access destination (allow/ask/deny) is a policy rule; a `request` destination is a grant, addressed
     # by the id `grant:<name>` and its full definition via PUT /destinations/grant/{name}. The old per-mechanism

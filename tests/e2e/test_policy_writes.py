@@ -147,6 +147,18 @@ def test_destinations_crud_through_the_control_relay(stack):
     assert not any(x["match"].get("host") in ("shop.test", "svc2.test") for x in model2["destinations"])
 
 
+def test_behaviour_settings_through_the_control_relay(stack):
+    # ADR-0015 (#147): behaviour settings read and written in the UI via the relay.
+    _, ui = stack
+    status, s, _ = ui.call("GET", "/api/gw/settings")
+    assert status == 200 and "rule_stale_days" in s["values"] and "log_keep_days" in s["restart_keys"]
+    status, after, _ = ui.call("PATCH", "/api/gw/settings", {"rule_stale_days": 50})
+    assert status == 200 and after["values"]["rule_stale_days"] == 50 and after["restart_needed"] == []
+    _, s2, _ = ui.call("GET", "/api/gw/settings")
+    assert s2["values"]["rule_stale_days"] == 50  # persisted
+    assert ui.call("PATCH", "/api/gw/settings", {"inject": []})[0] == 400  # trust-critical stays file-only
+
+
 def wait_for(fn, timeout=5.0):
     deadline = time.time() + timeout
     while time.time() < deadline:

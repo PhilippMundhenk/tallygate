@@ -139,7 +139,7 @@ Details: [docs/operations.md#from-source](docs/operations.md#from-source)
 
 ## Documentation
 
-| | |
+| Guide | What's inside |
 |---|---|
 | [Architecture](docs/architecture.md) | Components, topology, flows, policy model |
 | [Decisions (ADRs)](docs/adr/README.md) | Why it's built this way |
