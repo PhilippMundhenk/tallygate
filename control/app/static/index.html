@@ -340,6 +340,13 @@
       <p class="hint">Browser notifications appear for new requests while this tab is in the background.</p>
       <button id="notifyBtnCard" class="secondary notify-btn">Enable browser notifications</button> <span id="notifyPermCard" class="muted notify-perm"></span>
       <div id="pushSetup"></div></div>
+    <details class="card" id="settingsCard"><summary>Behaviour settings</summary>
+      <p class="hint">Tunables the gateway owns — log retention, learning mode, rule suggestions and grant-request
+        limits. Saved here without editing a file or restarting; a few take effect only after a restart (marked).
+        Trust-critical settings (credential injection, LAN access, the never-reachable floor) stay in the
+        read-only gateway config by design.</p>
+      <div id="settingsBox"></div>
+    </details>
   </section>
 </main>
 </div>
@@ -349,6 +356,7 @@
 <script src="/static/push.js"></script>
 <script src="/static/context.js"></script>
 <script src="/static/wizard.js"></script>
+<script src="/static/settings.js"></script>
 <script src="/static/overview.js"></script>
 <script src="/static/keys.js"></script>
 <script src="/static/update.js"></script>

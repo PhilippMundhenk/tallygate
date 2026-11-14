@@ -84,6 +84,12 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - CI: actions pinned to commit SHAs, base images by digest, gitleaks secret scan, Trivy image scan (#18).
 
 ### Added
+- **Behaviour settings in the UI** (ADR-0015): the gateway's tunables — log retention, learning-mode ports and
+  limit, rule-suggestion thresholds, grant-request timeout and cap, policy-history depth, pending caps — are
+  edited under *Setup → Behaviour settings* (`GET`/`PATCH /settings`) and persisted to a backend-owned
+  `settings.yaml`, seeded once from `gateway.yaml`/env. No file edit, and the live ones apply without a restart.
+  The trust-critical settings (credential injection, LAN, `tls_verify`, the never-reachable floor) stay
+  file-only in `gateway.yaml` by design (#147).
 - **State files in the destinations form** (ADR-0014): the gateway writes its own `policy.yaml` and UI
   `grants.yaml` as `destinations:`, and reads either form. A pre-0014 file is migrated once on first start —
   backed up as `*.pre-0014` and rewritten — and a file that cannot be translated stops the gateway (fail

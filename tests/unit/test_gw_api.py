@@ -130,6 +130,20 @@ def test_destinations_api_cannot_set_file_only_grant_properties(gw):
     assert admin(gw, "POST", "/destinations", bad)[0] == 400
 
 
+def test_settings_get_and_patch(gw):
+    # ADR-0015: behaviour settings editable in the UI, trust-critical stays file-only.
+    status, s = admin(gw, "GET", "/settings")
+    assert status == 200 and set(s) == {"values", "defaults", "restart_keys"}
+    assert s["values"]["rule_stale_days"] == 30 and "log_keep_days" in s["restart_keys"]
+    status, after = admin(gw, "PATCH", "/settings", {"rule_stale_days": 45, "log_keep_days": 14})
+    assert status == 200 and after["values"]["rule_stale_days"] == 45 and after["restart_needed"] == ["log_keep_days"]
+    assert gw.stale_days == 45  # applied live
+    assert admin(gw, "PATCH", "/settings", {"inject": []})[0] == 400  # trust-critical refused, not 500
+    assert admin(gw, "PATCH", "/settings", {"grant_max_pending": 0})[0] == 400  # out of range
+    assert admin(gw, "PATCH", "/settings", {"grant_max_pending": 9})[0] == 200
+    assert gw.grants.max_requests == 9  # applied live to the grant flow
+
+
 def test_model_endpoint_returns_the_whole_destination_model(gw):
     status, model = admin(gw, "GET", "/model")
     assert status == 200 and set(model) == {"default", "destinations", "never"}

@@ -117,6 +117,8 @@ GW_ALLOW = [
     ("GET", r"/never-reachable"),
     ("GET", r"/access"),
     ("GET", r"/model"),
+    ("GET", r"/settings"),
+    ("PATCH", r"/settings"),
     ("GET", r"/availability"),
     ("PATCH", r"/availability"),
     ("DELETE", r"/availability/missed"),
