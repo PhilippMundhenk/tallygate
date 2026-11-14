@@ -64,4 +64,3 @@ def test_a_cidr_deny_refuses_an_ip_literal_below_a_wildcard_allow(make_gateway, 
     assert status in (403, 502)  # the CIDR deny wins over the `*` allow and the narrower allow above it
     _, events, _ = gw["api"].call("GET", "/events?limit=10")
     assert any(e.get("reason") == "rule net" and e["action"] == "deny" for e in events)
-
