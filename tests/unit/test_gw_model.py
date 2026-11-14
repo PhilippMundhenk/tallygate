@@ -117,6 +117,8 @@ def test_read_only_hosts(gw):
         assert check(ro, req(method, host="ro.example")).refuse == "read-only host"
     assert check(oci, req("POST", "/v2/upload", host="x.oci.example")).refuse == "read-only host"
     assert check(oci, req("POST", "/q/search", host="x.oci.example")).refuse is None  # a POST that only reads
+    # a protocol upgrade (WebSocket) is an uninspected channel: refused on a read-only host (#137)
+    assert check(ro, req("GET", host="ro.example", connection="keep-alive, Upgrade")).refuse == "read-only host"
 
 
 def test_credentials_are_stripped_always_and_added_only_to_the_destination_over_tls(gw):

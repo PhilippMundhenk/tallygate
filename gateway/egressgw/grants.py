@@ -39,7 +39,7 @@ DEFAULT_NEVER = ["0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", ":
 MAX_TTL = 7 * 24 * 3600
 NAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,47}")
 # Path tricks that a server might normalise differently than our glob match does.
-_BAD_PATH = re.compile(r"(^|/)\.\.?(/|$)|//|\\|%2e|%2f|%5c|%00|[\x00-\x20\x7f]", re.IGNORECASE)
+_BAD_PATH = re.compile(r"(^|/)\.\.?(/|$)|//|\\|[#;]|%2e|%2f|%5c|%23|%3b|%00|[\x00-\x20\x7f]", re.IGNORECASE)
 
 
 def parse_ttl(v) -> int:
@@ -61,7 +61,7 @@ def fmt_ttl(s: int) -> str:
 
 def path_ok(path: str, patterns: list[str]) -> bool:
     """True if the request path (without query) is canonical and matches one of the patterns."""
-    raw = path.split("?", 1)[0].split("#", 1)[0] or "/"
+    raw = path.split("?", 1)[0] or "/"  # keep `#`/`;`: `_BAD_PATH` refuses them (normalisation tricks)
     if not raw.startswith("/") or _BAD_PATH.search(raw):
         return False
     # Decode to a fixed point: a single unquote lets multiply-encoded traversal (%252e%252e -> %2e%2e)
