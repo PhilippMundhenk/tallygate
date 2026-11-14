@@ -36,7 +36,7 @@
     <div class="card"><div class="row-between"><h3>Last hour</h3><button id="ovLog" class="small secondary">Open the log</button></div>
       <p id="ovCounts" class="ov-counts"></p>
       <div class="ov-grid">
-        <div><h4>Top destinations</h4><div class="table-wrap"><table class="ov-table"><thead><tr><th>Destination</th><th>Connections</th><th>Allowed / denied</th></tr></thead><tbody id="ovTop"></tbody></table></div></div>
+        <div><h4>Top destinations</h4><div class="table-wrap"><table class="ov-table"><thead><tr><th scope="col">Destination</th><th scope="col">Connections</th><th scope="col">Allowed / denied</th></tr></thead><tbody id="ovTop"></tbody></table></div></div>
         <div><h4>New destinations</h4><p class="hint">Seen for the first time in the kept log.</p><ul id="ovNew" class="ov-list"></ul></div>
       </div></div>
     <div class="card" id="ovVersionsCard"><h3>Versions</h3><div id="ovVersions" class="muted">…</div></div>
@@ -87,7 +87,7 @@
       <label><input type="checkbox" id="logOnlyBlocked"> only blocked</label>
       <button id="logMore">Load older</button>
     </div>
-    <div class="table-wrap"><table class="log"><thead><tr><th>Time</th><th>Kind</th><th>Proto</th><th>Destination</th><th>Action</th><th>Reason</th><th><span class="sr-only">Actions</span></th></tr></thead>
+    <div class="table-wrap"><table class="log"><thead><tr><th scope="col">Time</th><th scope="col">Kind</th><th scope="col">Proto</th><th scope="col">Destination</th><th scope="col">Action</th><th scope="col">Reason</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody id="logBody"></tbody></table></div>
     <p id="logEmpty" class="muted hidden">No events yet.</p>
   </section>
@@ -151,7 +151,7 @@
       <p class="hint">Every range that can never be reached, from every place that defines one. Nothing is asked
         about them and no rule can open them. <b>All connections</b>: a grant for one device on the local network
         may be exempt. <b>LAN grants too</b>: closed even for those.</p>
-      <div class="table-wrap"><table class="never"><thead><tr><th>Range</th><th>Applies to</th><th>Comes from</th><th>To change it</th></tr></thead>
+      <div class="table-wrap"><table class="never"><thead><tr><th scope="col">Range</th><th scope="col">Applies to</th><th scope="col">Comes from</th><th scope="col">To change it</th></tr></thead>
         <tbody id="neverBody"></tbody></table></div>
       <p class="hint" id="hardDenyHint"><b>Add your own</b> (one range per line), e.g. your Docker host's public IP as
         <code>&lt;address&gt;/32</code> or a provider range. They apply to all connections and can only add to the list.</p>
@@ -270,7 +270,7 @@
       <form id="fileForm" class="upload-form"><input type="file" id="fileInput" multiple aria-describedby="fileHint" aria-label="Files to upload">
         <div class="upload-actions"><label class="check-inline"><input type="checkbox" id="fileOverwrite"> replace existing files</label><button id="fileUpload">Upload</button></div></form>
       <p class="hint" id="fileHint"></p><div id="fileStatus" class="status" role="status" aria-live="polite"></div></div>
-    <div class="table-wrap"><table class="files"><thead><tr><th>Name</th><th>Size</th><th>Modified</th><th><span class="sr-only">Actions</span></th></tr></thead>
+    <div class="table-wrap"><table class="files"><thead><tr><th scope="col">Name</th><th scope="col">Size</th><th scope="col">Modified</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody id="fileBody"></tbody></table></div>
     <p id="fileTruncated" class="hint hidden">Only the first 2000 entries are shown.</p>
   </section>

@@ -245,6 +245,10 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   (#17, #18).
 
 ### Fixed
+- **Accessibility review** of the control UI (#143): data tables mark their header cells with `scope="col"` for
+  screen readers, and the mobile navigation drawer honours `prefers-reduced-motion`. The review confirmed the
+  rest is already WCAG AA — text contrast ≥ 4.5:1, a visible focus outline, the sidebar/tabs follow the
+  WAI-ARIA tabs pattern, the drawer is keyboard-operable, inputs are labelled, and there are no duplicate ids.
 - Undoing a template could delete rules it never added; "Apply again" with a time limit kept the template
   permanent; template host lists completed (GHCR and Docker Hub blob hosts, `repo.yarnpkg.com`) (#59).
 - The managed setting that skips the bypass-mode prompt had no effect (#26).
