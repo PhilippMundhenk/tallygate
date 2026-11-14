@@ -326,12 +326,12 @@ class Policy:
         def decided(r: Rule) -> Decision:
             return Decision(r.action, f"rule {r.id}" + (f" ({r.note})" if r.note else ""), r.id)
 
-        if name:
-            # A name is decided by the host rules, but a CIDR deny narrows whatever allowed it, wherever it
-            # stands in the list: approvals and shortcuts are added on top and must not switch it off (#119).
-            for r in self.rules:
-                if r.cidr and r.action == "deny" and not r.expired(now) and r.matches(host, port, ips):
-                    return decided(r)
+        # A CIDR deny narrows whatever allowed the destination, wherever it stands in the list: approvals and
+        # shortcuts are added on top and must not switch it off (#119). This holds for names and for IP
+        # literals (a broad CIDR/host allow on top must not override a narrower CIDR deny below).
+        for r in self.rules:
+            if r.cidr and r.action == "deny" and not r.expired(now) and r.matches(host, port, ips):
+                return decided(r)
         for r in self.rules:
             if r.expired(now) or (name and r.cidr):
                 continue  # CIDR allow/ask only for IP literals: a name must never be allowed by its IPs

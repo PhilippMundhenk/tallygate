@@ -11,6 +11,11 @@ set of security fixes from two review rounds, quick actions and templates, help 
 coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you update.
 
 ### Security
+- **A request is checked against its connection's target, not the host it names:** an absolute-form
+  `https://` request sent to the plain proxy (no CONNECT) is refused, so it cannot be checked against the host
+  in its URL instead of a real, gated destination and thereby skip a grant's or an intercepted host's limits.
+- **A CIDR `deny` wins for IP literals too** (completing #119): a `*` shortcut or a broader CIDR allow above a
+  `deny` no longer lets the agent reach the denied range by connecting to an IP in it directly (#137).
 - **A CIDR `deny` rule always wins for names:** a name that resolves into the range of a `deny` rule on a CIDR
   is refused wherever that rule stands. Before, a host `allow` rule above it won, and approvals and shortcuts
   are added on top, so an *Always allow* or *Allow web for 15 min* silently switched the deny off (#119).

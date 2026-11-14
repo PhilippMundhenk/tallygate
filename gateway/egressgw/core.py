@@ -915,7 +915,10 @@ class Gateway:
     def _checks(self, flow: http.HTTPFlow) -> tuple[str, int, str] | None:
         """The one check for every request: asks the model, then strips and adds the credentials it names.
         Returns (host, port, reason) to refuse the request, or None."""
-        v, req = self._verdict_for(flow), flow.request
+        req = flow.request
+        v, refuse = self._verdict_for(flow)
+        if refuse:
+            return (req.host or "?").lower().rstrip("."), req.port, refuse
         out = self.access.check(
             v,
             Req(req.method, req.scheme, req.path, req.host_header, req.pretty_host, req.headers.get("connection", "")),
@@ -928,16 +931,16 @@ class Gateway:
             req.headers[name] = value
         return None
 
-    def _verdict_for(self, flow: http.HTTPFlow) -> Verdict:
-        """The verdict a request belongs to. Plain-HTTP proxy requests are checked before their server
-        connection exists: they get the verdict their connection will get (an active grant, or the URL host)."""
+    def _verdict_for(self, flow: http.HTTPFlow) -> tuple[Verdict | None, str | None]:
+        """(verdict, None), or (None, reason) to refuse. A request on a connection with a stored verdict is
+        checked against it. A request with none - a plain-HTTP proxy request (its hooks run before the server
+        connection exists), or an absolute-form https proxy request - is re-authorised on its own destination
+        rather than trusted (#137)."""
         v = self.verdicts.get(flow.server_conn.id)
-        if v is None:
-            host = (flow.request.host or "").lower().rstrip(".")
-            if flow.request.scheme == "http" and (m := self.access.grant_for(host, flow.request.port)):
-                return Verdict(host, flow.request.port, m[0].id, m[2])
-            return Verdict(host, flow.request.port)
-        return v
+        if v is not None:
+            return v, None
+        host = (flow.request.host or "").lower().rstrip(".")
+        return self.access.request_without_verdict(host, flow.request.port, flow.request.scheme)
 
     def _enforce(self, flow: http.HTTPFlow, early: bool) -> None:
         refusal = self._checks(flow)

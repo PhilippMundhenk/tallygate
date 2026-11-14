@@ -552,31 +552,33 @@ def inject_gw(make):
     return gw
 
 
-def agent_flow(scheme: str, host_header: str):
+def agent_flow(gw, scheme: str, host_header: str, checked: str = "api.example"):
     flow = tflow.tflow(req=tutils.treq(scheme=scheme, host="api.example", port=443, path="/"))
     flow.request.headers["Host"] = host_header
     flow.request.headers["Authorization"] = "Bearer agent-own"
     flow.request.headers["Cookie"] = "session=agent"
+    if scheme == "https":  # an intercepted https connection carries the verdict server_connect decided
+        gw.verdicts[flow.server_conn.id] = Verdict(checked, 443)
     return flow
 
 
 def test_injection_only_over_tls_and_only_for_the_checked_host(make):
     gw = inject_gw(make)
-    flow = agent_flow("https", "api.example")
+    flow = agent_flow(gw, "https", "api.example")
     gw.request(flow)
     assert flow.request.headers["Authorization"] == "Bearer s3cret" and "Cookie" not in flow.request.headers
-    flow = agent_flow("http", "api.example")
+    flow = agent_flow(gw, "http", "api.example")
     gw.request(flow)
     # the agent's own credentials are stripped, and the secret never goes out in clear text
     assert "Authorization" not in flow.request.headers and "Cookie" not in flow.request.headers
-    flow = agent_flow("https", "evil.example")
+    flow = agent_flow(gw, "https", "evil.example")
     gw.request(flow)
     assert flow.response.status_code == 403  # another Host is refused outright (#57)
 
 
 def test_injection_without_a_configured_secret_sends_no_credentials(make):
     gw = make({"inject": [{"host": "api.example", "value": "Bearer ${tok}"}, {"host": "other.example", "value": "x"}]})
-    flow = agent_flow("https", "api.example")
+    flow = agent_flow(gw, "https", "api.example")
     gw.request(flow)
     assert "Authorization" not in flow.request.headers
 
@@ -626,7 +628,7 @@ def test_request_kills_a_refused_flow_whose_body_was_already_streamed(make):
 
 def test_requestheaders_strips_agent_credentials_before_streaming(make):
     gw = inject_gw(make)
-    flow = agent_flow("https", "api.example")
+    flow = agent_flow(gw, "https", "api.example")
     flow.request.stream = True
     gw.requestheaders(flow)
     assert flow.request.headers["Authorization"] == "Bearer s3cret" and "Cookie" not in flow.request.headers
