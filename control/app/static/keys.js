@@ -8,19 +8,19 @@ const keyStore = {
   get(k) { try { const v = localStorage.getItem("tallygate." + k); return v === null ? KEY_SETTINGS[k] : v === "1"; } catch { return KEY_SETTINGS[k]; } },
   set(k, v) { try { localStorage.setItem("tallygate." + k, v ? "1" : "0"); } catch { /* private mode: not kept */ } },
 };
-const KEYS = [["j", "next request"], ["k", "previous request"], ["a", "Allow once / 2 min (grant request: approve)"],
-  ["h", "allow 1 h"], ["d", "deny"], ["?", "show these keys"], ["Esc", "close this list"]];
+const KEYS = [["j", "next request"], ["k", "previous request"], ["a", "Allow 5 min (grant request: approve)"],
+  ["d", "Deny forever (grant request: deny)"], ["?", "show these keys"], ["Esc", "close this list"]];
 
 (() => {
   const opts = $("#approvalOpts");
   const box = (id, label, help) => `<label title="${esc(help)}"><input type="checkbox" id="${id}"> ${esc(label)}</label>`;
-  opts.innerHTML = box("optKeys", "Keyboard shortcuts", "j/k select, a/h/d decide, ? lists the keys")
+  opts.innerHTML = box("optKeys", "Keyboard shortcuts", "j/k select, a/d decide, ? lists the keys")
     + box("optCompact", "Compact list", "One line per connection request")
     + box("optSound", "Sound", "A short tone when a request arrives while this tab is in the background")
     + '<button id="keysBtn" class="small secondary" aria-haspopup="dialog">Keys (?)</button>';
   const dlg = document.createElement("dialog"); dlg.id = "keysHelp"; dlg.setAttribute("aria-labelledby", "keysTitle");
   dlg.innerHTML = `<h3 id="keysTitle">Keyboard shortcuts</h3><dl class="fieldhelp">${KEYS.map(([k, t]) => `<dt><kbd>${esc(k)}</kbd></dt><dd>${esc(t)}</dd>`).join("")}</dl>
-    <p class="hint">On the Approvals tab, outside text fields. a, h and d act on the selected request; without a
+    <p class="hint">On the Approvals tab, outside text fields. a and d act on the selected request; without a
       selection they select the first one. Switch them off with <i>Keyboard shortcuts</i>.</p>
     <form method="dialog"><button>Close</button></form>`;
   document.body.appendChild(dlg);
@@ -63,7 +63,7 @@ function act(key) {
   }
   const el = list[i], grant = el.classList.contains("grantreq");
   const sel = grant ? { a: '[data-decision="approve"]', d: '[data-decision="deny"]' }[key]
-    : { a: '[data-scope="once"]', h: '[data-scope="hour"]', d: '[data-scope="deny"]' }[key];
+    : { a: '[data-key="a"]', d: '[data-key="d"]' }[key];
   const btn = sel && $(sel, el);
   if (!btn) { toast(`"${key}" does not apply to a grant request: use a or d`, true); return; }
   const next = list[i + 1] || list[i - 1] || null;
@@ -76,7 +76,7 @@ document.addEventListener("keydown", (e) => {
   const t = e.target;
   if (t.closest && t.closest("input:not([type=checkbox]):not([type=radio]), textarea, select, [contenteditable], dialog")) return;
   if (e.key === "?") { e.preventDefault(); $("#keysHelp").showModal(); return; }
-  if ($("#tab-approvals").classList.contains("hidden") || !"jkahd".includes(e.key) || e.key.length !== 1) return;
+  if ($("#tab-approvals").classList.contains("hidden") || !"jkad".includes(e.key) || e.key.length !== 1) return;
   e.preventDefault();
   if (e.key === "j") move(1); else if (e.key === "k") move(-1); else act(e.key);
 });
