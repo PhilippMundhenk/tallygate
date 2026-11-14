@@ -68,7 +68,8 @@ function showTab(name) {
     b.classList.toggle("active", on); b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1;
   });
   history.replaceState(null, "", "#" + name);
-  if (name === "destinations") { guard(loadPolicy)(); guard(loadGrants)(); }  // grant defs + editor live here now
+  if (name === "destinations") guard(loadPolicy)();  // the rules table
+  if (name === "quickstart") guard(loadPolicy)();  // shortcuts/presets reflect the current policy
   if (name === "grants") { guard(loadGrants)(); guard(loadSecrets)(); }
   if (tabHooks[name]) guard(tabHooks[name])();
   if (name === "log" && !logLoaded) guard(loadLog)();

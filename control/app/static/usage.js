@@ -95,7 +95,7 @@
   $("#usFilter").addEventListener("input", renderTable);
   $("#usShow").addEventListener("change", renderTable);
   $("#usRefresh").onclick = guard(load);
-  document.addEventListener("tg:tab", (e) => { if (e.detail === "destinations") guard(load)(); });
+  document.addEventListener("tg:tab", (e) => { if (e.detail === "overview") guard(load)(); });
   document.addEventListener("tg:event", (e) => {
     if (loaded && ["policy", "resolved"].includes(e.detail.type) && !$("#tab-destinations").classList.contains("hidden")) load().catch(() => {});
   });
