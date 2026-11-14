@@ -212,6 +212,14 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - Web UI: log history, reconnects, unsaved edits, the console (UTF-8, large pastes, expired sessions), cards
   moving under the cursor, links from chat messages, error messages (#23); accessibility and phone layout
   (#24); quick-action selections and focus, in-page confirmations instead of `confirm()` (#61).
+- Mobile navigation: the eight top tabs no longer wrap onto three lines. The nav is a left sidebar on desktop
+  and a hamburger drawer on mobile, keyboard-navigable with the arrow keys and `role="tab"` semantics kept; the
+  `live`/`reconnecting` indicator and `Log out` stay in the header at every width (#138).
+- Mobile Files upload: the file picker sits on its own line and *replace existing files* and *Upload* move to a
+  row below, instead of overflowing one cramped line (#140).
+- Setup: the lower *Notifications* card reused the *Phone notifications* step's element ids, so its channel
+  status stayed empty and *Enable browser notifications* had no handler. Both cards now have unique ids and are
+  updated together (#120).
 - Notifications: channels fail independently, a queue decouples delivery, a slow homeserver no longer delays
   other prompts, expired prompts are skipped (#22, #63).
 - Gateway robustness: event counts, preset time limits, `fsync` before renames, connection state (#15).

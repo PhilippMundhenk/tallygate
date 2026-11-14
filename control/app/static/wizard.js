@@ -113,10 +113,11 @@ function renderNotify(meta) {
   if (!meta.ok) return step("st-notify", "info", esc(meta.e.message), "bad");
   const n = meta.v.notify;
   const CHANNELS = { telegram: "Telegram", matrix: "Matrix", webpush: "Web Push", ntfy: "ntfy", gotify: "Gotify", pushover: "Pushover" };
-  $("#notifyStatus").textContent = Object.entries(CHANNELS)
+  const text = Object.entries(CHANNELS)
     .filter(([k]) => k in n)
     .map(([k, label]) => `${label}: ${n[k] ? "configured" : "off"}`)
     .join(" · ");
+  $$(".notify-status").forEach((e) => (e.textContent = text));  // both cards (#120)
   step("st-notify", Object.keys(CHANNELS).some((k) => n[k]) ? "done" : "info", "");
   showNotifyPerm();
 }
@@ -251,10 +252,12 @@ $("#selftestBtn").onclick = guard(async () => {
 // Browsers only show the permission prompt after a user gesture, so it is asked from a button.
 function showNotifyPerm() {
   const supported = "Notification" in window;
-  $("#notifyBtn").classList.toggle("hidden", !supported || Notification.permission !== "default");
-  $("#notifyPerm").textContent = !supported ? "not supported by this browser"
+  const hide = !supported || Notification.permission !== "default";
+  $$(".notify-btn").forEach((b) => b.classList.toggle("hidden", hide));
+  const text = !supported ? "not supported by this browser"
     : Notification.permission === "granted" ? "browser notifications are on"
     : Notification.permission === "denied" ? "blocked in the browser's site settings" : "";
+  $$(".notify-perm").forEach((e) => (e.textContent = text));  // both cards (#120)
 }
-$("#notifyBtn").onclick = guard(async () => { await Notification.requestPermission(); showNotifyPerm(); });
+$$(".notify-btn").forEach((b) => (b.onclick = guard(async () => { await Notification.requestPermission(); showNotifyPerm(); })));
 showNotifyPerm();
