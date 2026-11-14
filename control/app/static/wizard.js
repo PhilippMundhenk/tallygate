@@ -256,7 +256,10 @@ function showNotifyPerm() {
   $$(".notify-btn").forEach((b) => b.classList.toggle("hidden", hide));
   const text = !supported ? "not supported by this browser"
     : Notification.permission === "granted" ? "browser notifications are on"
-    : Notification.permission === "denied" ? "blocked in the browser's site settings" : "";
+    : Notification.permission === "denied"
+      ? "Blocked for this site, so the browser will not ask again. To switch it on: click the lock / ⓘ icon left of "
+        + "the address bar → Site settings → Notifications → Allow, then reload this page."
+      : "";
   $$(".notify-perm").forEach((e) => (e.textContent = text));  // both cards (#120)
 }
 $$(".notify-btn").forEach((b) => (b.onclick = guard(async () => { await Notification.requestPermission(); showNotifyPerm(); })));

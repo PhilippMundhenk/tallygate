@@ -109,6 +109,16 @@ def test_failed_check_is_reported_and_retried_later(load_main, release, error): 
     assert second == first and world.release_calls == 1  # failures are cached too (30 min)
 
 
+def test_no_releases_yet_is_not_an_error(load_main):  # noqa: F811
+    # releases/latest is 404 when the repo has published nothing yet: a benign state, not a red error.
+    main = load_main()
+    world = ReleaseWorld((404, {"message": "Not Found"}))
+    first, second = version(main, world)
+    assert first["check"] == "none" and first["latest"] is None and first["update_available"] is None
+    assert "error" not in first
+    assert second == first and world.release_calls == 1  # cached like a success, not retried as a failure
+
+
 def test_cache_expires(load_main, monkeypatch):  # noqa: F811
     main = load_main()
     world = ReleaseWorld()

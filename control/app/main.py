@@ -323,6 +323,11 @@ def _security_headers(resp: web.StreamResponse, path: str) -> None:
     resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), usb=()")
     if path.startswith("/api/") or path in ("/", "/login"):
         resp.headers.setdefault("Cache-Control", "no-store")
+    elif path.startswith("/static/"):
+        # revalidate every load so a UI update (new app.js/style.css) is picked up without a hard reload;
+        # unchanged files still get a cheap 304 via Last-Modified. Without this the browser's heuristic cache
+        # served stale assets and the sidebar/live connection looked broken until a manual reload.
+        resp.headers.setdefault("Cache-Control", "no-cache")
 
 
 def _request_scheme(request: web.Request) -> str:
@@ -840,22 +845,27 @@ async def latest_release(app: web.Application) -> dict:
                 raw = b""  # read() returns what has arrived so far: read until the end or the cap
                 while len(raw) <= UPDATE_MAX_BYTES and (chunk := await r.content.read(UPDATE_MAX_BYTES + 1 - len(raw))):
                     raw += chunk
-                if r.status != 200:
+                if r.status == 404:
+                    # releases/latest is 404 when the repo has published no releases yet: a normal
+                    # state (fresh install, development build), not a failure to report in red.
+                    data = {"none": True}
+                elif r.status != 200:
                     raise ValueError(f"GitHub answered {r.status}")
-                if len(raw) > UPDATE_MAX_BYTES:
-                    raise ValueError("answer too large")
-                rel = json.loads(raw)
-                tag = rel.get("tag_name") if isinstance(rel, dict) else None
-                v = parse_version(tag)
-                if not v:
-                    raise ValueError("no release version in the answer")
-                published = str(rel.get("published_at") or "")[:40]
-                data = {
-                    "version": ".".join(map(str, v)),
-                    # built here, not taken from the answer
-                    "url": f"https://github.com/{UPDATE_REPO}/releases/tag/{urllib.parse.quote(str(tag))}",
-                    "published": published if re.fullmatch(r"[0-9TZ:.+-]*", published) else "",
-                }
+                else:
+                    if len(raw) > UPDATE_MAX_BYTES:
+                        raise ValueError("answer too large")
+                    rel = json.loads(raw)
+                    tag = rel.get("tag_name") if isinstance(rel, dict) else None
+                    v = parse_version(tag)
+                    if not v:
+                        raise ValueError("no release version in the answer")
+                    published = str(rel.get("published_at") or "")[:40]
+                    data = {
+                        "version": ".".join(map(str, v)),
+                        # built here, not taken from the answer
+                        "url": f"https://github.com/{UPDATE_REPO}/releases/tag/{urllib.parse.quote(str(tag))}",
+                        "published": published if re.fullmatch(r"[0-9TZ:.+-]*", published) else "",
+                    }
         except (TimeoutError, aiohttp.ClientError, ValueError) as e:
             data = {"error": f"update check failed: {e}"[:200]}
         _release.update(at=now, data=data)
@@ -890,6 +900,8 @@ async def api_version(request: web.Request):
         rel = await latest_release(app)
         if "error" in rel:
             out.update(check="error", error=rel["error"])
+        elif rel.get("none"):
+            out.update(check="none")  # no releases published yet — benign
         else:
             out.update(check="ok", latest=rel)
             cur = parse_version(out["tallygate"])
