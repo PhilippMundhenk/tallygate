@@ -45,6 +45,8 @@ def test_a_cidr_deny_refuses_a_name_below_rules_that_allow_it(make_gateway, upst
 def test_null_and_garbled_ports_are_rejected(gateway):
     api = gateway["api"]
     for port in (None, [443, None], "https", "443;8443"):
-        status, body, _ = api.call("POST", "/rules", {"action": "allow", "host": "p9.test", "port": port})
+        status, body, _ = api.call(
+            "POST", "/destinations", {"access": "allow", "match": {"host": "p9.test", "port": port}}
+        )
         assert status == 400 and "invalid port" in body["error"], port
     assert not any(r.get("host") == "p9.test" for r in api.call("GET", "/policy")[1]["rules"])

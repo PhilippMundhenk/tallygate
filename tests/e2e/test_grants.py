@@ -168,14 +168,14 @@ def test_tcp_grant_passes_raw_traffic(gateway, upstream):
 def test_ui_defined_grants_are_validated(gateway):
     api = gateway["api"]
     ok = {"targets": [{"host": "cam.test", "port": 80, "scheme": "http"}], "levels": ["read"]}
-    assert api.call("PUT", "/grants/cam", ok)[0] == 200
+    assert api.call("PUT", "/destinations/grant/cam", ok)[0] == 200
     lan_out = {"targets": [{"host": "cam.test", "port": 80, "scheme": "http", "lan": True, "address": "10.1.2.3"}]}
-    assert api.call("PUT", "/grants/cam2", lan_out)[0] == 400
-    assert api.call("PUT", "/grants/svc", ok)[0] == 400  # config grants are read-only
-    assert api.call("DELETE", "/grants/svc")[0] == 400
+    assert api.call("PUT", "/destinations/grant/cam2", lan_out)[0] == 400
+    assert api.call("PUT", "/destinations/grant/svc", ok)[0] == 400  # config grants are read-only
+    assert api.call("DELETE", "/destinations/grant/svc")[0] == 400
     _, g, _ = api.call("GET", "/grants")
     assert {d["name"]: d["source"] for d in g["defs"]}["cam"] == "ui"
-    assert api.call("DELETE", "/grants/cam")[0] == 200
+    assert api.call("DELETE", "/destinations/grant/cam")[0] == 200
 
 
 def test_ui_grants_cannot_inject_secrets_or_disable_tls(gateway, upstream):
@@ -183,9 +183,11 @@ def test_ui_grants_cannot_inject_secrets_or_disable_tls(gateway, upstream):
     api = gateway["api"]
     target = {"host": "other.test", "port": upstream["https"], "scheme": "https"}
     inject = [{"host": "other.test", "header": "Authorization", "value": "Bearer ${github_token}"}]
-    status, body, _ = api.call("PUT", "/grants/exfil", {"targets": [target], "inject": inject, "approval": "auto"})
+    status, body, _ = api.call(
+        "PUT", "/destinations/grant/exfil", {"targets": [target], "inject": inject, "approval": "auto"}
+    )
     assert status == 400 and "config file" in body["error"]
-    assert api.call("PUT", "/grants/noverify", {"targets": [{**target, "tls_verify": False}]})[0] == 400
+    assert api.call("PUT", "/destinations/grant/noverify", {"targets": [{**target, "tls_verify": False}]})[0] == 400
     _, g, _ = api.call("GET", "/grants")
     assert not {"exfil", "noverify"} & {d["name"] for d in g["defs"]}
 
@@ -228,10 +230,14 @@ def test_cli_lists_requests_and_waits(gateway):
 def test_grants_never_narrow_what_rules_allow(gateway, upstream):
     """gh.test is allowed by a host rule; an active read-only grant on it must not block writes."""
     api = gateway["api"]
-    api.call("PUT", "/grants/ghread", {"targets": [{"host": "gh.test", "port": upstream["https"]}], "levels": ["read"]})
+    api.call(
+        "PUT",
+        "/destinations/grant/ghread",
+        {"targets": [{"host": "gh.test", "port": upstream["https"]}], "levels": ["read"]},
+    )
     api.call("POST", "/grants/ghread/activate", {"level": "read", "by": "e2e"})
     status, body = tls_request(
         gateway["ports"]["http"], f"gh.test:{upstream['https']}", "gh.test", gateway["ca"], "POST", "/w"
     )
     assert status == 200 and json.loads(body)["method"] == "POST"
-    api.call("DELETE", "/grants/ghread")
+    api.call("DELETE", "/destinations/grant/ghread")

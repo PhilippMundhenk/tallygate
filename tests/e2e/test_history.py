@@ -25,7 +25,7 @@ def stack(make_gateway, tmp_path):
 
 def test_changes_from_the_ui_are_versions_of_the_session_user_and_can_be_rolled_back(stack):
     gw, ui = stack
-    assert ui.call("POST", "/api/gw/rules", {"id": "oops", "action": "allow", "host": "*"})[0] == 201
+    assert ui.call("POST", "/api/gw/destinations", {"id": "oops", "access": "allow", "match": {"host": "*"}})[0] == 201
     assert ui.call("PATCH", "/api/gw/policy", {"default": "allow"})[0] == 200
     _, h, _ = ui.call("GET", "/api/gw/policy/history")
     by_what = [(v["by"], v["what"]) for v in h["versions"]]
@@ -51,7 +51,7 @@ def test_export_and_import_move_policy_and_ui_grants_without_secrets(stack):
     gw, ui = stack
     assert ui.call("PUT", "/api/gw/secrets/ha_token", {"value": "s3cr3t-value"})[0] == 200
     grant = {"targets": [{"scheme": "http", "host": "ha.test", "port": 8123, "paths": ["/api/*"]}], "levels": ["read"]}
-    assert ui.call("PUT", "/api/gw/grants/ha", grant)[0] == 200
+    assert ui.call("PUT", "/api/gw/destinations/grant/ha", grant)[0] == 200
     _, exp, _ = ui.call("GET", "/api/gw/policy/export")
     assert "s3cr3t-value" not in exp["yaml"] and "ha_token" not in exp["yaml"]
     doc = yaml.safe_load(exp["yaml"])

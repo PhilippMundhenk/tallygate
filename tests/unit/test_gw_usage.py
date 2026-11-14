@@ -128,16 +128,16 @@ def test_counting_is_a_dict_update_and_housekeeping_flushes_it(gw):  # noqa: F81
 
 
 def test_cleanup_removes_only_rules_that_are_still_unused(gw):  # noqa: F811
-    admin(gw, "POST", "/rules", {"id": "idle", "action": "allow", "host": "idle.example"})
+    rid = admin(gw, "POST", "/destinations", {"match": {"host": "idle.example"}, "access": "allow"})[1]["id"]
     gw.flush_hits()
     old = time.time() - 40 * DAY
     gw.events.db.execute("UPDATE rule_hits SET since = ?", (old,))
     gw._hit(Decision("allow", "rule ok", "ok"))  # ok is in use
-    status, r = admin(gw, "POST", "/rules/cleanup", {"ids": ["idle", "ok", "idle", "nope"]})
-    assert status == 200 and r == {"removed": ["idle"], "kept": ["ok", "nope"]}
+    status, r = admin(gw, "POST", "/rules/cleanup", {"ids": [rid, "ok", rid, "nope"]})
+    assert status == 200 and r == {"removed": [rid], "kept": ["ok", "nope"]}
     assert [x.id for x in gw.policy.rules] == ["ok"] and gw.history.versions()[0][
         "what"
-    ] == "unused rules removed: idle"
+    ] == f"unused rules removed: {rid}"
     assert admin(gw, "POST", "/rules/cleanup", {"ids": ["ok"]})[1] == {"removed": [], "kept": ["ok"]}
     assert admin(gw, "POST", "/rules/cleanup", {"ids": "ok"})[0] == 400
     assert admin(gw, "POST", "/rules/cleanup", [1])[0] == 400

@@ -69,16 +69,6 @@ def test_token_required_except_for_health(gw):
     assert call(api.build_app(gw), "GET", "/policy", headers={"Authorization": "Bearer "}, auth=False)[0] == 401
 
 
-def test_rules_add_validate_and_delete(gw):
-    status, rule = admin(gw, "POST", "/rules", {"action": "deny", "host": "bad.example", "top": False})
-    assert status == 201 and gw.policy.rules[-1].id == rule["id"]
-    assert admin(gw, "POST", "/rules", {"action": "allow"})[0] == 400  # validation error, not 500
-    assert gw.events.recent(1)[0]["action"] == "rule+"
-    assert admin(gw, "DELETE", f"/rules/{rule['id']}") == (200, {"ok": True})
-    assert admin(gw, "DELETE", f"/rules/{rule['id']}")[0] == 404
-    assert "bad.example" not in (core.DATA_DIR / "policy.yaml").read_text()
-
-
 def test_destinations_crud_for_rules_and_grants(gw):
     # ADR-0014: one CRUD surface. An access destination is a rule; a request destination is a grant.
     status, d = admin(
@@ -117,32 +107,6 @@ def test_model_endpoint_returns_the_whole_destination_model(gw):
     assert model["default"] == gw.policy.default
     accesses = [d for d in model["destinations"] if d.get("access")]
     assert any(d["match"].get("host") == "ok.example" and d["access"] == "allow" for d in accesses)
-
-
-def test_group_rules_endpoint(gw):
-    # #142: POST /rules/group tags several rules with one name; an empty name clears it.
-    a = admin(gw, "POST", "/rules", {"action": "allow", "host": "a.example"})[1]
-    b = admin(gw, "POST", "/rules", {"action": "allow", "host": "b.example"})[1]
-    status, data = admin(gw, "POST", "/rules/group", {"ids": [a["id"], b["id"]], "group": "shops"})
-    assert status == 200 and data["group"] == "shops" and len(data["changed"]) == 2
-    assert all(r.group == "shops" for r in gw.policy.rules if r.id in (a["id"], b["id"]))
-    assert "shops" in (core.DATA_DIR / "policy.yaml").read_text()  # persisted
-    assert admin(gw, "POST", "/rules/group", {"ids": [a["id"]], "group": ""})[1]["changed"][0]["id"] == a["id"]
-    assert gw.policy.rules[0].group == "" or all(r.group == "" for r in gw.policy.rules if r.id == a["id"])
-    assert admin(gw, "POST", "/rules/group", {"ids": "notalist"})[0] == 400  # validation, not 500
-
-
-def test_rule_edit_in_place(gw):
-    # #141: PATCH changes an existing rule's action/port/note/expiry, keeping its id.
-    status, rule = admin(gw, "PATCH", "/rules/ok", {"action": "deny", "expires": 2000000000, "note": "limited"})
-    assert status == 200 and rule["id"] == "ok"
-    assert (rule["action"], rule["expires"], rule["note"]) == ("deny", 2000000000, "limited")
-    assert gw.policy.rules[0].id == "ok" and gw.policy.rules[0].action == "deny"
-    assert gw.events.recent(1)[0]["action"] == "rule~"
-    assert "limited" in (core.DATA_DIR / "policy.yaml").read_text()  # persisted
-    assert admin(gw, "PATCH", "/rules/nope", {"note": "x"})[0] == 404  # no such rule
-    assert admin(gw, "PATCH", "/rules/ok", {"host": "elsewhere.example"})[0] == 400  # host is not editable
-    assert admin(gw, "PATCH", "/rules/ok", {"action": "permit"})[0] == 400  # still validated
 
 
 def test_preset_names_are_checked(gw):

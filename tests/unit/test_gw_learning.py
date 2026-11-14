@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gateway"))
 
 from egressgw.learning import Learning, check_rule, parse_ports, summary
-from egressgw.policy import Policy
+from egressgw.policy import Policy, Rule
 
 
 def test_ports_from_the_config_are_strict():
@@ -146,8 +146,8 @@ def connect(g, host, port=443, ips=("93.184.216.34",)):
 def test_learning_replaces_only_the_default_decision(gw):  # noqa: F811
     gw.policy.default = "deny"
     gw.policy.ask_timeout = 5
-    admin(gw, "POST", "/rules", {"id": "no", "action": "deny", "host": "*.blocked.example"})
-    admin(gw, "POST", "/rules", {"id": "q", "action": "ask", "host": "asked.example"})
+    gw.policy.add_rule(Rule(action="deny", host="*.blocked.example", id="no"))
+    gw.policy.add_rule(Rule(action="ask", host="asked.example", id="q"))
     assert connect(gw, "new.example")[0] is not None  # deny mode, no learning
     status, st = admin(gw, "POST", "/learning", {"minutes": 30, "ports": [443]})
     assert status == 201 and st["active"]["ports"] == [443] and st["ports_allowed"] == [80, 443]

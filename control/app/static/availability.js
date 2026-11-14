@@ -83,7 +83,7 @@
         const b = document.createElement("button"); b.className = "small"; b.textContent = "Allow 1 h";
         b.setAttribute("aria-label", `Allow ${what} for 1 hour`);
         b.onclick = guard(async () => {
-          await gw("POST", "/rules", { action: "allow", host: m.host, port: m.port, expires: Date.now() / 1000 + 3600, note: "refused while away" });
+          await gw("POST", "/destinations", { access: "allow", match: { host: m.host, port: m.port }, expires: Date.now() / 1000 + 3600, note: "refused while away" });
           toast(`${what} allowed for 1 h`); row.remove();
         });
         row.appendChild(b);
