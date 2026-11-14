@@ -249,8 +249,16 @@ Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is
   file is translated once on load, backed up next to it as `*.pre-0014`, and rewritten. A file that cannot be
   translated stops the gateway (fail closed). The API's `/policy` view is unchanged.
 - Done: the one destination model, its file format and converter, the unified `/destinations` API and the
-  Destinations UI surface, the removal of the old per-mechanism routes, and the state-file migration. Remaining
-  per the build plan: the security review of the result (#137).
+  Destinations UI surface, the removal of the old per-mechanism routes, and the state-file migration.
+- 2026-11-14: security review of the result (#137). A fresh adversarial pass over the new path found no
+  exploitable issue. Checked and backed by explicit regression tests: the earlier bypasses stay closed on the
+  unified path (IP-literal / SNI / connection reuse #9/#57/#108 — `test_name_first`, `test_fronting`,
+  `test_security_137`; CIDR-deny precedence #119 — `test_gw_policy`; LAN/stack floor #112 — `test_floor` and
+  the grant tests; grant teardown — `test_grant_teardown_137`); the trust split holds on the **new** surface —
+  the API/UI (`PUT /destinations/grant`, `POST /destinations`) cannot set `credentials`, `lan` outside
+  `lan_allow`, or `tls_verify:false`, nor edit a config-file grant (`test_gw_api`); and the state-file
+  migration cannot smuggle a grant or a credential destination into `policy.yaml` (`test_gw_destinations`).
+  `GET /model` exposes credential *templates* (`Bearer ${name}`), never secret values, as the #121 view does.
 
 ## Consequences
 
