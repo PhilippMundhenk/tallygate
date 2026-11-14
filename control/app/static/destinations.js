@@ -18,13 +18,14 @@
       here; on-request destinations (grants) are defined on the <i>Grants</i> tab; read-only hosts, added
       credentials and repository limits come from the gateway config file and are shown read-only.</p>
     <div class="toolbar">
-      <select id="dAction" aria-label="Access">${RULE_ACTIONS.map((a) => `<option>${a}</option>`).join("")}</select>
+      <select id="dAction" aria-label="Access">${[...RULE_ACTIONS, "request"].map((a) => `<option>${a}</option>`).join("")}</select>
       <select id="dKind" aria-label="Match by"><option value="host">host</option><option value="cidr">cidr</option></select>
       <input id="dMatch" aria-label="Host or CIDR" placeholder="*.example.com  or  203.0.113.0/24">
       <input id="dPort" aria-label="Ports" placeholder="port(s): 443 | 80,443 | *" class="portw">
+      <input id="dReqName" aria-label="On-request name" placeholder="on-request name" class="hidden">
       <input id="dNote" aria-label="Note" placeholder="note">
       <input id="dTtl" type="number" aria-label="TTL in seconds (optional)" placeholder="TTL s" class="port">
-      <button id="dAdd">Add rule (top)</button>
+      <button id="dAdd">Add</button>
     </div>
     <div class="rules-toolbar">
       <input id="dGroupName" aria-label="Group name" placeholder="group name, e.g. used-car shops">
@@ -83,7 +84,10 @@
         const del = mkbtn("delete", guard(async () => { await gw("DELETE", `/rules/${d.id}`); await load(); }));
         actions.append(e, del);
       } else if (d.access === "request") {
-        actions.append(mkbtn("Grants", () => showTab("grants")));
+        actions.append(mkbtn("edit", () => showTab("grants")));  // multi-target / credential editing lives there
+        if (d.source === "ui" && d.request) {
+          actions.append(mkbtn("delete", guard(async () => { await gw("DELETE", `/grants/${d.request.name}`); await load(); })));
+        }
       } else {
         actions.innerHTML = '<span class="muted small-text">config file</span>';
       }
@@ -135,13 +139,27 @@
     $("#dGroupName").value = ""; await load();
   }
 
+  $("#dAction").onchange = () => $("#dReqName").classList.toggle("hidden", $("#dAction").value !== "request");
   $("#dAdd").onclick = guard(async () => {
-    const kind = $("#dKind").value, match = $("#dMatch").value.trim();
+    const action = $("#dAction").value, kind = $("#dKind").value, match = $("#dMatch").value.trim();
     checkMatch(kind, match);
-    const rule = { action: $("#dAction").value, [kind]: match, port: parsePort($("#dPort").value) };
-    if ($("#dNote").value) rule.note = $("#dNote").value;
-    if (+$("#dTtl").value > 0) rule.expires = Date.now() / 1000 + +$("#dTtl").value;
-    await gw("POST", "/rules", rule); $("#dMatch").value = ""; toast("Rule added"); await load();
+    if (action === "request") {
+      // a simple on-request destination (grant); multi-target / credential grants are edited on the Grants tab
+      if (kind !== "host") throw new Error("on-request destinations need a host, not a CIDR");
+      const name = $("#dReqName").value.trim();
+      if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(name)) throw new Error("name: a short id of letters, digits, - or _");
+      const port = parsePort($("#dPort").value);
+      if (typeof port !== "number") throw new Error("on-request destinations need one port, e.g. 443");
+      const def = { description: $("#dNote").value || "", levels: ["read", "write"], approval: { read: "ask", write: "ask" },
+        targets: [{ host: match, port, scheme: "https", paths: ["/*"] }] };
+      await gw("PUT", `/grants/${name}`, def); toast(`On-request destination “${name}” added`);
+    } else {
+      const rule = { action, [kind]: match, port: parsePort($("#dPort").value) };
+      if ($("#dNote").value) rule.note = $("#dNote").value;
+      if (+$("#dTtl").value > 0) rule.expires = Date.now() / 1000 + +$("#dTtl").value;
+      await gw("POST", "/rules", rule); toast("Rule added");
+    }
+    $("#dMatch").value = ""; $("#dReqName").value = ""; await load();
   });
   $("#dGroupSel").onclick = guard(() => group($("#dGroupName").value.trim()));
   $("#dUngroupSel").onclick = guard(() => group(""));

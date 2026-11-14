@@ -94,6 +94,21 @@ def test_model_and_grouping_through_the_control_relay(stack):
         if d["match"].get("host") in ("keep.test", "old.test")
     )
 
+    # the Destinations tab adds/removes an on-request destination via PUT/DELETE /grants; it shows in /model
+    defn = {
+        "description": "shop",
+        "levels": ["read", "write"],
+        "approval": {"read": "ask", "write": "ask"},
+        "targets": [{"host": "shop.test", "port": 443, "scheme": "https", "paths": ["/*"]}],
+    }
+    assert ui.call("PUT", "/api/gw/grants/shop", defn)[0] == 200
+    _, m3, _ = ui.call("GET", "/api/gw/model")
+    req = [d for d in m3["destinations"] if d.get("access") == "request" and d["match"].get("host") == "shop.test"]
+    assert req and req[0]["request"]["name"] == "shop" and req[0]["source"] == "ui"
+    assert ui.call("DELETE", "/api/gw/grants/shop")[0] == 200
+    _, m4, _ = ui.call("GET", "/api/gw/model")
+    assert not any(d["match"].get("host") == "shop.test" for d in m4["destinations"])
+
 
 def wait_for(fn, timeout=5.0):
     deadline = time.time() + timeout
