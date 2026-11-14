@@ -219,6 +219,47 @@ def test_repo_scope_spec_round_trips_and_graphql_is_optional():
         RepoScopeSpec.from_dict({"patterns": ["me/app"], "grafql": True})
 
 
+def test_more_validation_errors():
+    from egressgw.destinations import Request, destinations_to_config, from_rules
+    from egressgw.policy import Rule
+
+    with pytest.raises(ValueError, match="unknown match keys"):
+        Match.from_dict({"host": "a", "porttt": 443})
+    with pytest.raises(ValueError, match="unknown request keys"):
+        Request.from_dict({"name": "g", "levls": ["read"]})
+    with pytest.raises(ValueError, match="invalid scheme"):
+        Destination(match=Match(host="a"), access="request", request=Request("g"), scheme="ftp").validate()
+    with pytest.raises(ValueError, match="needs a 'match'"):
+        Destination.from_dict({"access": "allow"})
+    with pytest.raises(ValueError, match="needs a host match"):
+        destinations_to_config([Destination(match=Match(cidr="10.0.0.0/8"))])
+    # from_rules mirrors rules to access destinations
+    dests = from_rules([Rule(action="deny", cidr="1.2.3.0/24", id="d", group="g")])
+    assert dests[0].access == "deny" and dests[0].match.cidr == "1.2.3.0/24" and dests[0].group == "g"
+
+
+def test_destinations_to_config_carries_grant_target_options():
+    # a request destination with the file-only target options (lan / address / pinned TLS / no verify)
+    d = Destination(
+        match=Match(host="nas.example", port=22),
+        access="request",
+        request=Request("nas", ["write"]),
+        scheme="https",
+        lan=True,
+        address="10.0.0.5",
+        tls_fingerprint="ab" * 32,
+        tls_verify=False,
+    )
+    cfg = __import__("egressgw.destinations", fromlist=["destinations_to_config"]).destinations_to_config([d])
+    t = cfg["grants"]["nas"]["targets"][0]
+    assert (
+        t["lan"] is True
+        and t["address"] == "10.0.0.5"
+        and t["tls_fingerprint"] == "ab" * 32
+        and t["tls_verify"] is False
+    )
+
+
 def test_validation_errors():
     with pytest.raises(ValueError, match="needs 'host' or 'cidr'"):
         Match().validate()

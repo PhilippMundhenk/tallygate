@@ -75,6 +75,26 @@ def test_rule_edit_through_the_control_relay(stack):
     assert ui.call("PATCH", "/api/gw/rules/old", {"host": "elsewhere.test"})[0] == 400  # host is not editable
 
 
+def test_model_and_grouping_through_the_control_relay(stack):
+    # #122/#142: the Destinations view reads GET /model and groups rules via POST /rules/group, end to end.
+    gw, ui = stack
+    status, model, _ = ui.call("GET", "/api/gw/model")
+    assert status == 200 and set(model) == {"default", "destinations", "never"}
+    hosts = {d["match"].get("host") for d in model["destinations"] if d.get("access")}
+    assert {"keep.test", "old.test"} <= hosts
+
+    status, data, _ = ui.call("POST", "/api/gw/rules/group", {"ids": ["keep", "old"], "group": "test-set"})
+    assert status == 200 and {r["id"] for r in data["changed"]} == {"keep", "old"}
+    _, policy, _ = gw["api"].call("GET", "/policy")
+    assert all(r["group"] == "test-set" for r in policy["rules"] if r["id"] in ("keep", "old"))  # persisted
+    _, model2, _ = ui.call("GET", "/api/gw/model")
+    assert all(
+        d.get("group") == "test-set"
+        for d in model2["destinations"]
+        if d["match"].get("host") in ("keep.test", "old.test")
+    )
+
+
 def wait_for(fn, timeout=5.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
