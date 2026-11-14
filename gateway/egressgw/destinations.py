@@ -300,7 +300,19 @@ def translate(gw: Gateway) -> Model:
         )
 
     # Access: grants become `access: request` destinations, one per target.
-    for g in gw.grants.defs.values():
+    dests += grant_destinations(gw.grants.defs)
+
+    # Properties only, from the read-only config file: read-only hosts, repositories, credentials.
+    dests += file_destinations(gw.readonly, gw.github, gw.inject)
+
+    return Model(destinations=dests, default=gw.policy.default, never=_never(gw))
+
+
+def grant_destinations(defs) -> list[Destination]:
+    """`access: request` destinations, one per grant target (today: grant definitions). `defs` is a mapping
+    of name to `grants.GrantDef`. A target's own injection (https) rides on its destination's credentials."""
+    dests: list[Destination] = []
+    for g in defs.values():
         for t in g.targets:
             creds = tuple(
                 (i.get("header", "Authorization"), i["value"])
@@ -323,19 +335,16 @@ def translate(gw: Gateway) -> Model:
                     source=g.source,
                 )
             )
-
-    # Properties only, from the read-only config file: read-only hosts, repositories, credentials.
-    dests += file_destinations(gw)
-
-    return Model(destinations=dests, default=gw.policy.default, never=_never(gw))
+    return dests
 
 
-def file_destinations(gw: Gateway) -> list[Destination]:
-    """The properties-only destinations from the read-only gateway config (read-only hosts, repository scope,
-    credentials). They carry no `access`: they add limits to whatever host matches, as `readonly`/`inject`/
-    `github_repos` do today. The config is read-only at runtime, so this is stable and can be built once."""
+def file_destinations(readonly, github, inject) -> list[Destination]:
+    """The properties-only destinations from the read-only gateway config: read-only hosts (`readonly`),
+    repository scope (`github`, a `github.RepoScope`) and credentials (`inject`). They carry no `access`: they
+    add limits to whatever host matches, as those keys do today. The config is read-only at runtime, so this
+    is stable and can be built once."""
     dests: list[Destination] = []
-    for ro in gw.readonly:
+    for ro in readonly:
         dests.append(
             Destination(
                 match=Match(host=ro.host),
@@ -344,11 +353,11 @@ def file_destinations(gw: Gateway) -> list[Destination]:
                 source="file",
             )
         )
-    if gw.github.patterns:
-        spec = RepoScopeSpec(patterns=[f"{o}/{r}" for o, r in gw.github.patterns], graphql=gw.github.graphql)
-        for host in sorted(gw.github.hosts):
+    if github.patterns:
+        spec = RepoScopeSpec(patterns=[f"{o}/{r}" for o, r in github.patterns], graphql=github.graphql)
+        for host in sorted(github.hosts):
             dests.append(Destination(match=Match(host=host), repos=spec, source="file"))
-    for i in gw.inject:
+    for i in inject:
         header = i.get("header", "Authorization")
         dests.append(
             Destination(
@@ -358,6 +367,97 @@ def file_destinations(gw: Gateway) -> list[Destination]:
             )
         )
     return dests
+
+
+def config_destinations(config: dict) -> list[Destination]:
+    """The read-only gateway config as destinations: its `grants` (as `access: request`) and its file
+    properties (`readonly`, `github_repos`, `inject`). Rules and the mode live in `policy.yaml`, not here.
+    Reuses the config parsers, so a broken config is an error here exactly as it is at start (fail closed)."""
+    from egressgw.github import RepoScope
+    from egressgw.grants import GrantDef
+    from egressgw.readonly import parse_readonly
+
+    defs = {name: GrantDef.from_dict(name, d or {}, "config") for name, d in (config.get("grants") or {}).items()}
+    readonly = parse_readonly(config.get("readonly") or [])
+    github = RepoScope(config)
+    inject = [dict(i) for i in config.get("inject") or []]
+    return grant_destinations(defs) + file_destinations(readonly, github, inject)
+
+
+# the old gateway-config keys a `destinations:` block replaces (ADR-0014 §5); it may not be mixed with them
+CONFIG_KEYS = ("readonly", "inject", "github_repos", "github_hosts", "github_graphql", "grants")
+
+
+def destinations_to_config(dests: list[Destination]) -> dict:
+    """The inverse of `config_destinations`: config-shaped fragments (`readonly`/`inject`/`github_*`/`grants`)
+    that the existing parsers accept, so the gateway can read a `destinations:` block as an alternative to the
+    old keys (ADR-0014 §5). `allow`/`ask`/`deny` rules belong in `policy.yaml` and are refused here."""
+    readonly: list[dict] = []
+    inject: list[dict] = []
+    grants: dict[str, dict] = {}
+    repo_patterns: list[str] = []
+    repo_hosts: list[str] = []
+    graphql = False
+    for d in dests:
+        if d.access in ("allow", "ask", "deny"):
+            raise ValueError(
+                "a destination in the gateway config sets properties or a `request` grant; "
+                "`allow`/`ask`/`deny` rules belong in the policy, not the gateway config"
+            )
+        host = d.match.host
+        if not host:
+            raise ValueError("a destination in the gateway config needs a host match (a cidr is a policy rule)")
+        if d.methods in ("no-writes", "no-writes+post"):
+            readonly.append(
+                {"host": host, "post_is_write": d.methods == "no-writes+post", "read_posts": list(d.read_paths)}
+            )
+        if d.repos is not None:
+            repo_patterns += [p for p in d.repos.patterns if p not in repo_patterns]
+            if host not in repo_hosts:
+                repo_hosts.append(host)
+            graphql = graphql or d.repos.graphql
+        if d.access == "request":
+            g = grants.setdefault(
+                d.request.name,
+                {
+                    "description": d.note,
+                    "targets": [],
+                    "levels": list(d.request.levels),
+                    "approval": dict(d.request.approval),
+                    "default_ttl": d.request.default_ttl,
+                    "max_ttl": d.request.max_ttl,
+                    "inject": [],
+                },
+            )
+            scheme = d.scheme or "https"
+            target: dict = {"host": host, "port": d.match.port, "scheme": scheme}
+            if scheme != "tcp":
+                target["paths"] = list(d.paths) if d.paths is not None else ["/*"]
+            if d.lan:
+                target["lan"] = True
+            if d.address:
+                target["address"] = d.address
+            if d.tls_fingerprint:
+                target["tls_fingerprint"] = d.tls_fingerprint
+            if not d.tls_verify:
+                target["tls_verify"] = False
+            g["targets"].append(target)
+            g["inject"] += [{"host": host, "header": h, "value": v} for h, v in d.credentials]
+        else:
+            inject += [{"host": host, "header": h, "value": v} for h, v in d.credentials]
+    out: dict = {}
+    if readonly:
+        out["readonly"] = readonly
+    if inject:
+        out["inject"] = inject
+    if repo_patterns:
+        out["github_repos"] = repo_patterns
+        out["github_hosts"] = repo_hosts
+        if graphql:
+            out["github_graphql"] = True
+    if grants:
+        out["grants"] = grants
+    return out
 
 
 def _never(gw: Gateway) -> list[dict]:
