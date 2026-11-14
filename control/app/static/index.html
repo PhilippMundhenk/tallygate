@@ -3,17 +3,8 @@
 <title>tallygate</title><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/wizard.css"><link rel="stylesheet" href="/static/overview.css"><link rel="stylesheet" href="/static/keys.css"><link rel="stylesheet" href="/static/update.css"><link rel="stylesheet" href="/static/files.css"><link rel="stylesheet" href="/static/availability.css"><link rel="stylesheet" href="/static/push.css"><link rel="stylesheet" href="/static/context.css"><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#181b22"></head>
 <body>
 <header>
+  <button id="navToggle" class="nav-toggle" type="button" aria-label="Menu" aria-controls="tabs" aria-expanded="false">☰</button>
   <a class="brand" href="/" aria-label="tallygate home"><img src="/static/logo.svg" alt="tallygate" height="26"></a>
-  <nav id="tabs" role="tablist" aria-label="Sections">
-    <button data-tab="overview" id="tabbtn-overview" role="tab" aria-selected="false" aria-controls="tab-overview">Overview</button>
-    <button data-tab="approvals" id="tabbtn-approvals" role="tab" aria-selected="false" aria-controls="tab-approvals">Approvals <span id="pendingCount" class="badge hidden">0</span></button>
-    <button data-tab="log" id="tabbtn-log" role="tab" aria-selected="false" aria-controls="tab-log">Log</button>
-    <button data-tab="rules" id="tabbtn-rules" role="tab" aria-selected="false" aria-controls="tab-rules">Rules</button>
-    <button data-tab="grants" id="tabbtn-grants" role="tab" aria-selected="false" aria-controls="tab-grants">Grants <span id="grantActiveCount" class="badge ok hidden">0</span></button>
-    <button data-tab="console" id="tabbtn-console" role="tab" aria-selected="false" aria-controls="tab-console">Console</button>
-    <button data-tab="files" id="tabbtn-files" role="tab" aria-selected="false" aria-controls="tab-files">Files</button>
-    <button data-tab="setup" id="tabbtn-setup" role="tab" aria-selected="false" aria-controls="tab-setup">Setup</button>
-  </nav>
   <button id="learnBadge" type="button" class="learnbadge hidden" aria-live="polite"></button>
   <span class="conn" role="status"><span id="conn" class="dot" aria-hidden="true"></span><span id="connText">connecting</span></span>
   <button id="updateNotice" class="small update-notice" hidden></button>
@@ -23,6 +14,18 @@
 <p id="insecureBanner" class="banner warn" role="note" hidden>Not encrypted: this session travels in plain text over
   the network. For more than a quick test on a trusted LAN, put a TLS reverse proxy in front
   (<a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/operations.md#reverse-proxy" target="_blank" rel="noopener">how</a>).</p>
+<div id="navScrim" class="nav-scrim"></div>
+<div class="shell">
+  <nav id="tabs" role="tablist" aria-label="Sections" aria-orientation="vertical">
+    <button data-tab="overview" id="tabbtn-overview" role="tab" aria-selected="false" aria-controls="tab-overview">Overview</button>
+    <button data-tab="approvals" id="tabbtn-approvals" role="tab" aria-selected="false" aria-controls="tab-approvals">Approvals <span id="pendingCount" class="badge hidden">0</span></button>
+    <button data-tab="log" id="tabbtn-log" role="tab" aria-selected="false" aria-controls="tab-log">Log</button>
+    <button data-tab="rules" id="tabbtn-rules" role="tab" aria-selected="false" aria-controls="tab-rules">Rules</button>
+    <button data-tab="grants" id="tabbtn-grants" role="tab" aria-selected="false" aria-controls="tab-grants">Grants <span id="grantActiveCount" class="badge ok hidden">0</span></button>
+    <button data-tab="console" id="tabbtn-console" role="tab" aria-selected="false" aria-controls="tab-console">Console</button>
+    <button data-tab="files" id="tabbtn-files" role="tab" aria-selected="false" aria-controls="tab-files">Files</button>
+    <button data-tab="setup" id="tabbtn-setup" role="tab" aria-selected="false" aria-controls="tab-setup">Setup</button>
+  </nav>
 <main>
   <!-- OVERVIEW (overview.js) -->
   <section id="tab-overview" role="tabpanel" aria-labelledby="tabbtn-overview" class="hidden">
@@ -291,8 +294,8 @@
       Downloads are saved, never opened here.</p>
     <nav id="fileCrumbs" class="crumbs" aria-label="Folder"></nav>
     <div class="card"><h3>Upload to this folder</h3>
-      <form id="fileForm" class="row wrap"><input type="file" id="fileInput" multiple aria-describedby="fileHint" aria-label="Files to upload">
-        <label class="check-inline"><input type="checkbox" id="fileOverwrite"> replace existing files</label><button id="fileUpload">Upload</button></form>
+      <form id="fileForm" class="upload-form"><input type="file" id="fileInput" multiple aria-describedby="fileHint" aria-label="Files to upload">
+        <div class="upload-actions"><label class="check-inline"><input type="checkbox" id="fileOverwrite"> replace existing files</label><button id="fileUpload">Upload</button></div></form>
       <p class="hint" id="fileHint"></p><div id="fileStatus" class="status" role="status" aria-live="polite"></div></div>
     <div class="table-wrap"><table class="files"><thead><tr><th>Name</th><th>Size</th><th>Modified</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody id="fileBody"></tbody></table></div>
@@ -351,21 +354,22 @@
         <div class="row"><button id="wzLearn" class="secondary">Learn from a first task&hellip;</button></div>
         <div class="status"></div></li>
       <li id="st-notify"><h3 tabindex="-1">Phone notifications <span class="step-state"></span></h3>
-        <div id="notifyStatus" class="muted"></div>
+        <div id="notifyStatus" class="muted notify-status"></div>
         <p class="hint">Telegram and Matrix are set up in the environment (<a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#telegram-approvals" target="_blank" rel="noopener">how</a>).
           Browser notifications appear for new requests while this tab is in the background.</p>
-        <button id="notifyBtn" class="secondary">Enable browser notifications</button> <span id="notifyPerm" class="muted"></span>
+        <button id="notifyBtn" class="secondary notify-btn">Enable browser notifications</button> <span id="notifyPerm" class="muted notify-perm"></span>
         <div class="status"></div></li>
       <li id="st-test" data-required="1"><h3 tabindex="-1">Isolation self-test <span class="step-state"></span></h3>
         <p class="hint">Runs inside the agent: direct internet, raw TCP, UDP DNS, LAN via proxy, gateway API and control UI must all be <b>blocked</b>; the proxy path to Anthropic must work.</p>
         <button id="selftestBtn">Run self-test</button><div class="status"></div></li>
     </ol>
-    <div class="card"><h3>Notifications</h3><div id="notifyStatus" class="muted"></div>
+    <div class="card"><h3>Notifications</h3><div id="notifyStatusCard" class="muted notify-status"></div>
       <p class="hint">Browser notifications appear for new requests while this tab is in the background.</p>
-      <button id="notifyBtn" class="secondary">Enable browser notifications</button> <span id="notifyPerm" class="muted"></span>
+      <button id="notifyBtnCard" class="secondary notify-btn">Enable browser notifications</button> <span id="notifyPermCard" class="muted notify-perm"></span>
       <div id="pushSetup"></div></div>
   </section>
 </main>
+</div>
 <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <script src="/static/app.js"></script>
 <script src="/static/availability.js"></script>

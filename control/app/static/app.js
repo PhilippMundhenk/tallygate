@@ -74,11 +74,31 @@ function showTab(name) {
   if (name === "log" && !logLoaded) guard(loadLog)();
   document.dispatchEvent(new CustomEvent("tg:tab", { detail: name }));  // hook for the feature scripts
 }
-$$("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
-$("#tabs").addEventListener("keydown", (e) => {  // arrow keys move between tabs (WAI-ARIA tabs pattern)
+// Mobile nav drawer (#138): a hamburger toggles the sidebar; a scrim and Escape close it.
+const navToggle = $("#navToggle"), navScrim = $("#navScrim");
+function setNav(open) {
+  document.body.classList.toggle("nav-open", open);
+  if (navToggle) navToggle.setAttribute("aria-expanded", String(open));
+}
+if (navToggle) navToggle.addEventListener("click", () => {
+  const open = !document.body.classList.contains("nav-open");
+  setNav(open);
+  if (open) ($("#tabs button.active") || $("#tabs button"))?.focus();
+});
+if (navScrim) navScrim.addEventListener("click", () => setNav(false));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && document.body.classList.contains("nav-open")) { setNav(false); navToggle?.focus(); }
+});
+// The sidebar sticks below the header; measure it so the first tab is never hidden.
+function setHeaderH() { const h = $("header"); if (h) document.documentElement.style.setProperty("--header-h", h.offsetHeight + "px"); }
+setHeaderH(); window.addEventListener("resize", setHeaderH);
+
+$$("#tabs button").forEach((b) => b.addEventListener("click", () => { showTab(b.dataset.tab); setNav(false); }));
+$("#tabs").addEventListener("keydown", (e) => {  // arrow keys move between tabs (WAI-ARIA tabs pattern; vertical sidebar)
   const tabs = $$("#tabs button"), i = tabs.indexOf(document.activeElement);
-  if (i < 0 || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
-  const j = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (i + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  if (i < 0 || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
+  const fwd = e.key === "ArrowRight" || e.key === "ArrowDown";
+  const j = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (i + (fwd ? 1 : -1) + tabs.length) % tabs.length;
   e.preventDefault(); tabs[j].focus(); showTab(tabs[j].dataset.tab);
 });
 

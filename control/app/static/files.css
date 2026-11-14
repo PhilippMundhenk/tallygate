@@ -4,5 +4,8 @@ button.link{background:none;border:0;padding:0;color:#93c5fd;text-align:left;fon
 button.link:hover{text-decoration:underline}
 table.files td{overflow-wrap:anywhere}table.files a.dl{color:#93c5fd}
 label.check-inline{display:flex;gap:5px;align-items:center;margin:0}label.check-inline input{flex:none!important;min-width:0!important}
-#fileInput{max-width:100%}
+/* upload control stacks cleanly on mobile (#140): file picker on its own line, then checkbox + Upload */
+.upload-form{display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.upload-form #fileInput{max-width:100%}
+.upload-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;width:100%}
 table.files{min-width:0!important}@media(max-width:600px){table.files th:nth-child(3),table.files td:nth-child(3){display:none}}
