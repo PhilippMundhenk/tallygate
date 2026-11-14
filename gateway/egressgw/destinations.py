@@ -112,6 +112,30 @@ class Request:
 
 
 @dataclass
+class RepoScopeSpec:
+    """A destination's repository scope (today: `github_repos`). The agent may reach only these repositories
+    on the host; `graphql` opens the GraphQL endpoint, which can address any repository and is closed by
+    default. Kept as its own property (not paths) because the check is by method and canonical repo path, not
+    a glob (`github.RepoScope`). ADR-0014 §1."""
+
+    patterns: list[str]  # ["owner/repo", "owner/*"]
+    graphql: bool = False
+
+    def to_dict(self) -> dict:
+        d: dict = {"patterns": list(self.patterns)}
+        if self.graphql:
+            d["graphql"] = True
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> RepoScopeSpec:
+        unknown = set(d) - {"patterns", "graphql"}
+        if unknown:
+            raise ValueError(f"unknown repos keys: {sorted(unknown)}")
+        return cls(patterns=[str(p) for p in d.get("patterns") or []], graphql=bool(d.get("graphql", False)))
+
+
+@dataclass
 class Destination:
     """One destination: a `match` and the properties that apply there. A properties-only entry (read-only,
     credentials, repository limits) has `access = None`: it adds limits to whatever host matches, it does not
@@ -123,7 +147,7 @@ class Destination:
     paths: list[str] | None = None  # None = every path
     read_paths: tuple[str, ...] = ()  # POSTs that only read (readonly `read_posts`)
     credentials: tuple[tuple[str, str], ...] = ()  # (header, value template) added after stripping
-    repos: bool = False  # the github_repos repository matcher applies to this host
+    repos: RepoScopeSpec | None = None  # repository scope (today: github_repos) applies to this host
     request: Request | None = None  # set iff access == "request"
     scheme: str | None = None  # a request target's scheme (http | https | tcp)
     lan: bool = False  # exempt from the `all`-scope never floor, this target only
@@ -173,8 +197,8 @@ class Destination:
             d["read_paths"] = list(self.read_paths)
         if self.credentials:
             d["credentials"] = [{"header": h, "value": v} for h, v in self.credentials]
-        if self.repos:
-            d["repos"] = True
+        if self.repos is not None:
+            d["repos"] = self.repos.to_dict()
         if self.request is not None:
             d["request"] = self.request.to_dict()
         if self.scheme is not None:
@@ -217,7 +241,7 @@ class Destination:
             paths=[str(p) for p in d["paths"]] if d.get("paths") is not None else None,
             read_paths=tuple(str(p) for p in d.get("read_paths") or ()),
             credentials=creds,
-            repos=bool(d.get("repos", False)),
+            repos=RepoScopeSpec.from_dict(d["repos"]) if d.get("repos") is not None else None,
             request=Request.from_dict(d["request"]) if d.get("request") is not None else None,
             scheme=d.get("scheme"),
             lan=bool(d.get("lan", False)),
@@ -321,8 +345,9 @@ def file_destinations(gw: Gateway) -> list[Destination]:
             )
         )
     if gw.github.patterns:
+        spec = RepoScopeSpec(patterns=[f"{o}/{r}" for o, r in gw.github.patterns], graphql=gw.github.graphql)
         for host in sorted(gw.github.hosts):
-            dests.append(Destination(match=Match(host=host), repos=True, source="file"))
+            dests.append(Destination(match=Match(host=host), repos=spec, source="file"))
     for i in gw.inject:
         header = i.get("header", "Authorization")
         dests.append(
