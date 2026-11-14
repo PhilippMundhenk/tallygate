@@ -196,7 +196,13 @@ Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is
   `grant_problem`); `server_connect` only resolves, asks you and applies the verdict.
 - 2026-11-13: one `never` list in the gateway config, with scopes `all` and `all+lan`; the old keys are read
   as `never` and `python -m egressgw.convert` prints a file in the new form.
-- Open: destinations as the file format with migration, API and UI.
+- 2026-11-14: the destination model exists as data: `egressgw/destinations.py` with the `Destination`/`Match`/
+  `Request`/`Model` entries, their file-format `to_dict`/`from_dict`/`validate`, and `translate(gw) -> Model`
+  that lists a running gateway's rules, grants, read-only hosts, repository limits, credentials and
+  never-reachable ranges as one ordered model. It is data only: nothing in the evaluation path reads it yet,
+  so it changes no behaviour; `model.Access` still reads the old structures. Tests translate the fixtures and
+  round-trip every entry through the format.
+- Open: the file format (gateway reads and writes `destinations:`), migration, API and UI.
 
 ## Consequences
 
