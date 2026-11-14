@@ -15,6 +15,7 @@ function renderVersions() {
     notice.setAttribute("aria-label", `tallygate ${v.latest.version} is available. Show versions`);
   }
   const latest = v.check === "off" ? "update check switched off (<code>UPDATE_CHECK=0</code>)"
+    : v.check === "none" ? '<span class="muted">no releases published yet</span>'
     : v.check === "error" ? `<span class="warn">${esc(v.error)}</span>`
     : `${esc(v.latest.version)}${v.latest.published ? ` <span class="muted">(${esc(v.latest.published.slice(0, 10))})</span>` : ""}`;
   const state = v.update_available ? `<p class="warn"><b>tallygate ${esc(v.latest.version)} is available.</b> Read the
