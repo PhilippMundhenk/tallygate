@@ -235,8 +235,8 @@ $$("#st-policy [data-policy]").forEach((b) => (b.onclick = guard(async () => {
   await gw("PATCH", "/policy", { default: b.dataset.policy }); toast("Mode saved"); await loadWizard();
 })));
 // Learning mode is started on the Rules tab, where its time limit and what it opens are shown and confirmed.
-$("#wzLearn").onclick = () => { showTab("rules"); const c = $("#learnCard"); c.scrollIntoView({ behavior: "smooth" }); c.focus(); };
-$("#wzTemplates").onclick = () => { showTab("rules"); const t = $("#qaTemplates"); t.scrollIntoView({ behavior: "smooth" }); };
+$("#wzLearn").onclick = () => { showTab("destinations"); const c = $("#learnCard"); c.scrollIntoView({ behavior: "smooth" }); c.focus(); };
+$("#wzTemplates").onclick = () => { showTab("destinations"); const t = $("#qaTemplates"); t.scrollIntoView({ behavior: "smooth" }); };
 
 $("#selftestBtn").onclick = guard(async () => {
   const b = $("#selftestBtn"); b.disabled = true; stepStatus("st-test", "running… (up to a minute)");

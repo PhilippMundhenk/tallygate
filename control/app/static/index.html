@@ -21,7 +21,6 @@
     <button data-tab="approvals" id="tabbtn-approvals" role="tab" aria-selected="false" aria-controls="tab-approvals">Approvals <span id="pendingCount" class="badge hidden">0</span></button>
     <button data-tab="log" id="tabbtn-log" role="tab" aria-selected="false" aria-controls="tab-log">Log</button>
     <button data-tab="destinations" id="tabbtn-destinations" role="tab" aria-selected="false" aria-controls="tab-destinations">Destinations</button>
-    <button data-tab="rules" id="tabbtn-rules" role="tab" aria-selected="false" aria-controls="tab-rules">Rules</button>
     <button data-tab="grants" id="tabbtn-grants" role="tab" aria-selected="false" aria-controls="tab-grants">Grants <span id="grantActiveCount" class="badge ok hidden">0</span></button>
     <button data-tab="console" id="tabbtn-console" role="tab" aria-selected="false" aria-controls="tab-console">Console</button>
     <button data-tab="files" id="tabbtn-files" role="tab" aria-selected="false" aria-controls="tab-files">Files</button>
@@ -97,9 +96,6 @@
   <section id="tab-destinations" role="tabpanel" aria-labelledby="tabbtn-destinations" class="hidden">
     <h2>Destinations</h2>
     <div id="destBox"></div>
-  </section>
-
-  <section id="tab-rules" role="tabpanel" aria-labelledby="tabbtn-rules" class="hidden">
     <details class="card" id="accessCard"><summary>What the agent can reach</summary><div id="accessBox"></div></details>
     <div class="card" id="quick">
       <h3>Shortcuts</h3>
@@ -150,42 +146,7 @@
         <pre id="testOut" class="muted"></pre>
       </div>
     </div>
-    <div class="card">
-      <h3>Add rule</h3>
-      <div class="row wrap">
-        <select id="nrAction" aria-label="Rule action"><option>allow</option><option>deny</option><option>ask</option></select>
-        <select id="nrKind" aria-label="Match by"><option value="host">host</option><option value="cidr">cidr</option></select>
-        <input id="nrMatch" aria-label="Host or CIDR" placeholder="*.example.com  or  203.0.113.0/24">
-        <input id="nrPort" aria-label="Ports" placeholder="port(s): 443 | 80,443 | 8000-8100 | *" class="portw">
-        <input id="nrNote" aria-label="Note" placeholder="note">
-        <input id="nrTtl" type="number" aria-label="TTL in seconds (optional)" placeholder="TTL s" class="port">
-        <button id="nrAdd">Add (top)</button>
-      </div>
-      <dl class="fieldhelp">
-        <dt>Action</dt><dd><code>allow</code> lets it through, <code>deny</code> refuses without asking, <code>ask</code> holds it and asks you.</dd>
-        <dt>Host</dt><dd>An exact name (<code>pypi.org</code>), a domain with all subdomains (<code>*.github.com</code>, also matches <code>github.com</code>), or <code>*</code> for every host.</dd>
-        <dt>CIDR</dt><dd>An IP range such as <code>203.0.113.0/24</code>. <code>allow</code>/<code>ask</code> cover connections <i>to IPs</i> only, never names that resolve into the range; <code>deny</code> covers both.</dd>
-        <dt>Ports</dt><dd><code>443</code>, <code>80,443</code>, a range <code>8000-8100</code>, or <code>*</code> / empty for all ports.</dd>
-        <dt>TTL</dt><dd>Seconds until the rule expires, e.g. <code>3600</code>; empty = permanent.</dd>
-      </dl>
-      <details class="help"><summary>How are rules applied?</summary>
-        <p>The first matching rule from the top decides; new rules are added at the top. Before any rule, the
-          <b>hard deny</b> refuses the local network, the Docker host and cloud metadata, and no rule can change that.
-          Names are decided before they are resolved, so a denied name never reaches DNS. When no rule matches, the
-          mode decides (<i>ask</i>, <i>deny</i> or <i>allow</i>). Use <i>Test a destination</i> to see what a rule does.</p>
-        <p>Examples: <code>allow *.npmjs.org 443</code> &middot; <code>deny telemetry.example.org *</code> &middot;
-          <code>ask *.pastebin.com *</code> &middot; <code>allow 203.0.113.10/32 22</code>.
-          <a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/rules.md" target="_blank" rel="noopener">Rules by example</a></p>
-      </details>
-    </div>
     <details class="card" id="usageCard"><summary>Rule usage and suggestions <span id="usageBadge" class="badge hidden"></span></summary><div id="usageBox"></div></details>
-    <div class="rules-toolbar">
-      <input id="groupName" aria-label="Group name" placeholder="group name, e.g. used-car shops">
-      <button id="groupSel" class="small secondary">Group selected</button>
-      <button id="ungroupSel" class="small secondary">Ungroup selected</button>
-      <span class="muted">tick rules, name a set, and group them to see them together (#142)</span>
-    </div>
-    <div class="table-wrap"><table class="rules"><thead><tr><th><span class="sr-only">Select</span></th><th>#</th><th>Action</th><th>Match</th><th>Port</th><th>Note</th><th>Group</th><th>Expires</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="rulesBody"></tbody></table></div>
     <details class="card" id="neverCard"><summary>Never reachable <span id="neverCount" class="muted"></span></summary>
       <p class="hint">Every range that can never be reached, from every place that defines one. Nothing is asked
         about them and no rule can open them. <b>All connections</b>: a grant for one device on the local network

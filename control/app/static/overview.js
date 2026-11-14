@@ -68,7 +68,7 @@ function renderOvAttention() {
   if (pending.length) add("warn", `⚠ <b>${pending.length}</b> connection request${pending.length > 1 ? "s" : ""} waiting`, "approvals", "Approvals");
   if (grants.requests.length) add("warn", `⚠ <b>${grants.requests.length}</b> grant request${grants.requests.length > 1 ? "s" : ""} waiting`, "approvals", "Approvals");
   for (const r of (ov.policy?.rules || []).filter((r) => r.expires && r.expires > now && r.expires - now < HOUR))
-    add("", `Rule <code>${esc(r.action)} ${esc(r.host || r.cidr)}</code>${r.source && r.source !== "user" ? ` <span class="muted">[${esc(r.source)}]</span>` : ""} ends in ${fmtLeft(r.expires)}`, "rules", "Rules");
+    add("", `Rule <code>${esc(r.action)} ${esc(r.host || r.cidr)}</code>${r.source && r.source !== "user" ? ` <span class="muted">[${esc(r.source)}]</span>` : ""} ends in ${fmtLeft(r.expires)}`, "destinations", "Destinations");
   for (const a of grants.active.filter((a) => a.expires - now < HOUR))
     add("", `Grant <b>${esc(a.name)}</b> (${esc(a.level)}) ends in ${fmtLeft(a.expires)}`, "grants", "Grants");
   if (ov.secrets && !ov.secrets.includes("github_token")) add("warn", "⚠ No GitHub token stored", "setup", "Setup");
