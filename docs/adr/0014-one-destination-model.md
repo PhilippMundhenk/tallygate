@@ -122,6 +122,11 @@ never:
 
 ### 4. The trust split stays
 
+> **Amended by [ADR-0017](0017-admin-editable-deny-floor.md) (2026-11-14):** the never-floor part below is no
+> longer file-only to loosen — the authenticated UI may remove LAN / metadata / `hard_deny` entries (confirmed,
+> secure by default). `grants.internal`, `credentials`, `lan` and `tls.verify: false` are unchanged and stay
+> file-only.
+
 Properties that can hand out secrets or open the local network are accepted **only from the read-only
 config file**: `credentials`, `lan`, `tls.verify: false`, and `never` entries that are removed or narrowed.
 The API and the UI can add entries and narrow existing ones (`methods: read`, fewer paths, shorter time).
