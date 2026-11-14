@@ -33,7 +33,7 @@ grant; one that a grant is defined for but that no rule allows is refused with a
 During learning mode, the mode is replaced by "allow and record" for names on `learning_ports`; rules and the
 hard deny still decide first.
 
-The *Test a destination* box in the Rules tab runs exactly this for a host and port, and shows which step and
+The *Test a destination* box on the Destinations tab runs exactly this for a host and port, and shows which step and
 which rule decided.
 
 ## Hosts

@@ -89,13 +89,13 @@ write-only.
 
 ### In the UI
 
-**Grants → New grant** asks for five things: a name, the address (`ha.lan:8123`, or a URL such as
+**Destinations → New grant** asks for five things: a name, the address (`ha.lan:8123`, or a URL such as
 `https://api.example.com/v1/`, whose path then limits the grant), the type (HTTPS, HTTP, or TCP for SSH and
 databases), read-only or full access, and for how long each approval lasts. *This is a device on my local
 network* is ticked for you when the address looks local. Everything else (automatic approval, separate default
 and maximum durations, paths, several targets, a fixed IP, a pinned certificate) is under **Advanced** and keeps
 its defaults until you change it; a grant that uses those settings opens with *Advanced* unfolded. Grants from the config file are shown read-only;
-UI grants are stored in `grants.yaml` in the `gateway-data` volume.
+UI grants are stored in `grants.yaml` (in the destinations form, ADR-0014) in the `gateway-data` volume. The *Grants* tab now shows the active grants and the secrets; the grant **definitions** and editor are on the *Destinations* tab.
 
 ![Grants tab](images/grants.png)
 

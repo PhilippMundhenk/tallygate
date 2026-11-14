@@ -112,6 +112,13 @@ MATRIX_ALLOWED_USERS=@you:example.org
 
 Every key with an example. The file in the repository lists them all, most of them commented at their default.
 
+> **One destinations model (ADR-0014).** The `readonly`, `inject`, `github_repos` and `grants` keys below can
+> instead be written as a single `destinations:` list — each entry a match plus its properties (access,
+> methods, paths, credentials, repository scope, `request` grants). The two forms are not mixed in one file.
+> `python -m egressgw.convert <gateway.yaml>` rewrites a config in that form. The trust-critical properties
+> (credential injection, `tls_verify: false`, LAN exemption, the never-reachable floor) stay file-only either
+> way. See [`docs/adr/0014-one-destination-model.md`](adr/0014-one-destination-model.md).
+
 | Key | Default | Example | Meaning |
 |---|---|---|---|
 | `initial_preset` | `baseline` | `lockdown` | Preset that creates `policy.yaml` on the very first start. |

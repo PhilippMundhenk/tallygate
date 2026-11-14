@@ -12,7 +12,7 @@ agent has to ask for, what rules do, and where each is changed.
 - [Away mode and quiet hours](#away-mode-and-quiet-hours)
 - [Grants](#grants)
 - [Log](#log)
-- [Rules](#rules)
+- [Destinations](#destinations)
 - [Console](#console)
 - [Files](#files)
 - [Setup wizard](#setup-wizard)
@@ -154,9 +154,11 @@ searches the whole event log on the gateway, which keeps `log_keep_days` (30) da
 - **Export CSV / JSON** downloads every matching row (up to 50,000 events) for an audit. Cells that a
   spreadsheet would run as a formula are prefixed with `'`.
 
-## Rules
+## Destinations
 
-![Rules](images/rules.png)
+![Destinations](images/destinations.png)
+
+One tab for everything about a destination — access rules, on-request grants, read-only hosts, credentials and repository scope. The former *Rules* tab was folded in here; grant *definitions* are edited here too, while the *Grants* tab keeps the active grants and secrets.
 
 - **Mode**: what happens to unmatched destinations: `ask` (human in the loop), `deny` (strict allowlist) or
   `allow` (blocklist).
@@ -164,7 +166,7 @@ searches the whole event log on the gateway, which keeps `log_keep_days` (30) da
   allowed, asks you, blocked or only on request (and by which rule), read-only, credentials that are added,
   repository limits, the grants defined for it (and whether one is active), and when it was last used. The
   last line is what happens with everything else. It is a read-only summary; each part is changed where it is
-  defined (the rule table, the Grants tab, the gateway config file).
+  defined (the destinations table and the grant editor on this tab, or the read-only gateway config file).
 - **Shortcuts**, see below.
 - **Learning mode**: record what a new task needs for a limited time, then save the rules in one go. See
   [Learning mode](#learning-mode).
@@ -339,7 +341,7 @@ password change runs on the Docker host.
 | Log in to Claude | *Start login* runs `claude auth login` in the agent (tmux session `tg-login`) and shows the link to Anthropic's login page. Sign in there and paste the code it shows. Only links to Anthropic's login pages are shown. Once logged in, the button reads *Log in again*. |
 | Git identity | *Use my GitHub identity* asks GitHub, through the gateway with the stored token, who you are (`gh api user`) and shows the name and the noreply address `<id>+<login>@users.noreply.github.com`; *Apply* sets them. Without a stored token, or when GitHub refuses it or cannot be reached, it says so and links to the token step. *Enter it yourself* is the fallback. Empty values are never written; a name or address that is set but empty (for example from a `git config` whose `$(…)` failed) is reported as such. |
 | Remote Control | *Enable Remote Control* answers Claude Code's one-time question `Enable Remote Control? (y/n)` with yes, trusts `/workspace` and restarts Remote Control. The step is done when it runs; it also tells you when Remote Control waits for an answer in the *rc* console. Switched off with `RC_ENABLE=0`. |
-| Starting policy | *Ask me* or *Strict* sets what happens with unknown destinations; *Shortcuts* opens them in the Rules tab. *Learn from a first task* takes you to [learning mode](#learning-mode), the quickest way to a working set of rules: run one task, then keep what it used. |
+| Starting policy | *Ask me* or *Strict* sets what happens with unknown destinations; *Shortcuts* opens them in the Destinations tab. *Learn from a first task* takes you to [learning mode](#learning-mode), the quickest way to a working set of rules: run one task, then keep what it used. |
 | Phone notifications | Status of Telegram, Matrix, Web Push, ntfy, Gotify and Pushover; browser notifications. Web Push devices are managed in the *Notifications* card below the steps. |
 | Isolation self-test | Runs the in-agent self-test. |
 
