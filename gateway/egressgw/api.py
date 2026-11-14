@@ -126,6 +126,106 @@ def build_app(gw: Gateway) -> web.Application:
         gw.record(kind="admin", action="rule-", reason=f"rule {rid} removed")
         return _json({"ok": True})
 
+    # ---- destinations: one CRUD surface over rules and on-request grants (ADR-0014) ----
+    # An access destination (allow/ask/deny) is a policy rule; a `request` destination is a grant, addressed
+    # by the id `grant:<name>`. Properties-only destinations come from the read-only config and are not editable.
+    def _rule_from_destination(d) -> Rule:
+        return Rule(
+            action=d.access, host=d.match.host, cidr=d.match.cidr, port=d.match.port,
+            note=d.note, expires=d.expires, group=d.group,
+        )  # fmt: skip
+
+    def _grant_from_destination(D, d):
+        if d.access != "request" or not d.request:
+            raise ValueError("a request destination needs access: request and a request block")
+        name, defn = next(iter(D.destinations_to_config([d])["grants"].items()))
+        return name, defn
+
+    @routes.post("/destinations")
+    async def add_destination(request):
+        from egressgw import destinations as D
+
+        body = await request.json()
+        top = bool(body.pop("top", True)) if isinstance(body, dict) else True
+        d = D.Destination.from_dict(body)
+        if d.access in ("allow", "ask", "deny"):
+            rule = gw.policy.add_rule(_rule_from_destination(d), top=top)
+            gw.save_policy(_by(request), f"rule {rule.id} added ({rule.action} {rule.host or rule.cidr})")
+            gw.record(kind="admin", action="rule+", host=rule.host or rule.cidr, reason=json.dumps(rule.to_dict()))
+            return _json(D.from_rules([rule])[0].to_dict(), 201)
+        if d.access == "request":
+            name, defn = _grant_from_destination(D, d)
+            gw.grants.upsert_ui(name, defn)
+            gw.record(kind="admin", action="grant", host=name, reason=f"grant {name} defined via API")
+            gw.publish({"type": "grants"})
+            return _json({**d.to_dict(), "id": f"grant:{name}"}, 201)
+        raise ValueError(
+            "a destination added here needs access allow/ask/deny/request; file properties come from the config"
+        )
+
+    @routes.post("/destinations/group")
+    async def group_destinations(request):
+        body = await request.json()
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            raise ValueError("expected {ids: [destination id, ...], group: name}")
+        name = str(body.get("group", ""))
+        changed = gw.policy.set_group([i for i in ids if not i.startswith("grant:")], name)  # only rules carry a group
+        gw.save_policy(
+            _by(request), f"{len(changed)} rules grouped as {name!r}" if name else f"{len(changed)} rules ungrouped"
+        )
+        gw.record(kind="admin", action="rule~", reason=f"group {name!r}: {[r.id for r in changed]}")
+        return _json({"group": name, "changed": [r.to_dict() for r in changed]})
+
+    @routes.patch("/destinations/{did}")
+    async def edit_destination(request):
+        from egressgw import destinations as D
+
+        did, body = request.match_info["did"], await request.json()
+        if did.startswith("grant:"):
+            name = did[len("grant:") :]
+            g = gw.grants.defs.get(name)
+            if g is None:
+                return _json({"error": "not found"}, 404)
+            if g.source != "ui":
+                raise ValueError("config-file destinations are edited in the gateway config, not here")
+            newname, defn = _grant_from_destination(D, D.Destination.from_dict(body))
+            if newname != name:
+                raise ValueError("the on-request name cannot change here")
+            gw.grants.upsert_ui(name, defn)
+            gw.record(kind="admin", action="grant", host=name, reason=f"grant {name} changed via API")
+            gw.publish({"type": "grants"})
+            return _json({**D.Destination.from_dict(body).to_dict(), "id": did})
+        changes = {k: body[k] for k in ("note", "group", "expires") if k in body}
+        if "access" in body:
+            changes["action"] = body["access"]
+        if isinstance(body.get("match"), dict) and "port" in body["match"]:
+            changes["port"] = body["match"]["port"]
+        rule = gw.policy.update_rule(did, changes)
+        if rule is None:
+            return _json({"error": "not found"}, 404)
+        gw.save_policy(_by(request), f"rule {rule.id} edited ({rule.action} {rule.host or rule.cidr})")
+        gw.record(kind="admin", action="rule~", host=rule.host or rule.cidr, reason=json.dumps(rule.to_dict()))
+        return _json(D.from_rules([rule])[0].to_dict())
+
+    @routes.delete("/destinations/{did}")
+    async def del_destination(request):
+        did = request.match_info["did"]
+        if did.startswith("grant:"):
+            name = did[len("grant:") :]
+            try:
+                gw.grants.delete_ui(name)
+            except KeyError:
+                return _json({"error": "not found"}, 404)
+            gw.record(kind="admin", action="grant", host=name, reason=f"grant {name} deleted via API")
+            gw.publish({"type": "grants"})
+            return _json({"ok": True})
+        if not gw.policy.remove_rule(did):
+            return _json({"error": "not found"}, 404)
+        gw.save_policy(_by(request), f"rule {did} removed")
+        gw.record(kind="admin", action="rule-", reason=f"rule {did} removed")
+        return _json({"ok": True})
+
     @routes.post("/presets/{name}")
     async def apply_preset(request):
         """Insert a template's rules on top, as `<preset>:<id>` tagged `preset:<name>`, optionally with a TTL.

@@ -79,6 +79,38 @@ def test_rules_add_validate_and_delete(gw):
     assert "bad.example" not in (core.DATA_DIR / "policy.yaml").read_text()
 
 
+def test_destinations_crud_for_rules_and_grants(gw):
+    # ADR-0014: one CRUD surface. An access destination is a rule; a request destination is a grant.
+    status, d = admin(
+        gw, "POST", "/destinations", {"match": {"host": "shop.example"}, "access": "allow", "group": "shops"}
+    )
+    assert status == 201 and d["access"] == "allow" and d["group"] == "shops" and d["match"]["host"] == "shop.example"
+    rid = d["id"]
+    assert gw.policy.rules[0].id == rid and gw.policy.rules[0].group == "shops"
+
+    # edit it (a destination dict; the editable fields are mapped to the rule)
+    status, d2 = admin(gw, "PATCH", f"/destinations/{rid}", {"access": "deny", "match": {"port": 443}, "note": "n"})
+    assert status == 200 and d2["access"] == "deny"
+    assert gw.policy.rules[0].action == "deny" and gw.policy.rules[0].note == "n" and gw.policy.rules[0].port == 443
+
+    # a request destination becomes a UI grant, addressed by grant:<name>
+    req = {
+        "match": {"host": "ha.example", "port": 443}, "access": "request", "scheme": "https",
+        "request": {"name": "ha", "levels": ["read", "write"], "approval": {"read": "ask", "write": "ask"}, "default_ttl": 3600, "max_ttl": 14400},
+    }  # fmt: skip
+    status, g = admin(gw, "POST", "/destinations", req)
+    assert status == 201 and g["id"] == "grant:ha" and "ha" in gw.grants.defs and gw.grants.defs["ha"].source == "ui"
+
+    # group + delete through the same surface
+    admin(gw, "POST", "/destinations/group", {"ids": [rid, "grant:ha"], "group": "set"})  # grant id skipped
+    assert gw.policy.rules[0].group == "set"
+    assert admin(gw, "DELETE", f"/destinations/{rid}") == (200, {"ok": True})
+    assert admin(gw, "DELETE", "/destinations/grant:ha") == (200, {"ok": True}) and "ha" not in gw.grants.defs
+    assert admin(gw, "DELETE", "/destinations/nope")[0] == 404
+    assert admin(gw, "DELETE", "/destinations/grant:nope")[0] == 404
+    assert admin(gw, "POST", "/destinations", {"match": {"host": "x"}})[0] == 400  # no access -> error, not 500
+
+
 def test_model_endpoint_returns_the_whole_destination_model(gw):
     status, model = admin(gw, "GET", "/model")
     assert status == 200 and set(model) == {"default", "destinations", "never"}
