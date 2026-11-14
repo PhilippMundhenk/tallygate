@@ -105,9 +105,8 @@ $("#tabs").addEventListener("keydown", (e) => {  // arrow keys move between tabs
 });
 
 /* ---------------- approvals ---------------- */
-// Three choices up front; the other scopes are behind "More" (#121). [scope, label, class, behind "More"]
-const SCOPES = [["once", "Allow once", "", false], ["always", "Always allow", "", false], ["deny", "Deny", "secondary", false],
-  ["hour", "Allow 1 h", "", true], ["domain", "Always (*.domain)", "", true], ["deny_always", "Block forever", "danger", true]];
+// Decision buttons are built per request in pendingCard: all shown on desktop, the custom-duration ones
+// collapse under "More" only on narrow screens (#174). Durations reach the gateway as {scope, ttl} (#173).
 let pending = [];
 async function loadPending() {
   pending = await gw("GET", "/pending");
@@ -157,20 +156,37 @@ function pendingCard(p) {
     ${p.idn ? `<div class="meta warn">⚠ internationalised (punycode) name – check for look-alikes</div>` : ""}
     <div class="meta">${esc(p.proto)} · IPs ${esc((p.ips || []).join(", ") || "not resolved yet")} · attempts ${esc(p.attempts)} ·
     <span class="countdown" data-exp="${Number(p.expires)}"></span></div><div class="btns"></div>`;
-  const btns = $(".btns", el), more = document.createElement("button");
-  more.type = "button"; more.className = "secondary more"; more.textContent = "More"; more.setAttribute("aria-expanded", "false");
-  more.onclick = () => {
-    const open = el.classList.toggle("more-open");
-    more.setAttribute("aria-expanded", String(open)); more.textContent = open ? "Less" : "More";
+  const btns = $(".btns", el);
+  const send = (body) => decide(el, async () => { await gw("POST", `/pending/${p.id}/decide`, body); await loadPending(); });
+  // a plain decision button, with data-scope/data-ttl/data-key hooks for the keyboard shortcuts (keys.js)
+  const mk = (label, cls, body, key) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = cls;
+    b.dataset.scope = body.scope; if (body.ttl) b.dataset.ttl = body.ttl; if (key) b.dataset.key = key;
+    b.textContent = label; b.onclick = send(body); btns.appendChild(b); return b;
   };
-  for (const [scope, label, cls, extra] of SCOPES) {
-    if (scope === "domain" && !p.domain) continue;  // no registrable domain (IP, public suffix)
-    if (extra && !more.parentNode) btns.appendChild(more);  // after the three first choices
-    const b = document.createElement("button"); b.className = [cls, extra ? "extra" : ""].join(" ").trim(); b.dataset.scope = scope;
-    b.textContent = scope === "domain" ? `Always (*.${p.domain})` : label;
-    b.onclick = decide(el, async () => { await gw("POST", `/pending/${p.id}/decide`, { scope }); await loadPending(); });
-    btns.appendChild(b);
-  }
+  // "… min" button: the first click reveals an inline minutes field; Enter or Go sends a custom-duration decision
+  const mkDur = (label, cls, scope) => {
+    const wrap = document.createElement("span"); wrap.className = "dur extra";
+    wrap.innerHTML = `<button type="button" class="${cls}">${esc(label)}</button>`
+      + `<span class="dur-in hidden"><input type="number" min="1" max="43200" value="30" aria-label="for how many minutes"> min <button type="button" class="small">Go</button></span>`;
+    const open = wrap.firstChild, form = wrap.querySelector(".dur-in"), input = form.querySelector("input"), go = form.querySelector("button");
+    open.onclick = () => { form.classList.remove("hidden"); open.classList.add("hidden"); input.focus(); input.select(); };
+    const submit = () => send({ scope, ttl: Math.max(1, Math.min(43200, parseInt(input.value, 10) || 0)) * 60 })();
+    go.onclick = submit;
+    input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } else if (e.key === "Escape") { form.classList.add("hidden"); open.classList.remove("hidden"); } };
+    btns.appendChild(wrap); return wrap;
+  };
+  const more = document.createElement("button");
+  more.type = "button"; more.className = "secondary more"; more.textContent = "More"; more.setAttribute("aria-expanded", "false");
+  more.onclick = () => { const open = el.classList.toggle("more-open"); more.setAttribute("aria-expanded", String(open)); more.textContent = open ? "Less" : "More"; };
+
+  mk("Allow (5 min)", "", { scope: "allow", ttl: 300 }, "a");
+  mkDur("Allow (x min…)", "", "allow");
+  if (p.domain) mk(`Always (*.${p.domain})`, "", { scope: "domain" });
+  else mk("Always (host)", "", { scope: "always" });
+  mkDur("Deny (x min…)", "secondary", "deny");
+  mk("Deny (forever)", "danger", { scope: "deny_always" }, "d");
+  btns.appendChild(more);  // CSS hides it on desktop; only narrow screens collapse the "… min" buttons under it
   document.dispatchEvent(new CustomEvent("tg:card", { detail: { el, item: p, kind: "ask" } }));  // feature scripts
   return el;
 }
@@ -492,7 +508,8 @@ function grantRequestCard(r) {
   const el = document.createElement("div"); el.className = "pending grantreq";
   el.innerHTML = `<div class="dest">🔑 ${esc(r.name)} <span class="tag ${r.level === "write" ? "warn" : ""}">${esc(r.level)}</span> for ${esc(r.ttl_label)}</div>
     <div class="meta">${esc(d.description)}</div><div class="meta">${grantTargets(d)}</div>
-    <div class="meta">Agent's reason: <i>${esc(r.reason || "(none given)")}</i></div>
+    <div class="meta claim"><span class="claim-badge">⚠ claimed by the agent — unverified</span>
+      <span class="claim-reason">${esc(r.reason || "(no reason given)")}</span></div>
     <div class="meta"><span class="countdown" data-exp="${Number(r.expires)}"></span></div><div class="btns"></div>`;
   const btn = (label, decision, cls = "") => {
     const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.dataset.decision = decision;
