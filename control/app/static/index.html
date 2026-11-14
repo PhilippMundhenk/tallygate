@@ -20,6 +20,7 @@
     <button data-tab="overview" id="tabbtn-overview" role="tab" aria-selected="false" aria-controls="tab-overview">Overview</button>
     <button data-tab="approvals" id="tabbtn-approvals" role="tab" aria-selected="false" aria-controls="tab-approvals">Approvals <span id="pendingCount" class="badge hidden">0</span></button>
     <button data-tab="log" id="tabbtn-log" role="tab" aria-selected="false" aria-controls="tab-log">Log</button>
+    <button data-tab="destinations" id="tabbtn-destinations" role="tab" aria-selected="false" aria-controls="tab-destinations">Destinations</button>
     <button data-tab="rules" id="tabbtn-rules" role="tab" aria-selected="false" aria-controls="tab-rules">Rules</button>
     <button data-tab="grants" id="tabbtn-grants" role="tab" aria-selected="false" aria-controls="tab-grants">Grants <span id="grantActiveCount" class="badge ok hidden">0</span></button>
     <button data-tab="console" id="tabbtn-console" role="tab" aria-selected="false" aria-controls="tab-console">Console</button>
@@ -93,6 +94,11 @@
   </section>
 
   <!-- RULES -->
+  <section id="tab-destinations" role="tabpanel" aria-labelledby="tabbtn-destinations" class="hidden">
+    <h2>Destinations</h2>
+    <div id="destBox"></div>
+  </section>
+
   <section id="tab-rules" role="tabpanel" aria-labelledby="tabbtn-rules" class="hidden">
     <details class="card" id="accessCard"><summary>What the agent can reach</summary><div id="accessBox"></div></details>
     <div class="card" id="quick">
@@ -389,6 +395,7 @@
 <script src="/static/history.js"></script>
 <script src="/static/usage.js"></script>
 <script src="/static/access.js"></script>
+<script src="/static/destinations.js"></script>
 <script src="/static/logsearch.js"></script>
 <script src="/static/learning.js"></script>
 </body></html>

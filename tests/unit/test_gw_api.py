@@ -79,6 +79,14 @@ def test_rules_add_validate_and_delete(gw):
     assert "bad.example" not in (core.DATA_DIR / "policy.yaml").read_text()
 
 
+def test_model_endpoint_returns_the_whole_destination_model(gw):
+    status, model = admin(gw, "GET", "/model")
+    assert status == 200 and set(model) == {"default", "destinations", "never"}
+    assert model["default"] == gw.policy.default
+    accesses = [d for d in model["destinations"] if d.get("access")]
+    assert any(d["match"].get("host") == "ok.example" and d["access"] == "allow" for d in accesses)
+
+
 def test_group_rules_endpoint(gw):
     # #142: POST /rules/group tags several rules with one name; an empty name clears it.
     a = admin(gw, "POST", "/rules", {"action": "allow", "host": "a.example"})[1]
