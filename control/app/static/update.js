@@ -19,7 +19,7 @@ function renderVersions() {
     : `${esc(v.latest.version)}${v.latest.published ? ` <span class="muted">(${esc(v.latest.published.slice(0, 10))})</span>` : ""}`;
   const state = v.update_available ? `<p class="warn"><b>tallygate ${esc(v.latest.version)} is available.</b> Read the
       <a href="${esc(v.changelog)}" target="_blank" rel="noopener noreferrer">changelog</a> (and its <i>Upgrading</i> notes), then on the Docker host:</p>
-      <pre class="copy" tabindex="0" title="Click to copy">${esc(v.upgrade)}</pre>
+      <pre class="copy" tabindex="0" role="button" aria-label="Copy the upgrade command" title="Click to copy">${esc(v.upgrade)}</pre>
       <p><a href="${esc(v.latest.url)}" target="_blank" rel="noopener noreferrer">Release notes</a></p>`
     : v.update_available === false ? '<p class="ok">✔ Up to date.</p>' : "";
   $("#ovVersions").className = "";
