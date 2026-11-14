@@ -67,7 +67,7 @@
   $("#acFilter").oninput = render;
   $("#acBody").addEventListener("click", (e) => { if (e.target.closest("[data-grant]")) showTab("grants"); });
   $("#accessCard").addEventListener("toggle", () => { if ($("#accessCard").open) load().catch(() => {}); });
-  document.addEventListener("tg:tab", (e) => { if (e.detail === "rules" && $("#accessCard").open) load().catch(() => {}); });
+  document.addEventListener("tg:tab", (e) => { if (e.detail === "destinations" && $("#accessCard").open) load().catch(() => {}); });
   document.addEventListener("tg:event", (e) => {
     if (["policy", "grants", "grant_resolved"].includes(e.detail && e.detail.type) && $("#accessCard").open) load().catch(() => {});
   });

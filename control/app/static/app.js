@@ -68,7 +68,7 @@ function showTab(name) {
     b.classList.toggle("active", on); b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1;
   });
   history.replaceState(null, "", "#" + name);
-  if (name === "rules") guard(loadPolicy)();
+  if (name === "destinations") guard(loadPolicy)();
   if (name === "grants") { guard(loadGrants)(); guard(loadSecrets)(); }
   if (tabHooks[name]) guard(tabHooks[name])();
   if (name === "log" && !logLoaded) guard(loadLog)();
@@ -296,58 +296,7 @@ async function loadPolicy(keepEdits = false) {
   loadNever().catch(() => {});  // its own request: an older gateway without the route must not break the tab
   setField("#hardDeny", policy.hard_deny.join("\n"), keepEdits);
   if (setField("#rawPolicy", JSON.stringify(policy, null, 2), keepEdits)) rawBase = JSON.stringify(policy);
-  const body = $("#rulesBody"); body.innerHTML = "";
-  policy.rules.forEach((r, i) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td><input type="checkbox" class="rsel" aria-label="select rule"></td><td>${i + 1}</td><td class="a-${esc(r.action)}">${esc(r.action)}</td><td><code>${esc(r.host || r.cidr)}</code></td>
-      <td>${esc(portText(r.port))}</td><td>${esc(r.note || "")}${r.source ? ` <span class="muted">[${esc(r.source)}]</span>` : ""}</td>
-      <td>${r.group ? `<span class="chip">${esc(r.group)}</span>` : ""}</td>
-      <td>${r.expires ? esc(fmtDate(r.expires)) : "–"}</td><td></td>`;
-    tr.querySelector(".rsel").dataset.id = r.id;
-    const e = document.createElement("button"); e.textContent = "edit"; e.className = "small secondary";
-    e.onclick = () => editRule(tr, r);
-    const b = document.createElement("button"); b.textContent = "delete"; b.className = "small secondary";
-    b.onclick = guard(async () => { await gw("DELETE", `/rules/${r.id}`); await loadPolicy(); });
-    tr.lastElementChild.append(e, b); body.appendChild(tr);
-  });
   await renderQuick();
-}
-function selectedRuleIds() {
-  return [...document.querySelectorAll("#rulesBody .rsel:checked")].map((c) => c.dataset.id);
-}
-async function groupSelected(group) {
-  const ids = selectedRuleIds();
-  if (!ids.length) throw new Error("Tick one or more rules first");
-  if (group && !$("#groupName").value.trim()) throw new Error("Enter a group name");
-  await gw("POST", "/rules/group", { ids, group });
-  toast(group ? `${ids.length} rule(s) grouped as “${group}”` : `${ids.length} rule(s) ungrouped`);
-  $("#groupName").value = ""; await loadPolicy();
-}
-$("#groupSel").onclick = guard(() => groupSelected($("#groupName").value.trim()));
-$("#ungroupSel").onclick = guard(() => groupSelected(""));
-// Edit a rule in place (#141): change action/port/note/expiry without deleting and re-adding, so a permanent
-// "always allow" from the log can be given a time limit later while keeping its id and its place in the list.
-// Host/cidr are not editable - what a rule matches is a different rule, add/remove for that.
-function editRule(tr, r) {
-  // columns: [0] select, [1] #, [2] action, [3] match, [4] port, [5] note, [6] group, [7] expires, [8] actions
-  const left = esc(fmtLeft(r.expires));  // the editor is a row, built from trusted field values and esc()d
-  tr.cells[2].innerHTML = `<select class="eAction"><option${r.action === "allow" ? " selected" : ""}>allow</option><option${r.action === "deny" ? " selected" : ""}>deny</option><option${r.action === "ask" ? " selected" : ""}>ask</option></select>`;
-  tr.cells[4].innerHTML = `<input class="eP" size="7" value="${esc(portText(r.port))}">`;
-  tr.cells[5].innerHTML = `<input class="eN" value="${esc(r.note || "")}">`;
-  tr.cells[6].innerHTML = `<input class="eG" size="10" value="${esc(r.group || "")}" placeholder="group">`;
-  tr.cells[7].innerHTML = `<input class="eT" size="9" placeholder="${r.expires ? `${left} left` : "permanent"}"><span class="muted"> s, blank=∞</span>`;
-  const cell = tr.cells[8]; cell.innerHTML = "";
-  const save = document.createElement("button"); save.textContent = "save"; save.className = "small";
-  save.onclick = guard(async () => {
-    const changes = { action: tr.querySelector(".eAction").value, port: parsePort(tr.querySelector(".eP").value), note: tr.querySelector(".eN").value, group: tr.querySelector(".eG").value.trim() };
-    const t = tr.querySelector(".eT").value.trim();
-    if (t) { if (!/^\d+$/.test(t) || +t <= 0) throw new Error("Expiry: whole seconds from now, or blank for permanent"); changes.expires = Date.now() / 1000 + +t; }
-    else changes.expires = null;  // blank clears the expiry: the rule becomes permanent
-    await gw("PATCH", `/rules/${r.id}`, changes); toast("Rule updated"); await loadPolicy();
-  });
-  const cancel = document.createElement("button"); cancel.textContent = "cancel"; cancel.className = "small secondary";
-  cancel.onclick = () => loadPolicy();
-  cell.append(save, cancel);
 }
 // PUT /policy replaces every rule. The browser's copy goes stale (other tab, Telegram "Always", approvals),
 // so only the raw editor and the hard deny use it, and both start from the policy as it is now.
@@ -377,13 +326,6 @@ $("#saveRaw").onclick = guard(async () => {
   return putPolicy(p);
 });
 $("#reloadRaw").onclick = guard(async () => { delete $("#rawPolicy").dataset.dirty; await loadPolicy(true); });
-$("#nrAdd").onclick = guard(async () => {
-  checkMatch($("#nrKind").value, $("#nrMatch").value.trim());
-  const rule = { action: $("#nrAction").value, [$("#nrKind").value]: $("#nrMatch").value.trim(), port: parsePort($("#nrPort").value) };
-  if ($("#nrNote").value) rule.note = $("#nrNote").value;
-  if (+$("#nrTtl").value > 0) rule.expires = Date.now() / 1000 + +$("#nrTtl").value;
-  await gw("POST", "/rules", rule); $("#nrMatch").value = ""; await loadPolicy();
-});
 function explainTest(r) {
   // What decided, in the order the gateway checks (docs/rules.md#how-a-connection-is-decided).
   const idx = r.rule_id && policy ? policy.rules.findIndex((x) => x.id === r.rule_id) : -1;
@@ -774,7 +716,7 @@ function connectStream() {
     if (ev.type === "event") addLogRow(ev.event);
     if (ev.type === "ask" || ev.type === "resolved") loadPending().catch(() => {});
     if (ev.type === "ask" && document.hidden && Notification?.permission === "granted") new Notification("tallygate: approval needed", { body: `${ev.pending.host}:${ev.pending.port}` });
-    if (ev.type === "policy" && !$("#tab-rules").classList.contains("hidden")) loadPolicy(true).catch(() => {});
+    if (ev.type === "policy" && !$("#tab-destinations").classList.contains("hidden")) loadPolicy(true).catch(() => {});
     if (["grant_request", "grant_resolved", "grants"].includes(ev.type)) loadGrants().catch(() => {});
     if (ev.type === "grant_request" && document.hidden && Notification?.permission === "granted") new Notification("tallygate: grant requested", { body: `${ev.request.name} (${ev.request.level})` });
   };

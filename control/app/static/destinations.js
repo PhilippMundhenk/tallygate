@@ -94,7 +94,7 @@
       body.appendChild(tr);
     }
     $("#destMode").innerHTML = `<i>Everything else:</i> ${esc(MODE[model.default] || model.default)}. `
-      + `${model.never.length} never-reachable range(s). Change the mode and never list on the <i>Rules</i> tab.`;
+      + `${model.never.length} never-reachable range(s). The mode, shortcuts and never list are below.`;
   }
 
   function mkbtn(text, onclick) {

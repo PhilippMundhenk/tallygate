@@ -228,8 +228,15 @@ Steps 1 and 2 change nothing for users and can be merged and released. Step 3 is
   grants. Repository scope (`github`) still needs its leaf module; read-only parsing moved to
   `egressgw/readonly.py` for that. A gateway built from a converted config has the same read-only hosts,
   credentials, repository scope and grants as one built from the old keys (unit test).
-- Open: grant limits and the connection decision from the model; migrating the gateway's own state files
-  (`policy.yaml`/`grants.yaml`) to the new form with `*.pre-0014` backups; the API and UI.
+- 2026-11-14: one editing surface. `POST`/`PATCH`/`DELETE /destinations` (and `/destinations/group`) are the
+  single CRUD over rules and on-request grants; the model gives every destination a stable id (`grant:<name>`
+  for grants). The **Rules tab was folded into the Destinations tab** and removed: its shortcuts, mode,
+  templates, test, never-reachable list, raw-policy editor and history moved over, and the rules table/editor
+  is now the Destinations table driving `/destinations`. The Grants tab still holds grant-flow (activation,
+  requests, secrets) and multi-target/credential editing.
+- Open: fold the Grants tab's definition editing into Destinations and remove the old per-mechanism routes
+  (`/rules*`, `/grants*`, ...); migrating the gateway's own state files (`policy.yaml`/`grants.yaml`) to the
+  new form with `*.pre-0014` backups.
 
 ## Consequences
 

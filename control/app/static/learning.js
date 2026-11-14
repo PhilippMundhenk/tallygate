@@ -74,9 +74,9 @@
       and ask rules and grants stay in force, names are still decided before they are resolved, and learning mode
       ends by itself (also on the emergency stop and when the gateway restarts).</p>
     <div id="learnState"></div><div id="learnSessions" class="row wrap"></div><div id="learnSummary"></div>`;
-  badge.onclick = () => { focusNext = true; showTab("rules"); $("#learnCard").scrollIntoView({ block: "start" }); };  // tg:tab reloads, render() focuses
+  badge.onclick = () => { focusNext = true; showTab("destinations"); $("#learnCard").scrollIntoView({ block: "start" }); };  // tg:tab reloads, render() focuses
   setInterval(() => { if (state && state.active) { if (state.active.until <= Date.now() / 1000) load().catch(() => {}); else { renderBadge(); } } }, 15000);
   document.addEventListener("tg:event", (e) => { if (e.detail.type === "learning") { shown = null; load().catch(() => {}); } });
-  document.addEventListener("tg:tab", (e) => { if (e.detail === "rules") guard(load)(); });
+  document.addEventListener("tg:tab", (e) => { if (e.detail === "destinations") guard(load)(); });
   guard(load)();
 })();
