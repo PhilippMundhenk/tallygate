@@ -292,7 +292,10 @@ class Access:
         method = r.method.upper()
         if lim.read_level and (method not in READ_METHODS or "upgrade" in r.connection.lower()):
             return Outcome(f"grant {lim.grant} is read-only")
-        if lim.no_writes and is_write(method, r.path, lim.post_is_write, lim.read_posts):
+        if lim.no_writes and (
+            is_write(method, r.path, lim.post_is_write, lim.read_posts) or "upgrade" in r.connection.lower()
+        ):
+            # a WebSocket or other protocol upgrade on a read-only host is a channel the gateway cannot inspect
             return Outcome("read-only host")
         if lim.repos and (why := self.gw.github.check(lim.host, r.method, r.path)):
             return Outcome(why)  # another repository: refused before it reaches GitHub, before any token is added

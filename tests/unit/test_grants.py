@@ -57,6 +57,10 @@ def test_ttl_parsing():
         ("/api/%252f%252f", False),  # double-encoded //
         ("/api/%25%32%65%25%32%65/config", False),  # another double-encoding of %2e%2e
         ("/api/%25252e%25252e", False),  # triple-encoded: still changing / residual %
+        ("/api/x#/../admin", False),  # `#` kept and refused: a server may normalise `..` across it (#137)
+        ("/api/..;/admin", False),  # `;` matrix-parameter trick
+        ("/api/%23/x", False),  # encoded `#`
+        ("/api/a%3bb", False),  # encoded `;`
     ],
 )
 def test_path_matching_rejects_traversal_tricks(path, ok):

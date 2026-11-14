@@ -53,7 +53,7 @@ class RepoScope:
 
     def check(self, host: str, method: str, path: str) -> str | None:
         """The reason to refuse this request, or None. Only call it for hosts where `applies` is true."""
-        raw = path.split("?", 1)[0].split("#", 1)[0] or "/"
+        raw = path.split("?", 1)[0] or "/"  # keep `#`/`;`: `_BAD_PATH` refuses them
         if not raw.startswith("/") or _BAD_PATH.search(raw):
             return "non-canonical path on a GitHub host"
         api = host.startswith(("api.", "uploads."))
