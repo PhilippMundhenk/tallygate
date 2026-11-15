@@ -123,7 +123,9 @@ def test_destinations_api_cannot_set_file_only_grant_properties(gw):
         "approval": {"read": "ask"},
     }
     status, saved = admin(gw, "PUT", "/destinations/grant/lanone", lanone)  # accepted, the flag is dropped
-    assert status == 200 and saved["targets"] == [{"host": "x.example", "port": 443, "scheme": "https", "paths": ["/*"]}]
+    assert status == 200 and saved["targets"] == [
+        {"host": "x.example", "port": 443, "scheme": "https", "paths": ["/*"]}
+    ]
     assert admin(gw, "PUT", "/destinations/grant/nas", base)[0] == 400  # nas is a config-file grant, read-only here
     assert admin(gw, "PUT", "/destinations/grant/ok2", base)[0] == 200 and gw.grants.defs["ok2"].source == "ui"
     # the same credential injection smuggled through POST /destinations (a single-target request) is refused too
@@ -324,7 +326,11 @@ def test_never_reachable_is_what_is_locked_and_config_never_entries_are_rules(tm
     assert g.blocks_config == cfg_rules and [r.source for r in g.policy.rules if r.cidr == "10.0.0.0/8"] == ["builtin"]
     assert len({r.cidr for r in g.policy.rules}) == len(g.policy.rules)  # every range once
     # the policy's old hard_deny extra is the operator's own deny rule, above the blocks
-    assert (g.policy.rules[0].id, g.policy.rules[0].cidr, g.policy.rules[0].source) == ("block-9.9.9.9_32", "9.9.9.9/32", "user")
+    assert (g.policy.rules[0].id, g.policy.rules[0].cidr, g.policy.rules[0].source) == (
+        "block-9.9.9.9_32",
+        "9.9.9.9/32",
+        "user",
+    )
     for ip in ("192.168.60.5", "8.8.8.8", "9.9.9.9", "10.1.1.1"):
         assert g.policy.evaluate("x.example", 443, [ip]).action == "deny", ip
     assert g.policy.evaluate("x.example", 443, ["172.31.11.9"]).rule_id == "locked"

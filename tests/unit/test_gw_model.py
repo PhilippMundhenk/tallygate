@@ -253,4 +253,6 @@ def test_grant_addresses_and_problems(gw):
     # locked ranges apply to every kind of target
     gw.policy.locked_nets = [ipaddress.ip_network("10.0.0.0/24")]
     for target in (t, pinned, lit):
-        assert "locked: 10.0.0.5 belongs to the tallygate stack itself" in m.grant_problem(g, target, "x", 443, ["10.0.0.5"])
+        assert "locked: 10.0.0.5 belongs to the tallygate stack itself" in m.grant_problem(
+            g, target, "x", 443, ["10.0.0.5"]
+        )

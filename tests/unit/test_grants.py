@@ -145,10 +145,21 @@ def test_lan_flag_and_lan_allow_are_read_from_old_files_and_ignored(tmp_path, ca
     log = caplog.text
     assert "grants_lan_allow is ignored since ADR-0019" in log
     # the config-file grant (HA: a name only, with lan) and the UI file, each target once
-    assert log.count("gateway config: grant ha, target ha.lan:8123: `lan` is ignored now, and a target that is only a name") == 1
-    assert log.count("grant cam, target cam.lan:80: `lan` is ignored now, and a target that is only a name cannot open") == 1
+    assert (
+        log.count(
+            "gateway config: grant ha, target ha.lan:8123: `lan` is ignored now, and a target that is only a name"
+        )
+        == 1
+    )
+    assert (
+        log.count("grant cam, target cam.lan:80: `lan` is ignored now, and a target that is only a name cannot open")
+        == 1
+    )
     assert "It keeps working for a local address only with a fixed `address`" in log
-    assert log.count("grant pin, target pin.lan:80: `lan` is ignored now; the target names an address and keeps working") == 1
+    assert (
+        log.count("grant pin, target pin.lan:80: `lan` is ignored now; the target names an address and keeps working")
+        == 1
+    )
     assert log.count("grant lit, target 192.168.1.7:22: `lan` is ignored now; the target names an address") == 1
     assert "grant pub" not in log
     # migrated once: the old file is kept, the new one has no flag, and the next start is silent
@@ -158,10 +169,14 @@ def test_lan_flag_and_lan_allow_are_read_from_old_files_and_ignored(tmp_path, ca
     with caplog.at_level(logging.WARNING, "egressgw"):
         again = Grants({}, tmp_path)
     assert "lan" not in caplog.text.replace(".lan", "") and set(again.defs) == {"cam", "pin", "lit", "pub"}
-    assert again.defs["pin"].targets[0].fixed() == "192.168.1.9" and again.defs["lit"].targets[0].fixed() == "192.168.1.7"
+    assert (
+        again.defs["pin"].targets[0].fixed() == "192.168.1.9" and again.defs["lit"].targets[0].fixed() == "192.168.1.7"
+    )
     assert again.defs["cam"].targets[0].fixed() is None
     # a backup that exists is never overwritten
-    (tmp_path / "grants.yaml").write_text(yaml.safe_dump({"x": {"targets": [{"host": "x.lan", "port": 1, "lan": True}]}}))
+    (tmp_path / "grants.yaml").write_text(
+        yaml.safe_dump({"x": {"targets": [{"host": "x.lan", "port": 1, "lan": True}]}})
+    )
     Grants({}, tmp_path)
     assert yaml.safe_load((tmp_path / "grants.yaml.pre-0019").read_text()) == old
 

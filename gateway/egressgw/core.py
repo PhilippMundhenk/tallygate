@@ -204,7 +204,7 @@ class Gateway:
             if migration is not None:
                 what = "policy migrated to one ordered rule list (ADR-0019)"
         self.adopt(policy)
-        if rewrite or self.seeded_now:
+        if rewrite or self.seeded_changed:
             self._write_policy_file()
         self._history("gateway", what)  # nothing is stored when it equals the latest version
         self.events = EventLog(
@@ -325,7 +325,9 @@ class Gateway:
         `deny` rules at the bottom (ADR-0019). The caller saves it."""
         policy.locked_nets = list(self.grants.internal)
         policy.locked_socks = list(self.grants.own)
+        remembered = list(policy.seeded)
         self.seeded_now = policy.seed_blocks(self.blocks_builtin, self.blocks_config)
+        self.seeded_changed = policy.seeded != remembered  # also when a range that left the config was forgotten
         if self.seeded_now:
             log.warning("blocks seeded as deny rules at the bottom: %s", ", ".join(r.cidr for r in self.seeded_now))
         self.policy = policy

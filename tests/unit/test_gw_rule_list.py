@@ -328,7 +328,15 @@ def test_name_first_short_cuts_only_where_no_address_can_change_the_result():
 
 
 def _random_policy(rng: random.Random) -> Policy:
-    nets = ["8.8.8.0/24", "8.8.8.8/32", "9.9.9.9/32", "192.168.1.0/24", "192.168.1.10/32", "0.0.0.0/0", "2001:4860::/32"]
+    nets = [
+        "8.8.8.0/24",
+        "8.8.8.8/32",
+        "9.9.9.9/32",
+        "192.168.1.0/24",
+        "192.168.1.10/32",
+        "0.0.0.0/0",
+        "2001:4860::/32",
+    ]
     hosts = ["a.example", "*.example", "b.test", "*", "*.b.test"]
     rules = []
     for i in range(rng.randint(0, 7)):
@@ -443,7 +451,12 @@ def test_move_rule_and_its_validation():
     assert p.move_rule("a", None) and order() == ["c", "b", "a"]  # null: the end of the list
     assert p.move_rule("a", None) and order() == ["c", "b", "a"]
     assert p.move_rule("nope", "a") is False and order() == ["c", "b", "a"]
-    for before, error in (("a", "before itself"), ("nope", "no rule 'nope'"), (LOCKED, "no rule"), (3, "rule id or null")):
+    for before, error in (
+        ("a", "before itself"),
+        ("nope", "no rule 'nope'"),
+        (LOCKED, "no rule"),
+        (3, "rule id or null"),
+    ):
         with pytest.raises(ValueError, match=error):
             p.move_rule("a", before)
     assert order() == ["c", "b", "a"]
@@ -526,7 +539,11 @@ OLD = {
 
 
 def test_migration_of_a_pre_0019_policy():
-    assert is_pre_0019(OLD) and is_pre_0019({"default": "ask", "rules": []}) and is_pre_0019({"seeded": [], "floor_open": []})
+    assert (
+        is_pre_0019(OLD)
+        and is_pre_0019({"default": "ask", "rules": []})
+        and is_pre_0019({"seeded": [], "floor_open": []})
+    )
     assert not is_pre_0019({"seeded": []})
     new, notes = migrate(OLD, BUILTIN, ["198.18.5.0/24"])
     assert set(new) == {"default", "ask_timeout", "rules", "seeded"}  # hard_deny, floor_open, the echo: gone
@@ -534,7 +551,12 @@ def test_migration_of_a_pre_0019_policy():
     # CIDR deny rules first, in their order; then the other rules in theirs; then the hard_deny extras
     assert [r["id"] for r in new["rules"]] == ["d1", "d2", "gh", "ip", "ip2", "nd", block_id("203.0.113.7/32")]
     extra = new["rules"][-1]
-    assert extra == {"id": block_id("203.0.113.7/32"), "action": "deny", "cidr": "203.0.113.7/32", "note": "was hard_deny"}
+    assert extra == {
+        "id": block_id("203.0.113.7/32"),
+        "action": "deny",
+        "cidr": "203.0.113.7/32",
+        "note": "was hard_deny",
+    }
     # floor_open: the operator had opened 192.168/16 - remembered as seeded, so no block is added for it.
     # 10/8 was an "extra" that is built in anyway; 198.51.100.0/24 is built in and was opened too.
     assert new["seeded"] == ["192.168.0.0/16", "198.51.100.0/24"]

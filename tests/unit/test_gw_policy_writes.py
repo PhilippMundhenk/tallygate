@@ -89,7 +89,9 @@ def test_patch_changes_only_mode_and_timeout(gw):
     gw.policy.add_rule(Rule(action="allow", host="new.example", id="new"))
     gw.policy.remove_rule("ok")
     status, data = admin(gw, "PATCH", "/policy", {"default": "deny"})
-    assert status == 200 and data["default"] == "deny" and [r["id"] for r in data["rules"] if "source" not in r] == ["new"]
+    assert (
+        status == 200 and data["default"] == "deny" and [r["id"] for r in data["rules"] if "source" not in r] == ["new"]
+    )
     status, data = admin(gw, "PATCH", "/policy", {"ask_timeout": 120})
     assert data["default"] == "deny" and data["ask_timeout"] == 120
     saved = yaml.safe_load((core.DATA_DIR / "policy.yaml").read_text())  # on disk in the destinations form (ADR-0014)

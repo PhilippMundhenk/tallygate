@@ -314,7 +314,12 @@ def test_translate_marks_shadowed_and_never_reached_rules(gw):
     gw._hit(dec)
     gw._hit(dec)
     sh = by_id()["nas"].shadowed  # not flushed yet: counted already
-    assert (sh["count"], sh["address"], sh["by"], sh["range"]) == (2, "192.168.1.10", "block-192.168.0.0_16", "192.168.0.0/16")
+    assert (sh["count"], sh["address"], sh["by"], sh["range"]) == (
+        2,
+        "192.168.1.10",
+        "block-192.168.0.0_16",
+        "192.168.0.0/16",
+    )
     gw.flush_hits()
     gw._hit(gw.policy.evaluate("nas.example", 443, ["10.9.9.9"]))
     sh = by_id()["nas"].to_dict()["shadowed"]  # stored + unflushed, with the latest case

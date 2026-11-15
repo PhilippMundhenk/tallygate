@@ -265,7 +265,9 @@ def test_import_of_a_pre_0019_export_is_migrated_and_previewed_as_it_will_be(gw)
     assert ids[:3] == ["net", "ok", "block-203.0.113.7_32"] and "block-10.0.0.0_8" not in ids
     assert set(gw.policy.seeded) == set(gw.blocks_builtin)  # 10/8 is remembered: it stays open after a restart
     assert [r.id for r in core.Gateway().policy.rules] == ids
-    assert gw.grants.defs["cam"].targets[0].fixed() == "192.168.1.9" and not hasattr(gw.grants.defs["cam"].targets[0], "lan")
+    assert gw.grants.defs["cam"].targets[0].fixed() == "192.168.1.9" and not hasattr(
+        gw.grants.defs["cam"].targets[0], "lan"
+    )
     for broken in ({"hard_deny": "x"}, {"floor_open": ["nope"]}, {"hard_deny": [], "bogus": 1}):
         doc = yaml.safe_dump({"tallygate_export": 1, "policy": broken})
         assert admin(gw, "POST", "/policy/import", {"yaml": doc, "apply": True})[0] == 400
