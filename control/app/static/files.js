@@ -61,11 +61,11 @@ $("#fileForm").addEventListener("submit", guard(async (e) => {
   btn.disabled = true;
   try {
     for (const [i, f] of files.entries()) {
-      status.className = "status"; status.textContent = `Uploading ${i + 1} of ${files.length}: ${f.name}…`;
+      status.className = "step-msg"; status.textContent = `Uploading ${i + 1} of ${files.length}: ${f.name}…`;
       try { await uploadOne(f, $("#fileOverwrite").checked); done.push(f.name); } catch (err) { failed.push(err.message); }
     }
   } finally { btn.disabled = false; }
-  status.className = "status " + (failed.length ? "bad" : "ok");
+  status.className = "step-msg " + (failed.length ? "bad" : "ok");
   status.textContent = (done.length ? `✔ Uploaded ${done.length}: ${done.join(", ")}. ` : "") + (failed.length ? `✖ ${failed.join("; ")}` : "");
   $("#fileInput").value = "";
   await loadFiles();

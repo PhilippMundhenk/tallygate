@@ -8,7 +8,7 @@ const CHECK_ICON = { ok: "✔", warn: "⚠", bad: "✖", info: "•" };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function stepStatus(id, html, cls = "") {
-  const s = $(`#${id} > .status`); s.className = "status " + cls; s.innerHTML = html;
+  const s = $(`#${id} > .step-msg`); s.className = "step-msg " + cls; s.innerHTML = html;
 }
 function step(id, state, html, cls) {
   const li = $("#" + id); li.dataset.state = state;
@@ -66,7 +66,7 @@ function renderGateway(info, sec) {
 function renderToken(sec) {
   if (!sec.ok) return step("st-gh", "missing", esc(sec.e.message), "bad");
   const has = sec.v.names.includes("github_token");
-  if (!$("#st-gh > .status").dataset.keep) step("st-gh", has ? "done" : "missing", has ? "✔ github_token stored in the gateway" : "No token stored yet.");
+  if (!$("#st-gh > .step-msg").dataset.keep) step("st-gh", has ? "done" : "missing", has ? "✔ github_token stored in the gateway" : "No token stored yet.");
   else step("st-gh", has ? "done" : "missing");
 }
 
@@ -215,7 +215,7 @@ function renderNotify(meta, ncfg) {
 }
 
 function renderSelftest() {
-  if (!wz.selftest) return step("st-test", "missing", $("#st-test > .status").innerHTML ? undefined : "Not run yet.");
+  if (!wz.selftest) return step("st-test", "missing", $("#st-test > .step-msg").innerHTML ? undefined : "Not run yet.");
   step("st-test", wz.selftest.every((t) => t.pass) ? "done" : "missing");
 }
 
@@ -238,13 +238,13 @@ $("#ghSave").onclick = guard(async () => {
   const token = $("#ghToken").value.trim(); if (!token) throw new Error("Paste the token first");
   const r = await api("POST", "/api/github/check", { token, store: true });
   $("#ghToken").value = "";
-  const s = $("#st-gh > .status"); s.dataset.keep = "1";
+  const s = $("#st-gh > .step-msg"); s.dataset.keep = "1";
   if (!r.ok) { stepStatus("st-gh", `✖ GitHub says ${esc(r.status)}: ${esc(r.message)}`, "bad"); return renderSummary(); }
   stepStatus("st-gh", `✔ valid for <b>${esc(r.login)}</b>${r.expires ? ` · expires ${esc(r.expires)}` : ""}${r.scopes ? ` · scopes ${esc(r.scopes)}` : " · fine-grained"} · ${r.stored ? "stored in the gateway" : "NOT stored"}`, r.stored ? "ok" : "bad");
   await refreshAndNext();
 });
 $("#ghRemove").onclick = confirmClick($("#ghRemove"), "Remove the GitHub token from the gateway?", async () => {
-  await gw("PUT", "/secrets/github_token", { value: "" }); delete $("#st-gh > .status").dataset.keep; await loadWizard();
+  await gw("PUT", "/secrets/github_token", { value: "" }); delete $("#st-gh > .step-msg").dataset.keep; await loadWizard();
 });
 
 // Claude login: control only passes on a URL of Anthropic's login page (safe_login_url), never another one.

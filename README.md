@@ -151,6 +151,7 @@ Details: [docs/operations.md#from-source](docs/operations.md#from-source)
 | [Configuration](docs/configuration.md) | All settings, with examples |
 | [API](docs/api.md) | Gateway and control interfaces |
 | [Development](docs/development.md) | Layout, tests, contributing |
+| [UX concept](docs/ux-concept.md) | The one vocabulary of the web UI: buttons, help, status, words |
 | [Related work](docs/related-work.md) | Comparison with other sandboxes |
 
 ## Limitations

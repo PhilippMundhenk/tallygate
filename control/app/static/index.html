@@ -264,7 +264,7 @@
     <div class="card"><h3>Upload to this folder</h3>
       <form id="fileForm" class="upload-form"><input type="file" id="fileInput" multiple aria-describedby="fileHint" aria-label="Files to upload">
         <div class="upload-actions"><label class="check-inline"><input type="checkbox" id="fileOverwrite"> replace existing files</label><button id="fileUpload">Upload</button></div></form>
-      <p class="hint" id="fileHint"></p><div id="fileStatus" class="status" role="status" aria-live="polite"></div></div>
+      <p class="hint" id="fileHint"></p><div id="fileStatus" class="step-msg" role="status" aria-live="polite"></div></div>
     <div class="table-wrap"><table class="files"><thead><tr><th scope="col">Name</th><th scope="col">Size</th><th scope="col">Modified</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody id="fileBody"></tbody></table></div>
     <p id="fileTruncated" class="hint hidden">Only the first 2000 entries are shown.</p>
@@ -308,14 +308,14 @@
     <div id="wzSummary" class="card" role="status" aria-live="polite">…</div>
     <ol class="wizard">
       <li id="st-access" data-required="1"><h3 tabindex="-1">Access to this UI <span class="step-state"></span></h3>
-        <ul id="accessChecks" class="checks"></ul><div class="status"></div></li>
+        <ul id="accessChecks" class="checks"></ul><div class="step-msg"></div></li>
       <li id="st-password" data-required="1"><h3 tabindex="-1">UI password <span class="step-state"></span></h3>
-        <div class="status"></div></li>
-      <li id="st-gw" data-required="1"><h3 tabindex="-1">Gateway <span class="step-state"></span></h3><div class="status">…</div></li>
+        <div class="step-msg"></div></li>
+      <li id="st-gw" data-required="1"><h3 tabindex="-1">Gateway <span class="step-state"></span></h3><div class="step-msg">…</div></li>
       <li id="st-gh" data-required="1"><h3 tabindex="-1">GitHub token (stored in the gateway only) <span class="step-state"></span></h3>
         <p class="hint">Use a <b>fine-grained PAT</b> limited to the repos the agent may touch (Contents, Pull requests, Issues: read/write). The agent only ever sees a placeholder; the gateway injects the real token for github.com / api.github.com.</p>
         <div class="row"><input id="ghToken" type="password" aria-label="GitHub token" placeholder="github_pat_…" autocomplete="off"><button id="ghSave">Validate &amp; store</button><button id="ghRemove" class="secondary">Remove</button></div>
-        <div class="status"></div></li>
+        <div class="step-msg"></div></li>
       <li id="st-claude" data-required="1"><h3 tabindex="-1">Log in to Claude <span class="step-state"></span></h3>
         <p class="hint">Needs a claude.ai subscription (Remote Control does not work with API keys). The login runs in the
           agent; you sign in on Anthropic's page and paste the code it shows here.</p>
@@ -325,7 +325,7 @@
           <p>2. Paste the code the page shows:</p>
           <div class="row"><input id="clCode" aria-label="Code from the login page" autocomplete="off" spellcheck="false"><button id="clSend">Log in</button></div>
         </form>
-        <div class="status"></div></li>
+        <div class="step-msg"></div></li>
       <li id="st-git" data-required="1"><h3 tabindex="-1">Git identity <span class="step-state"></span></h3>
         <p class="hint">The name and address on the agent's commits. Taken from the GitHub account of the token, with
           its private <code>noreply</code> address.</p>
@@ -335,13 +335,13 @@
         <details class="more"><summary>Enter it yourself</summary>
           <form id="gitManual" class="row"><input id="gitManName" aria-label="Name" placeholder="Your Name" autocomplete="off">
             <input id="gitManEmail" aria-label="Email" placeholder="id+user@users.noreply.github.com" autocomplete="off"><button>Save</button></form></details>
-        <div class="status"></div></li>
+        <div class="step-msg"></div></li>
       <li id="st-rc" data-required="1"><h3 tabindex="-1">Remote Control <span class="step-state"></span></h3>
         <p class="hint">Makes the agent's sessions reachable in the Claude app (<i>Code</i>) and on claude.ai/code with your
           account. <i>Enable</i> answers Claude Code's one-time question <code>Enable Remote Control? (y/n)</code> with yes,
           trusts <code>/workspace</code>, and restarts Remote Control.</p>
         <div class="row"><button id="rcEnable">Enable Remote Control</button><button data-term="rc" class="secondary">Watch the rc console</button></div>
-        <div class="status"></div></li>
+        <div class="step-msg"></div></li>
       <li id="st-notify"><h3 tabindex="-1">Notifications <span class="step-state"></span></h3>
         <div id="notifyStatus" class="muted notify-status"></div>
         <p class="hint">Approval prompts are delivered through the channels below. Set up the bot channels (Telegram,
@@ -358,10 +358,10 @@
         </div>
         <p id="notifyPerm" class="muted notify-perm" role="status"></p>
         <div id="pushSetup"></div>
-        <div class="status"></div></li>
+        <div class="step-msg"></div></li>
       <li id="st-test" data-required="1"><h3 tabindex="-1">Isolation self-test <span class="step-state"></span></h3>
         <p class="hint">Runs inside the agent: direct internet, raw TCP, UDP DNS, LAN via proxy, gateway API and control UI must all be <b>blocked</b>; the proxy path to Anthropic must work.</p>
-        <button id="selftestBtn">Run self-test</button><div class="status"></div></li>
+        <button id="selftestBtn">Run self-test</button><div class="step-msg"></div></li>
     </ol>
   </section>
 </main>
