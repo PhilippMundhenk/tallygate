@@ -113,12 +113,14 @@ def test_web_console_roundtrip(ui, control):
     assert b"tally-42" in asyncio.run(run())
 
 
-def test_setup_points_to_learning_mode_as_the_first_run_path(ui):
-    """#121: the starting-policy step offers learning mode; it is started (and confirmed) on the Rules tab."""
+def test_learning_mode_leads_quick_settings_and_setup_has_no_policy_step(ui):
+    """#200/#197: the unknown-destination step is gone from Setup ("ask" is the default; the mode is under
+    Settings); learning mode is the first card of Quick settings and is started (and confirmed) there."""
     page = ui.call("GET", "/")[1]
-    assert b'id="wzLearn"' in page and b"run your first task in <i>learning mode</i>" in page
+    assert b'id="st-policy"' not in page and b'id="wzLearn"' not in page
+    assert page.index(b'id="learnCard"') < page.index(b'id="qaTemplates"')
     js = ui.call("GET", "/static/wizard.js")[1]
-    assert b'$("#wzLearn").onclick' in js and b'gw("POST", "/learning"' not in js  # it navigates, it does not start
+    assert b'gw("POST", "/learning"' not in js
 
 
 def test_what_the_agent_can_reach_is_one_table(ui):

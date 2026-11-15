@@ -153,6 +153,64 @@ def test_write_upload(st, ws):
     assert (ws / "d" / "empty").read_bytes() == b""
 
 
+def test_delete_files_folders_and_links(st, ws):
+    (ws / "f.txt").write_text("x")
+    (ws / "d" / "sub").mkdir(parents=True)
+    (ws / "d" / "sub" / "deep.txt").write_text("y")
+    assert st.delete_path({"path": "f.txt"}) == {"path": "f.txt", "type": "file"}
+    assert not (ws / "f.txt").exists()
+    assert st.delete_path({"path": "d/sub/deep.txt"}) == {"path": "d/sub/deep.txt", "type": "file"}
+    (ws / "d" / "sub" / "again.txt").write_text("z")
+    assert st.delete_path({"path": "d//"}) == {"path": "d", "type": "dir"}
+    assert not (ws / "d").exists() and ws.is_dir()
+
+
+def test_delete_never_leaves_the_workspace(st, ws, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep")
+    (outside / "secret").write_text("secret")
+    (ws / "out").symlink_to(outside / "secret")
+    (ws / "outdir").symlink_to(outside)
+    (ws / "tree").mkdir()
+    (ws / "tree" / "inner").symlink_to(outside)
+    (ws / "self").symlink_to(ws)
+    # through a link that leaves the workspace: refused, nothing touched
+    with pytest.raises(st.SetupError, match="outside the workspace") as e:
+        st.delete_path({"path": "outdir/keep.txt"})
+    assert e.value.status == 403
+    # a link itself is removed, never its target
+    assert st.delete_path({"path": "out"}) == {"path": "out", "type": "file"}
+    assert st.delete_path({"path": "outdir"}) == {"path": "outdir", "type": "file"}
+    assert st.delete_path({"path": "self"}) == {"path": "self", "type": "file"}
+    # a folder is removed without descending into the links in it
+    assert st.delete_path({"path": "tree"}) == {"path": "tree", "type": "dir"}
+    assert sorted(os.listdir(outside)) == ["keep.txt", "secret"] and (outside / "secret").read_text() == "secret"
+    assert os.listdir(ws) == []
+
+
+def test_delete_refusals(st, ws, monkeypatch):
+    (ws / "f").write_text("x")
+    for path in ("", None):
+        with pytest.raises(st.SetupError, match="the workspace itself cannot be deleted") as e:
+            st.delete_path({"path": path})
+        assert e.value.status == 400
+    cases = (("/", 400), ("../x", 400), ("a/../f", 400), ("/etc/passwd", 400), ("missing", 404), ("f/below", 404))
+    for path, code in cases:
+        with pytest.raises(st.SetupError) as e:
+            st.delete_path({"path": path})
+        assert e.value.status == code, path
+    assert (ws / "f").read_text() == "x" and ws.is_dir()
+
+    def denied(*a, **k):
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(st.os, "unlink", denied)
+    with pytest.raises(st.SetupError, match="cannot delete this") as e:
+        st.delete_path({"path": "f"})
+    assert e.value.status == 403
+
+
 # ---------------------------------------------------------------- HTTP
 @pytest.fixture
 def server(st):
@@ -203,3 +261,21 @@ def test_http_upload_needs_a_length(st, server):
     r = c.getresponse()
     assert r.status == 411
     c.close()
+
+
+def test_http_delete(st, ws, server, tmp_path):
+    (ws / "sub").mkdir()
+    (ws / "sub" / "r.txt").write_bytes(b"result")
+    (tmp_path / "secret").write_text("outside")
+    (ws / "esc").symlink_to(tmp_path)
+    status, _, data = request(server, "DELETE", "/files?path=sub/r.txt")
+    assert status == 200 and json.loads(data) == {"path": "sub/r.txt", "type": "file"}
+    status, _, data = request(server, "DELETE", "/files?path=sub/r.txt")
+    assert status == 404 and json.loads(data) == {"error": "no such file or folder"}
+    status, _, data = request(server, "DELETE", "/files?path=sub")
+    assert status == 200 and json.loads(data) == {"path": "sub", "type": "dir"} and not (ws / "sub").exists()
+    assert request(server, "DELETE", "/files?path=../x")[0] == 400
+    assert request(server, "DELETE", "/files")[0] == 400  # the workspace itself
+    assert request(server, "DELETE", "/files?path=esc/secret")[0] == 403
+    assert request(server, "DELETE", "/other?path=x")[0] == 404
+    assert (tmp_path / "secret").read_text() == "outside" and ws.is_dir()

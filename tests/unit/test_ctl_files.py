@@ -21,12 +21,14 @@ class FilesWorld(World):
         self.download: tuple | None = (200, b"file-bytes")
         self.uploads: list = []
         self.upload_reply = (200, b'{"path": "x", "size": 3}')
+        self.delete_reply = (200, b'{"path": "x", "type": "file"}')
 
     def app(self) -> web.Application:
         a = web.Application()
         a.router.add_get("/files", self.list)
         a.router.add_get("/files/download", self.get)
         a.router.add_put("/files", self.put)
+        a.router.add_delete("/files", self.delete)
         for r in super().app().router.routes():
             a.router.add_route(r.method, r.resource.canonical, r.handler)
         return a
@@ -56,6 +58,11 @@ class FilesWorld(World):
     async def put(self, request):
         self.uploads.append((dict(request.query), request.headers.get("Content-Length"), await request.read()))
         status, body = self.upload_reply
+        return web.Response(status=status, body=body)
+
+    async def delete(self, request):
+        self.seen.append(("DELETE", "/files", dict(request.query), None))
+        status, body = self.delete_reply
         return web.Response(status=status, body=body)
 
 
@@ -117,12 +124,17 @@ def test_paths_are_refused_before_the_agent_is_asked(load_main, path):  # noqa: 
 
     async def fn(c):
         out = []
-        for method, url in (("GET", "/api/files"), ("GET", "/api/files/download"), ("PUT", "/api/files")):
+        for method, url in (
+            ("GET", "/api/files"),
+            ("GET", "/api/files/download"),
+            ("PUT", "/api/files"),
+            ("DELETE", "/api/files"),
+        ):
             r = await c.request(method, url, params={"path": path}, data=b"x", headers=CSRF)
             out.append((r.status, (await r.json())["error"]))
         return out
 
-    assert go(main, world, fn) == [(400, "invalid path")] * 3
+    assert go(main, world, fn) == [(400, "invalid path")] * 4
     assert not [s for s in world.seen if s[1].startswith("/files")] and not world.uploads
 
 
@@ -293,3 +305,63 @@ def test_upload_body_ending_early(load_main):  # noqa: F811
     data = go(main, world, fn)
     assert b"upload failed" in data or data == b""
     assert not world.uploads or len(world.uploads[-1][2]) < 100
+
+
+def test_delete_is_csrf_checked_relayed_and_logged(load_main, caplog):  # noqa: F811
+    main = load_main()
+    world = FilesWorld()
+
+    async def fn(c):
+        out = {}
+        r = await c.delete("/api/files", params={"path": "a.txt"})
+        out["no csrf"] = (r.status, await r.json())
+        r = await c.delete("/api/files", params={"path": "a.txt"}, headers={**CSRF, "Origin": "http://evil.test"})
+        out["cross origin"] = r.status
+        for name, path in (("root", ""), ("root slash", "//"), ("absolute", "/etc/passwd"), ("traversal", "a/../..")):
+            r = await c.delete("/api/files", params={"path": path}, headers=CSRF)
+            out[name] = (r.status, await r.json())
+        r = await c.delete("/api/files", headers=CSRF)
+        out["no path"] = r.status
+        assert not [s for s in world.seen if s[1] == "/files"]
+        r = await c.delete("/api/files", params={"path": "out//a.txt"}, headers=CSRF)
+        out["file"] = (r.status, await r.json())
+        world.delete_reply = (200, b'{"path": "whatever", "type": "dir"}')
+        r = await c.delete("/api/files", params={"path": "out"}, headers=CSRF)
+        out["dir"] = (r.status, await r.json())
+        world.delete_reply = (200, b'{"type": "<b>odd</b>"}')
+        r = await c.delete("/api/files", params={"path": "odd"}, headers=CSRF)
+        out["odd type"] = await r.json()
+        for name, reply in (
+            ("missing", (404, b'{"error": "no such file or folder"}')),
+            ("escape", (403, b'{"error": "outside the workspace"}')),
+            ("agent failed", (500, b'{"error": "boom"}')),
+            ("no error text", (500, b"{}")),
+            ("not json", (200, b"nope")),
+            ("not an object", (200, b"[]")),
+        ):
+            world.delete_reply = reply
+            r = await c.delete("/api/files", params={"path": "gone"}, headers=CSRF)
+            out[name] = (r.status, (await r.json())["error"])
+        main.AGENT_STATUS_PORT = 1  # nothing listens
+        r = await c.delete("/api/files", params={"path": "f"}, headers=CSRF)
+        out["no agent"] = (r.status, (await r.json())["error"])
+        return out
+
+    with caplog.at_level("INFO"):
+        out = go(main, world, fn)
+    assert out["no csrf"] == (403, {"error": "csrf check failed"}) and out["cross origin"] == 403
+    for name in ("root", "root slash", "absolute", "traversal"):
+        assert out[name] == (400, {"error": "invalid path"}), name
+    assert out["no path"] == 400
+    assert out["file"] == (200, {"path": "out/a.txt", "type": "file"})
+    assert out["dir"] == (200, {"path": "out", "type": "dir"})
+    assert out["odd type"] == {"path": "odd", "type": "file"}
+    assert out["missing"] == (404, "no such file or folder") and out["escape"] == (403, "outside the workspace")
+    assert out["agent failed"] == (502, "boom") and out["no error text"] == (502, "failed")
+    assert out["not json"][0] == 502 and out["not an object"][0] == 502
+    assert out["no agent"][0] == 502 and out["no agent"][1].startswith("agent unreachable")
+    deletes = [s for s in world.seen if s[0] == "DELETE"]
+    assert deletes[0] == ("DELETE", "/files", {"path": "out/a.txt"}, None) and deletes[1][2] == {"path": "out"}
+    assert "workspace delete: out/a.txt (file) by admin" in caplog.text
+    assert "workspace delete: out (dir) by admin" in caplog.text
+    assert "workspace delete refused: gone by admin (404)" in caplog.text

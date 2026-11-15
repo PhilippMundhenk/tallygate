@@ -185,6 +185,7 @@ Used by the bundled web UI; documented for scripting and review.
 | GET | `/api/files?path=<dir>` | session | Workspace folder listing: `{"path", "entries": [{"name", "type": "file"\|"dir"\|"link"\|"other", "size", "mtime"}], "truncated", "max_upload", "max_download"}`. Odd entries from the agent are dropped |
 | GET | `/api/files/download?path=<file>` | session | The file as `application/octet-stream` with `Content-Disposition: attachment` and `Content-Security-Policy: sandbox`; 413 over `FILES_MAX_DOWNLOAD` |
 | PUT | `/api/files?path=<file>&overwrite=1` | session + CSRF | Upload the request body (`Content-Length` required, at most `FILES_MAX_UPLOAD`, else 411 / 413); 409 if the file exists without `overwrite=1` or is a folder or link; answers `{"path", "size"}` |
+| DELETE | `/api/files?path=<file or folder>` | session + CSRF | Delete one file, link or folder (with everything in it); a link is removed, never its target. 400 for the workspace itself (empty path); answers `{"path", "type": "file"\|"dir"}`. Logged with the user |
 | GET | `/term/{name}/` | session | Console page (served by control: vendored xterm.js, no agent content) |
 | GET (WS) | `/term/{name}/ws` | session + Origin | Filtered relay to the agent's ttyd `name`: browser → `0` input / `1` resize, agent → `0` output only; control adds the ttyd credential |
 

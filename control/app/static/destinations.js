@@ -39,7 +39,7 @@
       <th scope="col">Destination</th><th scope="col">Access</th><th scope="col">Limits</th><th scope="col">Group</th><th scope="col">Source</th>
       <th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody id="destBody"></tbody></table></div>
     <p class="hint" id="destMode"></p>
-    <p class="hint">On-request destinations (grants) are managed below; active grants and secrets are on the <i>Grants</i> tab.</p>`;
+`;
 
   function matchText(d) {
     const host = d.match.host || d.match.cidr || "?";
@@ -90,8 +90,9 @@
       body.appendChild(tr);
     }
     renderNever(body, q);
-    $("#destMode").innerHTML = `<i>Everything else:</i> ${esc(MODE[model.default] || model.default)}. `
-      + `${model.never.length} never-reachable range(s) listed below. The mode and shortcuts are on the <i>Quick start</i> tab.`;
+    const blocked = (model.never || []).filter((n) => !n.open).length;
+    $("#destMode").innerHTML = `<i>Everything else:</i> ${esc(MODE[model.default] || model.default)} (change it under <i>Settings</i>). `
+      + `${blocked} blocked range(s) are listed at the end of the table.`;
   }
 
   // The never-reachable deny floor (ADR-0017), shown as blocked rows in the one table. A removable range

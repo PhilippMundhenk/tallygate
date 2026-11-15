@@ -115,3 +115,7 @@ button.link{background:none;color:var(--fg);padding:0;font:12px ui-monospace,mon
 .learn-on{border-left:3px solid var(--amber);padding-left:8px}#learnSessions{margin-top:10px}#learnBox label.inline select{flex:1;min-width:0;width:100%;margin:0}
 
 @media(prefers-reduced-motion:reduce){nav#tabs{transition:none}}
+/* Controls disclosure (#198): reveals more controls, so it looks like a control (caret, normal text colour), never like help. */
+details.more{margin:8px 0}details.more>summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:13px;color:var(--fg)}
+details.more>summary::-webkit-details-marker{display:none}details.more>summary::before{content:"▸";font-size:10px;color:var(--muted)}details.more[open]>summary::before{content:"▾"}
+.lan-form:not(.hidden){display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px 12px;align-items:end;margin:8px 0}.lan-form label{margin:0}.lan-form input,.lan-form select{width:100%}
