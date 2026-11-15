@@ -1079,6 +1079,21 @@ async def api_files_upload(request: web.Request):
     return web.json_response({"path": path, "size": length})
 
 
+async def api_files_delete(request: web.Request):
+    """Delete one file or folder (recursively) in the workspace (#199); never the workspace itself."""
+    path = files_path(request, file=True)
+    try:
+        status, data = await agent_call(request.app, "DELETE", "files?" + urllib.parse.urlencode({"path": path}))
+    except (TimeoutError, aiohttp.ClientError, ValueError) as e:
+        return web.json_response({"error": f"agent unreachable or invalid response: {e}"}, status=502)
+    if status != 200:
+        log.info("workspace delete refused: %s by %s (%d)", path, request["user"], status)
+        return web.json_response({"error": str(data.get("error", "failed"))[:200]}, status=_agent_status(status))
+    kind = "dir" if data.get("type") == "dir" else "file"
+    log.info("workspace delete: %s (%s) by %s", path, kind, request["user"])
+    return web.json_response({"path": path, "type": kind})
+
+
 async def api_meta(request: web.Request):
     return web.json_response(
         {
@@ -1246,6 +1261,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/version", api_version)
     app.router.add_get("/api/files", api_files_list)
     app.router.add_put("/api/files", api_files_upload)
+    app.router.add_delete("/api/files", api_files_delete)
     app.router.add_get("/api/files/download", api_files_download)
     app.router.add_post("/api/github/check", api_github_check)
     app.router.add_route("*", "/api/agent/{what:.*}", api_agent)
