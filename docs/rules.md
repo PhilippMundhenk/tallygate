@@ -85,8 +85,10 @@ The addresses in these examples are placeholders from the documentation ranges. 
 built-in hard deny, so the rules do nothing as written: put a real public address or range in their place.
 
 For names, a CIDR `deny` rule does not depend on its position: a name that resolves into the range is refused
-even if an approval, a shortcut or one of your own rules above it allows the name. For IP literals a CIDR `deny` also wins over any `allow` above it (a `*` shortcut or a broader CIDR allow). To close a range for good, including for grants, add
-it under *Rules → Never reachable*.
+even if an approval, a shortcut or one of your own rules above it allows the name. For IP literals a CIDR `deny` also wins over any `allow` above it (a `*` shortcut or a broader CIDR allow). The
+deny floor (private/reserved ranges, the stack's own networks) is shown as blocked rows in the *Destinations*
+table; the admin may unblock a LAN/metadata range there behind a confirmation (ADR-0017), while the stack's
+own networks stay locked.
 
 Why CIDR *allow* rules only cover IP literals: if they also covered names, the gateway would have to resolve
 every name to check them, and an unknown name like `<secret>.attacker.example` would leak through DNS before you

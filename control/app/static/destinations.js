@@ -16,7 +16,10 @@
 
   box.innerHTML = `<p class="hint">Every destination the agent may reach, in one place. Access rules are edited
       here; on-request destinations (grants) are defined on the <i>Grants</i> tab; read-only hosts, added
-      credentials and repository limits come from the gateway config file and are shown read-only.</p>
+      credentials and repository limits come from the gateway config file and are shown read-only. The
+      never-reachable deny floor is listed too, each range with its reason: your own LAN and other removable
+      ranges can be unblocked here (with a warning before the agent can reach them), while the gateway's own
+      networks stay locked.</p>
     <div class="toolbar">
       <select id="dAction" aria-label="Access">${RULE_ACTIONS.map((a) => `<option>${a}</option>`).join("")}</select>
       <select id="dKind" aria-label="Match by"><option value="host">host</option><option value="cidr">cidr</option></select>
@@ -86,8 +89,51 @@
       }
       body.appendChild(tr);
     }
+    renderNever(body, q);
     $("#destMode").innerHTML = `<i>Everything else:</i> ${esc(MODE[model.default] || model.default)}. `
-      + `${model.never.length} never-reachable range(s). The mode, shortcuts and never list are below.`;
+      + `${model.never.length} never-reachable range(s) listed below. The mode and shortcuts are on the <i>Quick start</i> tab.`;
+  }
+
+  // The never-reachable deny floor (ADR-0017), shown as blocked rows in the one table. A removable range
+  // (your LAN, the cloud metadata address, your own deny additions) can be unblocked behind a scary confirm;
+  // the gateway's own networks are locked and have no action.
+  function scopeText(d) {
+    const base = d.scope === "all+lan" ? "all connections, incl. LAN grants" : "all connections";
+    return d.open ? `${base} — unblocked for normal connections` : base;
+  }
+  function renderNever(body, q) {
+    for (const d of model.never || []) {
+      if (q && !d.range.toLowerCase().includes(q)) continue;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td></td>
+        <td><code>${esc(d.range)}</code></td>
+        <td><span class="a-deny">blocked</span>${d.open ? '<div class="muted small-text">unblocked</div>' : ""}</td>
+        <td>${esc(scopeText(d))}</td>
+        <td></td>
+        <td class="muted small-text">${esc(d.reason || "")}</td><td></td>`;
+      const actions = tr.lastElementChild;
+      if (!d.removable) {
+        actions.innerHTML = '<span class="muted small-text" title="structural — can\'t be removed here">🔒 locked</span>';
+      } else if (d.open) {
+        actions.append(mkbtn("re-block", guard(() => floorOpen(d.range, false))));
+      } else {
+        const b = mkbtn("Allow (unblock)", null);
+        b.onclick = confirmClick(b, `Unblock ${d.range}? The agent will be able to reach your local network.`,
+          () => floorOpen(d.range, true));
+        actions.append(b);
+      }
+      body.appendChild(tr);
+    }
+  }
+  // Add or remove a range from the policy's floor_open and PUT the whole policy (start from the policy as it
+  // is now, like the raw editor, so a change elsewhere is not lost).
+  async function floorOpen(range, open) {
+    const fresh = await gw("GET", "/policy");
+    const set = new Set(fresh.floor_open || []);
+    if (open) set.add(range); else set.delete(range);
+    await gw("PUT", "/policy", { ...fresh, floor_open: [...set] });
+    toast(open ? `Unblocked ${range}` : `Re-blocked ${range}`);
+    await load();
   }
 
   function mkbtn(text, onclick) {

@@ -1,3 +1,4 @@
+import ipaddress
 import sys
 import time
 from pathlib import Path
@@ -265,6 +266,49 @@ def test_hard_deny_floor_cannot_be_removed_via_policy():
     assert p.evaluate("10.1.2.3", 22, []).action == "deny"
     p = Policy.from_dict({"hard_deny": ["8.8.8.8/32"]})
     assert p.evaluate("dns.google", 443, ["8.8.8.8"]).action == "deny"
+
+
+def test_floor_open_relaxes_a_scope_all_floor_range_on_the_normal_path():
+    # ADR-0017(a): a LAN range in floor_open is no longer hard-denied; the mode decides it instead.
+    p = Policy.from_dict(
+        {"default": "allow", "rules": [{"action": "allow", "host": "*"}], "floor_open": ["192.168.0.0/16"]}
+    )
+    assert p.hard_denied("nas.example", 443, ["192.168.1.10"]) is None
+    assert p.evaluate("nas.example", 443, ["192.168.1.10"]).action == "allow"
+    # other floor ranges stay blocked, and with an empty floor_open nothing changes (secure by default)
+    assert p.evaluate("x", 443, ["10.1.2.3"]).action == "deny"
+    assert Policy.from_dict({"default": "allow"}).evaluate("x", 443, ["192.168.1.10"]).action == "deny"
+    # opening is by the exact normalised range only: a sub-range is inert (the broader floor entry still covers it)
+    sub = Policy.from_dict({"default": "allow", "floor_open": ["192.168.1.0/24"]})
+    assert sub.evaluate("x", 443, ["192.168.1.5"]).action == "deny"  # 192.168.0.0/16 still blocks it
+
+
+def test_floor_open_never_relaxes_the_locked_stack_networks():
+    # ADR-0017(b): locked_nets (the stack's own networks) are checked FIRST and never relaxed, so opening a
+    # broad range that covers the stack cannot expose it.
+    p = Policy.from_dict({"default": "allow", "floor_open": ["172.16.0.0/12"]})
+    p.locked_nets = [ipaddress.ip_network("172.20.0.0/16")]  # a tallygate stack network inside 172.16/12
+    assert p.evaluate("lan", 443, ["172.16.5.5"]).action == "allow"  # a non-stack LAN host passes
+    d = p.evaluate("stack", 443, ["172.20.1.2"])
+    assert d.action == "deny" and "structural" in d.reason  # the stack stays blocked
+    # (c) even naming the exact locked range in floor_open is inert: locked_nets wins
+    p2 = Policy.from_dict({"default": "allow", "floor_open": ["172.20.0.0/16"]})
+    p2.locked_nets = [ipaddress.ip_network("172.20.0.0/16")]
+    assert p2.evaluate("stack", 443, ["172.20.1.2"]).action == "deny"
+
+
+def test_floor_open_round_trips_through_policy_yaml(tmp_path):
+    # ADR-0017(d): floor_open is persisted and validated like hard_deny.
+    p = Policy.from_dict(
+        {"default": "ask", "hard_deny": ["203.0.113.7/32"], "floor_open": ["10.0.0.0/8", "192.168.0.0/16"]}
+    )
+    assert p.floor_open == ["10.0.0.0/8", "192.168.0.0/16"]
+    assert p.to_dict()["floor_open"] == p.floor_open
+    p.save(tmp_path / "p.yaml")
+    q = Policy.load(tmp_path / "p.yaml")
+    assert q.floor_open == p.floor_open and q.to_dict() == p.to_dict()
+    with pytest.raises(ValueError, match="floor_open"):
+        Policy.from_dict({"floor_open": ["not-a-cidr"]})
 
 
 def test_tunnelling_prefixes_are_hard_denied():

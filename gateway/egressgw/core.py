@@ -224,6 +224,9 @@ class Gateway:
         self.suggest_days = int(self.settings.get("suggest_window_days"))
         self._dups: dict[tuple, list] = {}
         self.grants = Grants(self.config, DATA_DIR)
+        # ADR-0017: the structural locks come from the grants' internal networks; wire them now that grants
+        # exist (the first adopt() above ran before them), so `floor_open` can never open the stack.
+        self.policy.locked_nets = list(self.grants.internal)
         self.grants.request_timeout = int(self.settings.get("grant_request_timeout"))
         self.grants.max_requests = int(self.settings.get("grant_max_pending"))
         self.availability = Availability(self.config, DATA_DIR)
@@ -287,8 +290,13 @@ class Gateway:
         del self.config["destinations"]
 
     def adopt(self, policy: Policy) -> Policy:
-        """Attach the static parts (floor, service exceptions) to a policy loaded from file/API."""
+        """Attach the static parts (floor, structural locks, service exceptions) to a policy loaded from
+        file/API. ADR-0017: `floor_open` may open the scope-all floor, but never the structural locks
+        (`grants.internal`, the stack's own networks), which `hard_denied` enforces first."""
         policy.use_floor(self.hard_deny_floor)
+        # `grants` is built after the first adopt() at startup; wire the locks here when it exists, and again
+        # right after the grants are built (see __init__).
+        policy.locked_nets = list(self.grants.internal) if getattr(self, "grants", None) is not None else []
         self.policy = policy
         self._apply_service_exceptions()
         return policy
@@ -296,7 +304,10 @@ class Gateway:
     def never_reachable(self) -> list[dict]:
         """Every range that is never reachable, from all the places that define one, for one view in the UI.
         `scope` is "all" (every connection; a LAN grant target may be exempt) or "all+lan" (LAN grant targets
-        included). Read-only: this reports what is enforced, it decides nothing."""
+        included). ADR-0017: each row also carries `removable` (a scope-all floor range the admin may open
+        from the UI: `hard_deny_floor` + the policy `hard_deny`, but never the structural stack networks) and
+        `open` (the admin has opened it in `floor_open`). Read-only: this reports what is enforced, it decides
+        nothing."""
         own = set(self.floor_configured)
         lan = {str(n) for n in self.grants.never}
         floor = set(self.hard_deny_floor)
@@ -317,6 +328,14 @@ class Gateway:
             {"range": f"{ip}:{port}", "source": "listener", "scope": "all+lan"}
             for ip, port in sorted(self.grants.own, key=lambda s: (str(s[0]), s[1]))
         ]
+        # The scope-all floor the admin may edit (ADR-0017): hard_deny_floor + policy hard_deny, never the
+        # stack's own networks (locked). `open` reflects the admin's explicit opt-out in floor_open.
+        floor_strs = set(self.hard_deny_floor) | set(self.policy.hard_deny)
+        locked_strs = {str(n) for n in self.grants.internal}
+        open_set = set(self.policy.floor_open)
+        for r in out:
+            r["removable"] = r["range"] in floor_strs and r["range"] not in locked_strs
+            r["open"] = r["range"] in open_set
         return out
 
     def _apply_service_exceptions(self) -> None:

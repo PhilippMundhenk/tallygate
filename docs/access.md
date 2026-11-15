@@ -10,7 +10,7 @@ destination, now?** Four things feed the answer, checked in this order.
 
 | | What it is | Who sets it | Where |
 |---|---|---|---|
-| 1. **Never reachable** | Ranges that are always closed: your local network, the Docker host, cloud metadata addresses, the tallygate stack itself. Nothing is asked, and no rule opens them. | built in; you can add ranges | *Rules → Never reachable* |
+| 1. **Deny floor** | Ranges closed by default: your local network, the Docker host, cloud metadata addresses, the tallygate stack itself. Nothing is asked, and no rule opens them. You can add ranges, and (ADR-0017) unblock a LAN/metadata range from the UI behind a confirmation; the tallygate stack's own networks stay locked. | built in; editable by the admin | *Destinations* table (shown as blocked rows) |
 | 2. **On request** (grants) | Access the agent has to ask for by name, with a reason, for a limited time. The only way to one device on the local network. | you define it, and you approve each use | *Grants* tab, or the gateway config file |
 | 3. **Rules** | Allow, ask or block per host and port. The first rule that matches decides. | you: by hand, by approving a prompt, with a shortcut, or from learning mode | *Rules* tab |
 | 4. **Everything else** | The mode for destinations no rule covers: ask you (default), block, or allow and log. | you | *Rules → Shortcuts → Unknown destinations* |

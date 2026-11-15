@@ -135,15 +135,24 @@ def test_what_the_agent_can_reach_is_one_table(ui):
     # the /api/gw/access view computes is to be folded into the one rules table (#177).
 
 
-def test_never_reachable_is_one_list_in_the_ui(ui):
-    """#121: built-in floor, config, own additions and the grant limits in one read-only list."""
+def test_deny_floor_is_shown_and_editable_in_the_destinations_table(ui):
+    """ADR-0017: the never-reachable deny floor is shown as rows in the one Destinations table, each with its
+    reason and its edit state (removable/open); the separate "Never reachable" card and the hard-deny
+    textarea are retired."""
+    # /never-reachable still works (kept for compatibility) and now carries the edit state per row
     status, rows, _ = ui.call("GET", "/api/gw/never-reachable")
-    assert status == 200 and all(set(r) == {"range", "source", "scope"} for r in rows)
-    assert {"range": "169.254.0.0/16", "source": "config", "scope": "all+lan"} in rows  # the e2e config (grants_never)
-    assert any(r["source"] in ("builtin", "config") and r["scope"] == "all" for r in rows)
+    assert status == 200 and all(set(r) == {"range", "source", "scope", "removable", "open"} for r in rows)
+    floor = next(r for r in rows if r["range"] == "169.254.0.0/16")  # the e2e config (grants_never)
+    assert floor["scope"] == "all+lan" and floor["removable"] is True and floor["open"] is False
+    assert any(r["removable"] and r["scope"] == "all" for r in rows)  # a removable scope-all floor range
+    # the one destination model carries the same floor list with removable/open
+    _, model, _ = ui.call("GET", "/api/gw/model")
+    assert model["never"] and all({"range", "scope", "reason", "removable", "open"} <= set(e) for e in model["never"])
+    # the retired card and textarea are gone from the page and the scripts; the table renders the floor instead
     page = ui.call("GET", "/")[1]
-    assert b'id="neverBody"' in page and b'id="hardDeny"' in page and b"hardDenyFloor" not in page
-    assert b'gw("GET", "/never-reachable")' in ui.call("GET", "/static/app.js")[1]
+    assert b'id="neverBody"' not in page and b'id="hardDeny"' not in page and b'id="neverCard"' not in page
+    assert b"loadNever" not in ui.call("GET", "/static/app.js")[1]
+    assert b"Allow (unblock)" in ui.call("GET", "/static/destinations.js")[1]
 
 
 def test_grant_editor_has_the_simple_form_and_keeps_every_setting_under_advanced(ui):

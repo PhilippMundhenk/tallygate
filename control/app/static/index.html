@@ -104,15 +104,6 @@
       <div class="row"><input id="testHost" aria-label="Host or IP to test" placeholder="host or IP"><input id="testPort" type="number" value="443" class="port" aria-label="Port"><button id="testBtn">Test</button></div>
       <pre id="testOut" class="muted"></pre>
     </div>
-    <details class="card" id="neverCard"><summary>Never reachable <span id="neverCount" class="muted"></span></summary>
-      <p class="hint">Every range that can never be reached, from every place that defines one. Nothing is asked
-        about them and no rule can open them. <b>All connections</b>: a grant for one device on the local network
-        may be exempt. <b>LAN grants too</b>: closed even for those.</p>
-      <div class="table-wrap"><table class="never"><thead><tr><th scope="col">Range</th><th scope="col">Applies to</th><th scope="col">Comes from</th><th scope="col">To change it</th></tr></thead>
-        <tbody id="neverBody"></tbody></table></div>
-      <p class="hint" id="hardDenyHint"><b>Add your own</b> (one range per line), e.g. your Docker host's public IP as
-        <code>&lt;address&gt;/32</code> or a provider range. They apply to all connections and can only add to the list.</p>
-      <textarea id="hardDeny" rows="5" aria-labelledby="hardDenyHint"></textarea><button id="saveHard">Save my additions</button></details>
   </section>
 
   <!-- QUICK START (shortcuts + learning) -->
@@ -270,7 +261,7 @@
   <!-- SETTINGS -->
   <section id="tab-settings" role="tabpanel" aria-labelledby="tabbtn-settings" class="hidden">
     <h2>Settings</h2>
-    <p class="hint">How unmatched destinations are handled, the gateway behaviour tunables, and the raw policy. Trust-critical settings (credential injection, LAN access, the never-reachable floor) stay in the read-only gateway config by design.</p>
+    <p class="hint">How unmatched destinations are handled, the gateway behaviour tunables, and the raw policy. Trust-critical settings (credential injection and LAN grant access) stay in the read-only gateway config by design; the never-reachable deny floor is shown and edited on the <i>Destinations</i> tab.</p>
     <div class="card">
       <h3>Mode</h3>
       <label>Default action for unmatched destinations
@@ -281,8 +272,8 @@
     <details class="card" id="settingsCard"><summary>Behaviour settings</summary>
       <p class="hint">Tunables the gateway owns — log retention, learning mode, rule suggestions and grant-request
         limits. Saved here without editing a file or restarting; a few take effect only after a restart (marked).
-        Trust-critical settings (credential injection, LAN access, the never-reachable floor) stay in the
-        read-only gateway config by design.</p>
+        Trust-critical settings (credential injection and LAN grant access) stay in the read-only gateway config
+        by design; the never-reachable deny floor is shown and edited on the <i>Destinations</i> tab.</p>
       <div id="settingsBox"></div>
     </details>
     <details class="card"><summary>Advanced: raw policy JSON</summary>
