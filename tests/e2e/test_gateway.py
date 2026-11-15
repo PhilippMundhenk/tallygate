@@ -43,16 +43,19 @@ def test_allowed_by_cidr_rule(gateway, upstream):
     assert status == 200 and json.loads(body)["path"] == "/hello"
 
 
-def test_hard_deny_on_resolved_private_ip_is_immediate(gateway):
+def test_a_name_resolving_to_a_blocked_private_ip_is_denied_at_once(gateway):
     """lan.test is allowed by name but resolves to a private IP: denied at once, never asked."""
     t0 = time.time()
     status, _ = http_via_proxy(gateway["ports"]["http"], "http://lan.test/")
     assert status == 502 and time.time() - t0 < 2  # never asked
     ev = last_events(gateway, 1)[0]
-    assert ev["host"] == "lan.test" and ev["action"] == "deny" and "hard-deny" in ev["reason"]
+    assert ev["host"] == "lan.test" and ev["action"] == "deny" and ev["reason"] == (
+        "name allowed by rule lan, but it resolves to 192.168.99.99, inside blocked range 192.168.0.0/16 "
+        "(rule block-192.168.0.0_16): add an allow for the address above that rule"
+    )
 
 
-def test_hard_deny_literal_ip_via_connect(gateway):
+def test_blocked_literal_ip_via_connect(gateway):
     _, line = connect_tunnel(gateway["ports"]["http"], "10.1.2.3:22")
     assert " 200" not in line
 
@@ -195,7 +198,7 @@ def test_policy_validation_rejects_garbage(gateway):
 
 def test_dry_run_test_endpoint(gateway):
     _, data, _ = gateway["api"].call("POST", "/test", {"host": "lan.test", "port": 443})
-    assert data["action"] == "deny" and data["rule_id"] == "hard_deny"
+    assert data["action"] == "deny" and data["rule_id"] == "block-192.168.0.0_16" and data["ips"] == ["192.168.99.99"]
 
 
 def test_preset_with_ttl(gateway):
@@ -336,15 +339,21 @@ def test_identical_events_are_coalesced(gateway):
     assert any("repeated" in e["reason"] for e in rows)
 
 
-def test_hard_deny_floor_is_not_editable_via_api(gateway):
-    """TG-03"""
+def test_an_old_policy_document_cannot_drop_the_blocks(gateway):
+    """TG-03, in the new model: a pre-0019 client that sends `hard_deny: []` (or no `seeded`) removes nothing -
+    the document is migrated and every block it does not account for is seeded. Deleting a block is possible,
+    but only as what it is: deleting that rule, or a current-form document that says so."""
     _, pol, _ = gateway["api"].call("GET", "/policy")
-    pol["hard_deny"] = []
-    gateway["api"].call("PUT", "/policy", pol)
-    _, pol, _ = gateway["api"].call("GET", "/policy")
-    assert "192.168.0.0/16" in pol["hard_deny_floor"]
+    blocks = [r["cidr"] for r in pol["rules"] if r.get("source") == "config"]
+    assert "192.168.0.0/16" in blocks
+    old = {"default": pol["default"], "ask_timeout": pol["ask_timeout"], "hard_deny": [],
+           "rules": [r for r in pol["rules"] if r.get("source") != "config" and not r["id"].startswith("block-")]}  # fmt: skip
+    assert gateway["api"].call("PUT", "/policy", old)[0] == 200
+    _, after, _ = gateway["api"].call("GET", "/policy")
+    assert [r["cidr"] for r in after["rules"] if r.get("source") == "config"] == blocks
     _, data, _ = gateway["api"].call("POST", "/test", {"host": "lan.test", "port": 443})
-    assert data["action"] == "deny" and data["rule_id"] == "hard_deny"
+    assert data["action"] == "deny" and data["rule_id"] == "block-192.168.0.0_16"
+    assert data["shadow"]["rule"] == "lan"  # allowed by name, blocked by the range: said so
 
 
 def test_secret_with_crlf_is_rejected(gateway):

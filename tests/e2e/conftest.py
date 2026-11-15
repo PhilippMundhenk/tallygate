@@ -139,6 +139,9 @@ def upstream(tmp_path_factory):
         "lan": start_echo(bind="127.0.0.2"),
         "http": start_echo(),
         "http2": start_echo(),
+        # its own port: the policy allows 127.0.0.1 on the "http" port by address, and an address rule decides for
+        # every name that resolves there (ADR-0019) - a grant target on that port would not need its grant
+        "svc": start_echo(),
         "keepalive_tls": start_echo(cert, handler=KeepAliveEcho),
         "https": start_echo(cert),
         "cert": cert[0],
@@ -164,18 +167,20 @@ def gateway(tmp_path_factory, upstream):
                     {"host": "badcert.test", "header": "Authorization", "value": "Bearer ${github_token}"},
                 ],
                 "services": [{"name": "echo", "listen": ports["svc"], "target": f"127.0.0.1:{upstream['http']}"}],
-                # tests talk to 127.0.0.1 upstreams: this floor replaces the built-in one (GW_TEST_FLOOR_REPLACE)
+                # tests talk to 127.0.0.1 upstreams: with GW_TEST_FLOOR_REPLACE only these ranges are seeded as
+                # blocks, not the built-in ones (the old key is still read, like `never`)
                 "hard_deny_floor": ["192.168.0.0/16", "10.0.0.0/8", "127.0.0.2/32"],
                 "readonly": ["ro.test"],
                 "max_pending": 3,
-                # 127.0.0.2 plays the LAN: hard-denied by the floor, reachable only via a lan grant
+                # 127.0.0.2 plays the LAN: blocked by a seeded rule, reachable through a grant whose target names
+                # the address (ADR-0019); the old keys below are still read (grants_lan_allow: ignored)
                 "grants_never": ["169.254.0.0/16"],
                 "grants_lan_allow": ["127.0.0.2/32"],
                 "grant_api_rate": 1000,
                 "grants": {
                     "svc": {
                         "description": "echo API",
-                        "targets": [{"host": "svc.test", "paths": ["/api/*"], **http_t}],
+                        "targets": [{"host": "svc.test", "paths": ["/api/*"], "scheme": "http", "port": upstream["svc"]}],
                         "levels": ["read", "write"],
                         "approval": {"read": "auto", "write": "ask"},
                     },
@@ -186,7 +191,9 @@ def gateway(tmp_path_factory, upstream):
                         "inject": [{"host": "sec.test", "header": "Authorization", "value": "Bearer ${grant_token}"}],
                     },
                     "lanhttp": {
-                        "targets": [{"host": "lanecho.test", "scheme": "http", "port": upstream["lan"], "lan": True}],
+                        "targets": [
+                            {"host": "lanecho.test", "scheme": "http", "port": upstream["lan"], "address": "127.0.0.2"}
+                        ],
                         "levels": ["write"],
                     },
                     "nolan": {

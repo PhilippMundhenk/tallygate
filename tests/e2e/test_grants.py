@@ -44,7 +44,7 @@ def test_catalog_shows_grants_but_no_secrets(gateway):
 
 
 def test_inactive_grant_blocks_with_hint(gateway, upstream):
-    status, _ = proxy_request(gateway["ports"]["http"], f"svc.test:{upstream['http']}", "/api/x")
+    status, _ = proxy_request(gateway["ports"]["http"], f"svc.test:{upstream['svc']}", "/api/x")
     assert status in (502, 403)
     assert "available via grant svc" in last_event(gateway, "svc.test")["reason"]
 
@@ -52,7 +52,7 @@ def test_inactive_grant_blocks_with_hint(gateway, upstream):
 def test_read_level_allows_only_safe_methods_paths_and_host(gateway, upstream):
     r = request_and_approve(gateway, "svc", "read")  # read is auto-approved
     assert r["status"] == "approved"
-    hp = f"svc.test:{upstream['http']}"
+    hp = f"svc.test:{upstream['svc']}"
     p = gateway["ports"]["http"]
     status, body = proxy_request(p, hp, "/api/states")
     assert status == 200 and json.loads(body)["method"] == "GET"
@@ -76,7 +76,7 @@ def test_write_level_needs_a_human_and_can_be_downgraded(gateway, upstream):
     gateway["api"].call("POST", f"/grant-requests/{r['id']}/decide", {"decision": "read", "by": "e2e"})
     _, r2, _ = agent(gateway, "GET", f"/v1/requests/{r['id']}")
     assert r2["status"] == "approved" and r2["granted_level"] == "read"
-    hp = f"svc.test:{upstream['http']}"
+    hp = f"svc.test:{upstream['svc']}"
     assert proxy_request(gateway["ports"]["http"], hp, "/api/x", "POST")[0] == 403
     request_and_approve(gateway, "svc", "write")
     status, body = proxy_request(gateway["ports"]["http"], hp, "/api/x", "POST")
@@ -127,15 +127,18 @@ def test_https_grant_injects_credentials_and_cuts_non_http(gateway, upstream):
     revoke(gateway, "sec")
 
 
-def test_lan_grant_exempts_exact_target_from_hard_deny(gateway, upstream):
+def test_a_grant_reaches_a_local_address_only_when_its_target_names_the_address(gateway, upstream):
     hp = f"lanecho.test:{upstream['lan']}"
     status, _ = proxy_request(gateway["ports"]["http"], hp, "/")
     assert status in (403, 502) and "available via grant" in last_event(gateway, "lanecho.test")["reason"]
-    request_and_approve(gateway, "nolan", "write")  # same target without lan: true -> still hard-denied
+    request_and_approve(gateway, "nolan", "write")  # the same target as a name only: it cannot open the block
     assert proxy_request(gateway["ports"]["http"], hp, "/")[0] in (403, 502)
-    assert "hard-deny" in last_event(gateway, "lanecho.test")["reason"]
+    assert last_event(gateway, "lanecho.test")["reason"] == (
+        "grant nolan: name allowed by the grant, but it resolves to 127.0.0.2, inside blocked range 127.0.0.2/32 "
+        "(rule block-127.0.0.2_32): set a fixed address on the grant target"
+    )
     revoke(gateway, "nolan")
-    request_and_approve(gateway, "lanhttp", "write")
+    request_and_approve(gateway, "lanhttp", "write")  # with the fixed address 127.0.0.2: an address rule
     status, body = proxy_request(gateway["ports"]["http"], hp, "/")
     assert status == 200 and json.loads(body)["path"] == "/"
     revoke(gateway, "lanhttp")
@@ -169,8 +172,21 @@ def test_ui_defined_grants_are_validated(gateway):
     api = gateway["api"]
     ok = {"targets": [{"host": "cam.test", "port": 80, "scheme": "http"}], "levels": ["read"]}
     assert api.call("PUT", "/destinations/grant/cam", ok)[0] == 200
-    lan_out = {"targets": [{"host": "cam.test", "port": 80, "scheme": "http", "lan": True, "address": "10.1.2.3"}]}
-    assert api.call("PUT", "/destinations/grant/cam2", lan_out)[0] == 400
+    # ADR-0019: a UI grant may name a local address (no grants_lan_allow any more); `lan` is read and dropped.
+    local = {"targets": [{"host": "cam.test", "port": 80, "scheme": "http", "lan": True, "address": "10.1.2.3"}]}
+    status, saved, _ = api.call("PUT", "/destinations/grant/cam2", local)
+    assert status == 200 and saved["targets"][0]["address"] == "10.1.2.3" and "lan" not in saved["targets"][0]
+    # a target that is only a name and resolves into a blocked range is refused, with the address to pin
+    blocked = {"targets": [{"host": "lanecho.test", "port": 80, "scheme": "http"}]}
+    status, err, _ = api.call("PUT", "/destinations/grant/cam3", blocked)
+    assert status == 400 and "lanecho.test resolves to 127.0.0.2, inside blocked range 127.0.0.2/32" in err["error"]
+    assert "set the fixed address 127.0.0.2 on this target" in err["error"]
+    _, g, _ = api.call("GET", "/grants")
+    assert {d["name"]: d["targets"][0]["local"] for d in g["defs"] if d["name"] in ("cam", "cam2", "lanhttp")} == {
+        "cam": False, "cam2": True, "lanhttp": True,
+    }  # fmt: skip
+    assert "cam3" not in [d["name"] for d in g["defs"]] and "lan_allow_ui" not in g
+    assert api.call("DELETE", "/destinations/grant/cam2")[0] == 200
     assert api.call("PUT", "/destinations/grant/svc", ok)[0] == 400  # config grants are read-only
     assert api.call("DELETE", "/destinations/grant/svc")[0] == 400
     _, g, _ = api.call("GET", "/grants")
