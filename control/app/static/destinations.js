@@ -107,7 +107,7 @@
       const tr = document.createElement("tr");
       tr.innerHTML = `<td></td>
         <td><code>${esc(d.range)}</code></td>
-        <td><span class="a-deny">blocked</span>${d.open ? '<div class="muted small-text">unblocked</div>' : ""}</td>
+        <td>${d.open ? '<span class="muted">unblocked</span>' : '<span class="a-deny">deny</span>'}</td>
         <td>${esc(scopeText(d))}</td>
         <td></td>
         <td class="muted small-text">${esc(d.reason || "")}</td><td></td>`;
