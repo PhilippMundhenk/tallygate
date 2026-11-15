@@ -174,11 +174,13 @@ One tab for everything about a destination — access rules, on-request grants, 
   and checked against the hard deny; a name that would be denied or asked is decided without resolving it, as
   for a real connection.
 - **Add rule**: host glob or CIDR, ports, note and optional TTL. New rules go to the top (first match wins).
-- **Never reachable**: one list of every range that can never be reached, with where each entry comes from
-  and where it is changed: the built-in list, `never` from the gateway config
-  file, the tallygate stack itself, and your own additions, which you edit right there (e.g. your Docker
-  host's public IP). *All connections* entries are never asked about and no rule opens them; *Grants*
-  entries stay closed for grants too, local-network ones included.
+- **Deny floor**: the ranges that are closed by default are listed as blocked rows in the *Destinations*
+  table, each with its reason: the built-in private/reserved ranges, `never` from the gateway config file,
+  your own deny additions, and the tallygate stack's own networks. A removable range (your LAN, the cloud
+  metadata address, your own additions) has an **Allow (unblock)** action behind a confirmation (ADR-0017) —
+  after which normal connections into it are allowed and the row shows a **Re-block** action; the stack's own
+  networks are marked locked and cannot be opened here. Grants are unaffected: they still cannot reach the
+  metadata/loopback/stack ranges whatever you unblock for normal connections.
 - **Advanced: raw policy JSON**: edit everything at once (validated server-side).
 - **Rule usage and suggestions**: how often each rule matched and when it last did (sortable, filterable),
   unused rules to clean up, and permanent rules for destinations you keep approving for a limited time. See

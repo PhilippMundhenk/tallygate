@@ -467,13 +467,57 @@ def destinations_to_config(dests: list[Destination]) -> dict:
 
 
 def _never(gw: Gateway) -> list[dict]:
-    """The never-reachable ranges as one additive list with a scope each (ADR-0014 §3). `all` ranges (the
-    policy's `hard_deny`) may be exempted by a `lan: true` target; `all+lan` ranges cannot: those are the
-    built-in LAN floor plus its configured additions (`gw.grants.never`) and the stack's own networks
-    (`gw.grants.internal`, today `GW_INTERNAL_NETS`)."""
-    out = [{"range": c, "scope": "all"} for c in gw.policy.hard_deny]
-    out += [{"range": str(n), "scope": "all+lan"} for n in gw.grants.never]
-    out += [{"range": str(n), "scope": "all+lan"} for n in gw.grants.internal]
+    """The never-reachable floor as one list shown in the Destinations table (ADR-0014 §3, ADR-0017). Each
+    entry has a `range`, a `scope` ("all" = every connection, a `lan: true` grant target may be exempt;
+    "all+lan" = closed for LAN grant targets too), a human `reason`, and the ADR-0017 edit state:
+
+      * `removable` - a scope-all floor range (`hard_deny_floor` + the policy `hard_deny`) the admin may open
+        from the UI behind a confirmation. The structural stack networks (`grants.internal`) are never
+        removable.
+      * `open` - the admin has opened this exact range in `floor_open`, so normal connections into it are no
+        longer hard-denied (the grant path still blocks `grants.never` / `grants.internal`, unchanged).
+
+    The scope-all floor now includes `hard_deny_floor` (previously only the policy `hard_deny` was listed).
+    A range that is also a structural lock (`grants.internal`) is shown once, as locked."""
+    never_lan = {str(n) for n in gw.grants.never}  # also closed for LAN grant targets
+    configured = set(gw.floor_configured)  # floor ranges that came from the gateway config file
+    open_set = set(gw.policy.floor_open)
+    out: list[dict] = []
+    seen: set[str] = set()
+    # Structural locks first: the stack's own networks, never removable here (ADR-0017).
+    for n in gw.grants.internal:
+        s = str(n)
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(
+            {
+                "range": s,
+                "scope": "all+lan",
+                "reason": "the tallygate stack's own network (locked)",
+                "removable": False,
+                "open": False,
+            }
+        )
+    # The scope-all floor the admin may edit: the built-in / config floor, then the operator's own additions.
+    floor = [
+        (c, "blocked by the gateway config" if c in configured else "built-in reserved or private range")
+        for c in gw.policy.hard_deny_floor
+    ]
+    floor += [(c, "a deny range you added") for c in gw.policy.hard_deny]
+    for c, reason in floor:
+        if c in seen:  # exact structural lock already shown as locked
+            continue
+        seen.add(c)
+        out.append(
+            {
+                "range": c,
+                "scope": "all+lan" if c in never_lan else "all",
+                "reason": reason,
+                "removable": True,
+                "open": c in open_set,
+            }
+        )
     return out
 
 
@@ -484,6 +528,8 @@ def policy_to_file(policy) -> dict:
     out: dict = {"default": policy.default, "ask_timeout": policy.ask_timeout}
     if policy.hard_deny:
         out["never"] = [{"range": c, "scope": "all"} for c in policy.hard_deny]
+    if policy.floor_open:  # ADR-0017: the scope-all floor ranges the admin has opened
+        out["floor_open"] = list(policy.floor_open)
     out["destinations"] = [d.to_dict() for d in from_rules(policy.rules)]
     return out
 
@@ -522,6 +568,7 @@ def policy_from_file(data: dict | None) -> dict:
         "default": data.get("default", "ask"),
         "ask_timeout": data.get("ask_timeout", 60),
         "hard_deny": hard,
+        "floor_open": data.get("floor_open") or [],  # ADR-0017; validated as CIDRs by Policy.from_dict
         "rules": rules,
     }
 

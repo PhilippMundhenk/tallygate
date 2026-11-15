@@ -116,8 +116,11 @@ Every key with an example. The file in the repository lists them all, most of th
 > instead be written as a single `destinations:` list — each entry a match plus its properties (access,
 > methods, paths, credentials, repository scope, `request` grants). The two forms are not mixed in one file.
 > `python -m egressgw.convert <gateway.yaml>` rewrites a config in that form. The trust-critical properties
-> (credential injection, `tls_verify: false`, LAN exemption, the never-reachable floor) stay file-only either
-> way. See [`docs/adr/0014-one-destination-model.md`](adr/0014-one-destination-model.md).
+> (credential injection, `tls_verify: false`, LAN exemption) stay file-only either way. The never-reachable
+> deny floor is still **defined** file-only, but an authenticated admin may open a LAN/metadata floor range
+> from the UI (ADR-0017, `floor_open` in `policy.yaml`); the stack's own networks (`GW_INTERNAL_NETS`) can
+> never be opened. See [`docs/adr/0014-one-destination-model.md`](adr/0014-one-destination-model.md) and
+> [`docs/adr/0017-admin-editable-deny-floor.md`](adr/0017-admin-editable-deny-floor.md).
 
 | Key | Default | Example | Meaning |
 |---|---|---|---|
@@ -129,7 +132,9 @@ Every key with an example. The file in the repository lists them all, most of th
 > under *Setup → Behaviour settings* and persisted to a backend-owned `settings.yaml` in the data volume. The
 > values below are the built-in defaults; a value here (or the matching env var) only **seeds** `settings.yaml`
 > on first start — after that the UI owns them and you need not set them. The trust-critical settings
-> (`inject`, `tls_verify`, `never`, `grants_lan_allow`, `GW_INTERNAL_NETS`) stay file-only.
+> (`inject`, `tls_verify`, `grants_lan_allow`, `GW_INTERNAL_NETS`) stay file-only. The deny floor (`never`)
+> is defined file-only too, but the admin may open a LAN/metadata range from the UI (ADR-0017); the stack's
+> own networks stay locked.
 
 | `log_keep_days` | `30` | `7` | Event log retention. |
 | `log_max_events` | `500000` | `100000` | Hard cap on stored events. |
@@ -321,8 +326,10 @@ Built-in hard-deny floor: `0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 16
 2001:db8::/32, 2002::/16, fc00::/7, fe80::/10, fec0::/10, ff00::/8` (NAT64, 6to4 and Teredo prefixes are
 included because they embed IPv4 addresses). The floor always contains this list; `never` in the
 read-only gateway config **adds** to it (it cannot remove built-in ranges), and an invalid entry stops the
-gateway. `policy.yaml`/the API can only add further CIDRs. If the Docker host has a public IP (VPS), add it
-to `never`.
+gateway. `policy.yaml`/the API `hard_deny` can only add further CIDRs. An authenticated admin can, however,
+**open** a scope-all floor range for normal connections via `floor_open` in `policy.yaml` (ADR-0017, behind a
+UI confirmation); the grant path and the stack's own networks (`GW_INTERNAL_NETS`) are never opened by it. If
+the Docker host has a public IP (VPS), add it to `never`.
 For LAN services use a service port with `allow_private: true` (exempts exactly that target, and only on
 that service port — not via the proxy or SOCKS) rather than shrinking the floor.
 

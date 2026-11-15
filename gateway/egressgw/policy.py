@@ -280,10 +280,17 @@ class Policy:
     def __init__(self) -> None:
         self.default = "ask"
         self.ask_timeout = 60
-        # Immutable floor: comes from the static config file, never from the API.
+        # The scope-all deny floor from the static config file (never from the API).
         self.hard_deny_floor: list[str] = list(DEFAULT_HARD_DENY)
         # Extras: editable via the API, can only ADD to the floor.
         self.hard_deny: list[str] = []
+        # ADR-0017: ranges of the scope-all floor (hard_deny_floor + hard_deny) the admin has explicitly
+        # opened from the UI. A range is opened only by its exact normalised string; `locked_nets` below is
+        # never relaxed by it. Empty (the default) means byte-for-byte the pre-0017 behaviour.
+        self.floor_open: list[str] = []
+        # Structural locks that `floor_open` can NEVER relax: the stack's own networks (grants.internal).
+        # Attached by the Gateway when the floor/grants are (re)loaded; a list of ip_network objects.
+        self.locked_nets: list = []
         self.rules: list[Rule] = []
         self.exceptions: list[Exception_] = []
 
@@ -295,16 +302,29 @@ class Policy:
 
     # ---------- evaluation ----------
     def hard_denied(self, host: str, port: int, ips: list[str], mode: str | None = None) -> str | None:
+        """Why this destination is hard-denied, or None. ADR-0017: the structural locks (`locked_nets`, the
+        stack's own networks) are checked FIRST and are never relaxable, so opening a broad floor range can
+        never expose the stack. The scope-all floor (`hard_deny_floor` + `hard_deny`) is checked next, minus
+        the exact ranges the admin opened in `floor_open`. With an empty `floor_open` and no `locked_nets`
+        this is byte-for-byte the pre-0017 behaviour."""
         if mode == "reverse":
             for ex in self.exceptions:
                 if ex.host.lower() == host.lower().rstrip(".") and ex.port == port:
                     return None
-        nets = [ipaddress.ip_network(c, strict=False) for c in [*self.hard_deny_floor, *self.hard_deny]]
         candidates = list(ips)
         if is_ip(host):
             candidates.append(host.strip("[]"))
-        for ip in candidates:
-            addr = ip_addr(ip)
+        addrs = [(ip, ip_addr(ip)) for ip in candidates]
+        # (a) structural locks first: these stay blocked whatever `floor_open` says (secure by construction).
+        for ip, addr in addrs:
+            for n in self.locked_nets:
+                if addr.version == n.version and addr in n:
+                    return f"hard-deny {n} structural ({ip})"
+        # (b) the scope-all floor and operator extras, except the ranges the admin opened by exact string.
+        open_set = set(self.floor_open)
+        floor = [c for c in [*self.hard_deny_floor, *self.hard_deny] if c not in open_set]
+        nets = [ipaddress.ip_network(c, strict=False) for c in floor]
+        for ip, addr in addrs:
             for n in nets:
                 if addr.version == n.version and addr in n:
                     return f"hard-deny {n} ({ip})"
@@ -395,6 +415,7 @@ class Policy:
             "default": self.default,
             "ask_timeout": self.ask_timeout,
             "hard_deny": self.hard_deny,
+            "floor_open": self.floor_open,
             "rules": [r.to_dict() for r in self.rules],
         }
 
@@ -407,7 +428,7 @@ class Policy:
         p = cls()
         d = d or {}
         d = {k: v for k, v in d.items() if k != "hard_deny_floor"}  # read-only, echoed back by UIs
-        unknown = set(d) - {"default", "ask_timeout", "hard_deny", "rules"}
+        unknown = set(d) - {"default", "ask_timeout", "hard_deny", "floor_open", "rules"}
         if unknown:
             raise ValueError(f"unknown policy keys: {sorted(unknown)}")
         p.default = d.get("default", "ask")
@@ -417,6 +438,9 @@ class Policy:
         if not 5 <= p.ask_timeout <= 3600:
             raise ValueError("ask_timeout must be 5..3600 seconds")
         p.hard_deny = parse_cidrs(d.get("hard_deny") or [], "hard_deny")  # deduped against the floor by use_floor
+        # ADR-0017: each opened range must be a valid CIDR; one that is not currently a removable floor range is
+        # accepted but inert (hard_denied simply never finds it, and locked_nets is checked before it anyway).
+        p.floor_open = parse_cidrs(d.get("floor_open") or [], "floor_open")
         p.rules = [Rule.from_dict(r) for r in d.get("rules") or []]
         ids = [r.id for r in p.rules]
         if len(ids) != len(set(ids)):

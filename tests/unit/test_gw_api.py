@@ -273,12 +273,19 @@ def test_grant_decision_must_be_known(gw):
     assert status == 200 and body["status"] == "approved"
 
 
+def _has(rows, **kw):
+    """A row (ignoring extra keys) matching every given field."""
+    return [r for r in rows if all(r.get(k) == v for k, v in kw.items())]
+
+
 def test_never_reachable_lists_every_source(tmp_path, monkeypatch, gw):
     # one read-only list for the UI. The fixture's gateway has no extra configuration.
     status, rows = admin(gw, "GET", "/never-reachable")
     assert status == 200 and {r["source"] for r in rows} == {"builtin"}
-    assert {"range": "10.0.0.0/8", "source": "builtin", "scope": "all"} in rows
-    assert {"range": "127.0.0.0/8", "source": "builtin", "scope": "all+lan"} in rows  # closed for LAN grants too
+    # ADR-0017: every row carries removable/open; the built-in floor is removable and nothing is open.
+    assert all(set(r) == {"range", "source", "scope", "removable", "open"} for r in rows)
+    assert _has(rows, range="10.0.0.0/8", source="builtin", scope="all", removable=True, open=False)
+    assert _has(rows, range="127.0.0.0/8", source="builtin", scope="all+lan", removable=True)  # LAN grants too
     assert admin(gw, "GET", "/never-reachable", auth=False)[0] == 401
 
     cfg = {
@@ -302,13 +309,18 @@ def test_never_reachable_lists_every_source(tmp_path, monkeypatch, gw):
         "192.168.50.0/24": "all+lan",
         "192.168.60.0/24": "all+lan",
     }
-    assert rows.count({"range": "10.0.0.0/8", "source": "builtin", "scope": "all"}) == 1  # listed once, as built in
+    assert len(_has(rows, range="10.0.0.0/8", source="builtin", scope="all")) == 1  # listed once, as built in
     assert [r["range"] for r in rows if r["source"] == "policy"] == ["9.9.9.9/32"]
     assert {r["range"]: r["scope"] for r in rows if r["source"] in ("stack", "listener")} == {
         "172.31.11.0/24": "all+lan",
         "172.31.11.2:8081": "all+lan",
     }
     assert len({r["range"] for r in rows}) == len(rows)  # every range once
+    # ADR-0017: the scope-all floor and the policy addition are removable; the stack and the gateway's own
+    # listener stay locked.
+    assert _has(rows, range="9.9.9.9/32", source="policy", removable=True)
+    assert _has(rows, range="8.8.8.0/24", source="config", removable=True)
+    assert not _has(rows, source="stack", removable=True) and not _has(rows, source="listener", removable=True)
     # an all+lan range closes every connection too, and every grant
     assert g.policy.hard_denied("x", 443, ["192.168.60.5"]) and g.policy.hard_denied("x", 443, ["8.8.8.8"])
     assert [str(n) for n in g.grants.never_configured] == ["192.168.50.0/24", "192.168.60.0/24"]

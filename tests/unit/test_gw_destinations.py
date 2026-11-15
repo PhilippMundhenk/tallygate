@@ -109,12 +109,14 @@ def test_policy_file_round_trips_and_reads_the_old_form():
 
     p = Policy()
     p.default, p.ask_timeout, p.hard_deny = "deny", 90, ["203.0.113.0/24"]
+    p.floor_open = ["192.168.0.0/16"]  # ADR-0017: the admin's opened floor range survives the round-trip
     p.add_rule(Rule(action="allow", host="a.example", port=443, note="n", group="g", id="r1"), top=False)
     p.add_rule(Rule(action="deny", cidr="10.0.0.0/8", id="r2"), top=False)
     f = policy_to_file(p)
     assert "destinations" in f and "rules" not in f and f["default"] == "deny" and f["ask_timeout"] == 90
+    assert f["floor_open"] == ["192.168.0.0/16"]
     q = Policy.from_dict(policy_from_file(f))
-    assert (q.default, q.ask_timeout, q.hard_deny) == ("deny", 90, ["203.0.113.0/24"])
+    assert (q.default, q.ask_timeout, q.hard_deny, q.floor_open) == ("deny", 90, ["203.0.113.0/24"], ["192.168.0.0/16"])
     key = lambda pol: [(r.id, r.action, r.host or r.cidr, r.port, r.note, r.group) for r in pol.rules]  # noqa: E731
     assert key(q) == key(p)
     # a pre-0014 file (with `rules`) is passed through so it keeps loading
@@ -238,12 +240,37 @@ def test_translate_lists_rules_then_grants_then_properties(gw):
     assert inj and inj[0].credentials == (("X-Token", "Bearer ${tok}"),) and inj[0].access is None
 
 
-def test_translate_never_list_has_the_lan_floor_and_hard_deny(gw):
+def test_translate_never_list_has_the_whole_floor_and_marks_it_removable(gw):
+    # ADR-0017: the Destinations floor list now includes the whole scope-all floor (hard_deny_floor + the
+    # policy hard_deny), each marked `removable`/`open`, not just the policy additions.
     m = translate(gw)
+    assert all(set(e) == {"range", "scope", "reason", "removable", "open"} for e in m.never)
     assert {e["scope"] for e in m.never} <= {"all", "all+lan"}
+    ranges = {e["range"] for e in m.never}
+    assert set(gw.policy.hard_deny_floor) <= ranges  # the built-in floor is listed now (it was missing)
     lan = {e["range"] for e in m.never if e["scope"] == "all+lan"}
     assert lan == {str(n) for n in gw.grants.never} | {str(n) for n in gw.grants.internal}
-    assert [e["range"] for e in m.never if e["scope"] == "all"] == list(gw.policy.hard_deny)
+    # this fixture has no stack networks, so every row is an editable floor range and nothing is open
+    assert all(e["removable"] for e in m.never) and not any(e["open"] for e in m.never)
+
+
+def test_translate_never_marks_locked_and_open(tmp_path, monkeypatch):
+    # ADR-0017: the stack's own networks (grants.internal) are shown once, locked; a scope-all floor range
+    # the admin put in floor_open is marked open; loopback/metadata stay removable.
+    monkeypatch.setenv("GW_INTERNAL_NETS", "172.20.0.0/16")
+    g = build_gw(
+        tmp_path / "locked", monkeypatch, CONFIG,
+        {"default": "ask", "rules": [], "floor_open": ["192.168.0.0/16"]},
+    )  # fmt: skip
+    rows = {e["range"]: e for e in translate(g).never}
+    assert rows["172.20.0.0/16"] == {
+        "range": "172.20.0.0/16", "scope": "all+lan",
+        "reason": "the tallygate stack's own network (locked)", "removable": False, "open": False,
+    }  # fmt: skip
+    assert rows["192.168.0.0/16"]["removable"] and rows["192.168.0.0/16"]["open"]  # opened by the admin
+    assert rows["127.0.0.0/8"]["removable"] and not rows["127.0.0.0/8"]["open"]  # loopback stays removable
+    assert rows["169.254.0.0/16"]["removable"] and not rows["169.254.0.0/16"]["open"]  # metadata too
+    assert len(rows) == len(translate(g).never)  # every range once (the stack net is not duplicated)
 
 
 def test_every_translated_entry_round_trips_through_the_file_format(gw):
