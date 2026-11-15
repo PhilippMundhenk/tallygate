@@ -137,21 +137,25 @@
       <div class="card">
         <h3>Local network</h3>
         <p class="hint">Blocked by default: give the agent one device, for a limited time, each use approved by you.</p>
-        <form id="qaLanForm" class="lan-form hidden">
+        <form id="qaLanForm" class="lan-form">
           <label>Name <input id="qlName" placeholder="homeassistant" pattern="[a-z0-9][a-z0-9_-]{0,47}" required></label>
-          <label>Host or IP <input id="qlHost" placeholder="192.168.1.20" required></label>
+          <label>IP address <input id="qlHost" placeholder="192.168.1.20" required></label>
           <label>Port <input id="qlPort" type="number" min="1" max="65535" value="80" class="port" required></label>
           <label>Type <select id="qlKind"><option value="http">Web or API (HTTP)</option><option value="https">Web or API (HTTPS)</option><option value="tcp">Something else (TCP, e.g. SSH)</option></select></label>
           <label>Access <select id="qlAccess"><option value="read">Read-only</option><option value="full">Full access</option></select></label>
           <label>For how long <select id="qlDur"><option value="30m">30 min</option><option value="1h" selected>1 h</option><option value="4h">4 h</option><option value="1d">1 day</option></select></label>
           <button>Create grant</button>
         </form>
-        <p id="qaLanHelp" class="hint hidden"></p>
+        <p id="qaLanError" class="alert bad hidden" role="alert"></p>
         <details class="help"><summary>How does local access work?</summary>
-          <p>The form creates a <b>grant</b> for exactly this host and port. The agent requests it with
+          <p>The form creates a <b>grant</b> for exactly this address and port. The agent requests it with
             <code>tallygate request &lt;name&gt;</code> and you approve each use; edit or delete it on the
-            <i>Grants</i> tab. To open a whole range instead, unblock it on <i>Destinations</i>. The form needs
-            <code>grants_lan_allow</code> (e.g. <code>[192.168.1.0/24]</code>) in the gateway config.</p>
+            <i>Grants</i> tab.</p>
+          <p>Enter the device's IP address. A name (such as <code>ha.lan</code>) cannot open a blocked range, because
+            a name can be pointed anywhere: if you enter one that resolves to a local address, the gateway refuses
+            the grant and names the address to enter instead. To keep the name, set it as the host and the address
+            as <i>Fixed IP</i> on the <i>Grants</i> tab.</p>
+          <p>To allow a device without a request each time, add an allow rule for its address on <i>Destinations</i>.</p>
           <p><a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/grants.md" target="_blank" rel="noopener">Grants guide</a></p></details>
       </div>
       <div class="card">
@@ -184,7 +188,7 @@
           <small>Shown to you in every request.</small></label>
       </div>
       <div class="grid2" id="geSimple">
-        <label>Address <input id="geAddr" placeholder="ha.lan:8123 or https://api.example.com/v1/">
+        <label>Address <input id="geAddr" placeholder="192.168.1.20:8123 or https://api.example.com/v1/">
           <small>Host and port, or a URL; a path in a URL limits the grant to that path.</small></label>
         <label>Type <select id="geKind">
             <option value="https">Web or API (HTTPS)</option>
@@ -200,8 +204,6 @@
             <option value="4h">4 h</option><option value="1d">1 day</option></select>
           <small>Every approval ends by itself after this time; you approve each request.</small></label>
       </div>
-      <label class="check ge-lan"><input type="checkbox" id="geLan"> Local-network device
-        <small>Lets <b>this grant only</b> reach a local address, which is blocked by default; ticked for you for a private IP or a <code>.lan</code>/<code>.local</code> name.</small></label>
       <p id="geSimpleNote" class="hint hidden" role="status">This grant uses settings that only <b>Advanced options</b> shows
         (several targets, paths, automatic approval, a fixed IP or a pinned certificate); they are kept as they are.</p>
       <details id="geAdvanced" class="more"><summary>Advanced options</summary>
@@ -220,18 +222,19 @@
       <h4>Targets</h4>
       <details class="help"><summary>How do targets work?</summary>
         <p>https/http targets are inspected per request (method, path, Host). tcp passes raw traffic (write level only).
-          <b>LAN</b> exempts exactly this target from the hard deny (UI grants only within <code id="geLanAllow">–</code>).
+          A target with an IP address as host, or with a <i>Fixed IP</i>, may be a device on your local network; a target
+          that is only a name cannot open a blocked range and is refused when it resolves into one.
           Self-signed certificate? Pin its SHA-256 fingerprint instead of disabling verification.</p>
         <ul>
-          <li>Home Assistant API, read-only: <code>http</code> &middot; <code>ha.lan</code> &middot; <code>8123</code> &middot; paths <code>/api/*</code> &middot; LAN</li>
-          <li>Proxmox with a self-signed cert: <code>https</code> &middot; <code>pve.lan</code> &middot; <code>8006</code> &middot; paths <code>/api2/json/*</code> &middot; LAN &middot; fingerprint from
+          <li>Home Assistant API, read-only: <code>http</code> &middot; <code>192.168.1.20</code> &middot; <code>8123</code> &middot; paths <code>/api/*</code></li>
+          <li>Proxmox with a self-signed cert: <code>https</code> &middot; <code>pve.lan</code> &middot; <code>8006</code> &middot; paths <code>/api2/json/*</code> &middot; fixed IP <code>192.168.1.30</code> &middot; fingerprint from
             <code>openssl s_client -connect pve.lan:8006 &lt;/dev/null | openssl x509 -noout -fingerprint -sha256</code></li>
-          <li>SSH to one machine: <code>tcp</code> &middot; <code>nas.lan</code> &middot; <code>22</code> &middot; LAN (tcp needs the write level)</li>
+          <li>SSH to one machine: <code>tcp</code> &middot; <code>192.168.1.40</code> &middot; <code>22</code> (tcp needs the write level)</li>
           <li>A public API, only some paths: <code>https</code> &middot; <code>api.example.com</code> &middot; <code>443</code> &middot; paths <code>/v1/items/*, /v1/search</code></li>
         </ul>
         <p>Paths are globs: <code>*</code> matches any characters including <code>/</code>, so <code>/api/*</code> covers
           <code>/api/states</code> and <code>/api/states/light.kitchen</code>; the query string is not part of the path. Several patterns are comma-separated.
-          <i>Fixed IP</i> pins the address instead of resolving the name.</p>
+          <i>Fixed IP</i> pins the address instead of resolving the name, and is what lets a named target be a local device.</p>
         <p><a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/grants.md" target="_blank" rel="noopener">Grants guide</a></p>
       </details>
       <div id="geTargets"></div>
@@ -285,8 +288,9 @@
     <h2>Settings</h2>
     <p class="hint">The mode for unmatched destinations, the menu, gateway behaviour and the raw policy.</p>
     <details class="help"><summary>What stays in the gateway config?</summary>
-      <p>Trust-critical settings (credential injection and LAN grant access) stay in the read-only gateway config by
-        design; the never-reachable deny floor is shown and edited on the <i>Destinations</i> tab.</p>
+      <p>Trust-critical settings (credential injection, disabling TLS verification) stay in the read-only gateway
+        config by design. The blocked ranges are rules on the <i>Destinations</i> tab; the stack's own networks are
+        locked and listed there.</p>
       <p><a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/configuration.md" target="_blank" rel="noopener">Configuration reference</a></p></details>
     <div class="card">
       <h3>Mode</h3>

@@ -99,6 +99,8 @@ GW_ALLOW = [
     ("GET", r"/destinations/detail"),
     ("POST", r"/destinations"),
     ("POST", r"/destinations/group"),
+    ("POST", r"/destinations/restore-blocks"),
+    ("POST", r"/destinations/[A-Za-z0-9_:.-]+/move"),
     ("PATCH", r"/destinations/[A-Za-z0-9_:.-]+"),
     ("DELETE", r"/destinations/[A-Za-z0-9_:.-]+"),
     ("PUT", r"/destinations/grant/[a-z0-9][a-z0-9_-]{0,47}"),
