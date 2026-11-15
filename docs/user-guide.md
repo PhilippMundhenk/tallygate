@@ -342,7 +342,7 @@ password change runs on the Docker host.
 | Git identity | *Use my GitHub identity* asks GitHub, through the gateway with the stored token, who you are (`gh api user`) and shows the name and the noreply address `<id>+<login>@users.noreply.github.com`; *Apply* sets them. Without a stored token, or when GitHub refuses it or cannot be reached, it says so and links to the token step. *Enter it yourself* is the fallback. Empty values are never written; a name or address that is set but empty (for example from a `git config` whose `$(…)` failed) is reported as such. |
 | Remote Control | *Enable Remote Control* answers Claude Code's one-time question `Enable Remote Control? (y/n)` with yes, trusts `/workspace` and restarts Remote Control. The step is done when it runs; it also tells you when Remote Control waits for an answer in the *rc* console. Switched off with `RC_ENABLE=0`. |
 | Starting policy | *Ask me* or *Strict* sets what happens with unknown destinations; *Shortcuts* opens them in the Destinations tab. *Learn from a first task* takes you to [learning mode](#learning-mode), the quickest way to a working set of rules: run one task, then keep what it used. |
-| Phone notifications | Status of Telegram, Matrix, Web Push, ntfy, Gotify and Pushover; browser notifications. Web Push devices are managed in the *Notifications* card below the steps. |
+| Notifications | One section for every channel (Telegram, Matrix, ntfy, Gotify, Pushover, Web Push). Each row says whether the channel is active and, when it is off, why (e.g. which environment variables are missing); the bot channels are marked *environment-only*. A **Test** button on each active channel sends a sample notification through just that channel and reports the result. Web Push devices (and the browser-permission button) are set up in the same section. |
 | Isolation self-test | Runs the in-agent self-test. |
 
 ## Telegram approvals
@@ -386,8 +386,14 @@ notifications on this device**. Each request arrives as a notification:
 Tapping the notification itself opens the approvals. After a decision (from anywhere) the notification is
 replaced by the outcome. The buttons work for at most 10 minutes and once, only on the device they were sent
 to; they need no login, but they cannot do anything except that one decision (see the
-[threat model](threat-model.md), T37). *Send a test* checks the path; *Remove* stops a device. A device
-whose subscription expired is removed automatically.
+[threat model](threat-model.md), T37). *Remove* stops a device, and a device whose subscription expired is
+removed automatically.
+
+Every channel in the **Notifications** section has a **Test** button: it sends a short "tallygate test"
+message through that one channel so you can confirm the credentials and the path work, without waiting for a
+real approval. The Web Push test goes to the subscribed browsers; the bot-channel test (Telegram, Matrix,
+ntfy, Gotify, Pushover) is sent through the notifier's normal sender for that channel. A channel that is not
+configured shows its Test button disabled with the reason.
 
 Web Push needs a secure context: HTTPS (your reverse proxy) or `localhost`. On plain HTTP the Setup tab says
 so, and everything else keeps working. Control sends the messages to the browser's push service (Google,

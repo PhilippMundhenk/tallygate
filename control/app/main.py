@@ -499,6 +499,23 @@ async def api_push_test(request: web.Request):
     return web.json_response({"delivered": n})
 
 
+async def api_notify_test(request: web.Request):
+    """Send a one-off test notification through a single bot channel (#180). Body: {"channel": ...}.
+    Web Push is tested separately via /api/push/test (it is subscribed per-browser, not env-configured).
+    400 if the channel is unknown or not configured; 502 if the channel's service rejected the send."""
+    body = await json_body(request)
+    channel = body.get("channel") if isinstance(body, dict) else None
+    notifier = request.app["notifier"]
+    try:
+        await notifier.send_test(channel)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except (aiohttp.ClientError, TimeoutError, RuntimeError) as e:
+        return web.json_response({"error": notifier.redact(str(e))}, status=502)
+    log.info("notification test sent through %s by %s", channel, request["user"])
+    return web.json_response({"ok": True, "channel": channel})
+
+
 async def api_push_act(request: web.Request):
     """A button in a push notification: {"token": ...}. The token says what to decide (see app/webpush.py)."""
     push = _push(request)
@@ -1068,6 +1085,7 @@ async def api_meta(request: web.Request):
             "user": request["user"],
             "terminals": list(TERMINALS),
             "notify": request.app["notifier"].describe(),
+            "notify_status": request.app["notifier"].status(),
         }
     )
 
@@ -1235,6 +1253,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/push", api_push)
     app.router.add_post("/api/push/subscribe", api_push_subscribe)
     app.router.add_post("/api/push/test", api_push_test)
+    app.router.add_post("/api/notify/test", api_notify_test)
     app.router.add_post(PUSH_ACT, api_push_act)
     app.router.add_delete("/api/push/{sid}", api_push_delete)
     for path in PUBLIC_FILES:

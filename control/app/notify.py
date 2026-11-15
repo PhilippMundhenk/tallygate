@@ -53,6 +53,28 @@ TEXT_TO_SCOPE = {
     "block": "deny_always",
 }
 
+# Channel metadata for the Setup UI and the per-channel Test button (#180). The order is the order
+# the UI lists them in. CHANNEL_ENV names the environment variables each bot channel needs, shown
+# when it is off so the operator knows what to set (the values themselves are write-only, never read
+# back). Web Push is set up per-browser in the UI instead and is tested via /api/push/test.
+CHANNEL_LABELS = {
+    "telegram": "Telegram",
+    "matrix": "Matrix",
+    "ntfy": "ntfy",
+    "gotify": "Gotify",
+    "pushover": "Pushover",
+    "webpush": "Web Push",
+}
+CHANNEL_ENV = {
+    "telegram": "TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALLOWED_USER_IDS",
+    "matrix": "MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN, MATRIX_ROOM_ID, MATRIX_ALLOWED_USERS",
+    "ntfy": "NTFY_URL",
+    "gotify": "GOTIFY_URL, GOTIFY_TOKEN",
+    "pushover": "PUSHOVER_TOKEN, PUSHOVER_USER",
+}
+TEST_TITLE = "tallygate test"
+TEST_TEXT = "tallygate test notification - this channel is working."
+
 
 def _describe(p: dict) -> str:
     """Approval text. The host is agent-chosen: show the registrable domain separately so that
@@ -145,6 +167,73 @@ class Notifier:
             "gotify": bool(self.gotify_url and self.gotify_token),
             "pushover": bool(self.po_token and self.po_user),
         }
+
+    def status(self) -> list[dict]:
+        """Per-channel detail for the Setup UI (#180): configured?, a short human-readable why,
+        whether the channel is environment-only, and whether a Test button can send through it.
+        describe() stays a plain bool map (used internally and by /api/meta's "notify" for
+        backward compatibility, see tests/e2e/test_notifications.py); this adds the detail.
+
+        Assumption (documented in the PR): the bot channels are configured only through environment
+        variables (ADR-0010 outbound-polling bots); UI configuration of them is out of scope for #180
+        because the Notifier reads its config once at startup and owns long-lived poll loops, so a
+        write-back store would be a sizeable refactor. Web Push is the one channel set up in the UI."""
+        on = self.describe()
+        out: list[dict] = []
+        for key, label in CHANNEL_LABELS.items():
+            configured = on[key]
+            if key == "webpush":
+                if self.push is None:
+                    reason = "Unavailable: the control data volume is not writable."
+                elif configured:
+                    reason = "Device(s) subscribed in this browser; set up below."
+                else:
+                    reason = "No device subscribed yet - turn it on below."
+                env_only = False
+            elif configured:
+                reason = "Configured in the environment."
+                env_only = True
+            else:
+                reason = f"Not configured in the environment ({CHANNEL_ENV[key]})."
+                env_only = True
+            out.append(
+                {"channel": key, "label": label, "configured": configured, "env_only": env_only, "reason": reason}
+            )
+        return out
+
+    def redact(self, msg: str) -> str:
+        """Strip channel tokens from an error before it reaches the UI (an aiohttp error can carry the
+        request URL, and Telegram/ntfy/Gotify/Pushover put the token in the URL or headers)."""
+        for secret in (self.tg_token, self.mx_token, self.ntfy_token, self.gotify_token, self.po_token):
+            if secret:
+                msg = msg.replace(secret, "<token>")
+        return msg
+
+    async def send_test(self, channel: str) -> None:
+        """Send a single "tallygate test" notification through one channel and raise on failure (#180).
+        Web Push has its own /api/push/test; this covers the outbound-polling bot channels. It reuses
+        the same low-level senders as real prompts, so a passing test proves the channel's credentials
+        and reachability. Raises ValueError for an unknown or unconfigured channel; the underlying
+        senders raise RuntimeError/ClientError when the service rejects the message."""
+        if channel not in CHANNEL_LABELS:
+            raise ValueError("unknown channel")
+        if channel == "webpush":
+            raise ValueError("Web Push is tested from the device list (/api/push/test)")
+        if not self.describe()[channel]:
+            raise ValueError("channel not configured")
+        if channel == "telegram":
+            await self._tg("sendMessage", chat_id=self.tg_chat, text=TEST_TEXT, disable_web_page_preview=True)
+        elif channel == "matrix":
+            await self._mx_put(
+                f"/rooms/{self._room()}/send/m.room.message/{uuid.uuid4().hex}",
+                {"msgtype": "m.notice", "body": TEST_TEXT},
+            )
+        elif channel == "ntfy":
+            await self._ntfy(TEST_TITLE, TEST_TEXT, high=False)
+        elif channel == "gotify":
+            await self._gotify(TEST_TITLE, TEST_TEXT, high=False)
+        elif channel == "pushover":
+            await self._pushover(TEST_TITLE, TEST_TEXT, high=False)
 
     def start(self) -> list[asyncio.Task]:
         tasks = [asyncio.create_task(self._worker())]

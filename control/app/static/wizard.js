@@ -109,16 +109,49 @@ function renderPolicy(pol) {
   step("st-policy", "done", { ask: "New destinations: you are asked each time.", deny: "New destinations are blocked.", allow: "⚠ New destinations are allowed (log only)." }[mode] || esc(mode));
 }
 
+// #180: one Notifications section. Each channel shows whether it is active and why, with a Test
+// button that sends a sample through just that channel (disabled, with the reason, when it is off).
+// notify_status is the rich per-channel detail; fall back to the plain bool map for older backends.
+const CHANNEL_LABELS = { telegram: "Telegram", matrix: "Matrix", ntfy: "ntfy", gotify: "Gotify", pushover: "Pushover", webpush: "Web Push" };
+function notifyDetail(meta) {
+  if (Array.isArray(meta.notify_status)) return meta.notify_status;
+  const n = meta.notify || {};
+  return Object.entries(CHANNEL_LABELS)
+    .filter(([k]) => k in n)
+    .map(([k, label]) => ({ channel: k, label, configured: !!n[k], env_only: k !== "webpush", reason: n[k] ? "Configured." : "Off." }));
+}
+
+async function notifyTest(c) {
+  if (c.channel === "webpush") {
+    const r = await api("POST", "/api/push/test", {});
+    return toast(`Web Push test sent to ${r.delivered} device(s)`);
+  }
+  await api("POST", "/api/notify/test", { channel: c.channel });
+  toast(`${c.label} test notification sent`);
+}
+
 function renderNotify(meta) {
   if (!meta.ok) return step("st-notify", "info", esc(meta.e.message), "bad");
-  const n = meta.v.notify;
-  const CHANNELS = { telegram: "Telegram", matrix: "Matrix", webpush: "Web Push", ntfy: "ntfy", gotify: "Gotify", pushover: "Pushover" };
-  const text = Object.entries(CHANNELS)
-    .filter(([k]) => k in n)
-    .map(([k, label]) => `${label}: ${n[k] ? "configured" : "off"}`)
-    .join(" · ");
-  $$(".notify-status").forEach((e) => (e.textContent = text));  // both cards (#120)
-  step("st-notify", Object.keys(CHANNELS).some((k) => n[k]) ? "done" : "info", "");
+  const detail = notifyDetail(meta.v);
+  const box = $("#notifyChannels");
+  if (box) {
+    box.innerHTML = "";
+    for (const c of detail) {
+      const row = document.createElement("div"); row.className = "row-between notify-channel";
+      const info = document.createElement("div");
+      info.innerHTML = `<b>${esc(c.label)}</b> <span class="tag ${c.configured ? "ok" : "warn"}">${c.configured ? "active" : "off"}</span>`
+        + (c.env_only ? ' <span class="muted">· environment-only</span>' : "")
+        + `<div class="muted notify-why">${esc(c.reason)}</div>`;
+      const btn = document.createElement("button"); btn.className = "small secondary notify-test"; btn.textContent = "Test";
+      btn.setAttribute("aria-label", `Send a test notification through ${c.label}`);
+      if (!c.configured) { btn.disabled = true; btn.title = c.reason; }
+      else btn.onclick = guard(() => notifyTest(c));
+      row.append(info, btn); box.appendChild(row);
+    }
+  }
+  const active = detail.filter((c) => c.configured).length;
+  $$(".notify-status").forEach((e) => (e.textContent = active ? `${active} of ${detail.length} channels active` : "No notification channel is active yet."));
+  step("st-notify", active ? "done" : "info", "");
   showNotifyPerm();
 }
 
@@ -260,7 +293,7 @@ function showNotifyPerm() {
       ? "Blocked for this site, so the browser will not ask again. To switch it on: click the lock / ⓘ icon left of "
         + "the address bar → Site settings → Notifications → Allow, then reload this page."
       : "";
-  $$(".notify-perm").forEach((e) => (e.textContent = text));  // both cards (#120)
+  $$(".notify-perm").forEach((e) => (e.textContent = text));  // one Notifications section since #180
 }
 $$(".notify-btn").forEach((b) => (b.onclick = guard(async () => { await Notification.requestPermission(); showNotifyPerm(); })));
 showNotifyPerm();

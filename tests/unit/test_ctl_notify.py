@@ -538,6 +538,90 @@ def test_digest_goes_to_every_channel(make):
     assert quiet.chat.calls == []
 
 
+# ---------------------------------------------------------------- status and test button (#180)
+class FakePush:
+    def __init__(self, subs) -> None:
+        self.subs = subs
+
+
+def test_status_lists_every_channel_with_a_reason(make):
+    n = make({**TG, "NTFY_URL": "http://ntfy"})
+    detail = n.status()
+    assert [c["channel"] for c in detail] == ["telegram", "matrix", "ntfy", "gotify", "pushover", "webpush"]
+    by = {c["channel"]: c for c in detail}
+    assert (
+        by["telegram"]["configured"]
+        and by["telegram"]["env_only"]
+        and by["telegram"]["reason"] == "Configured in the environment."
+    )
+    assert by["ntfy"]["configured"] is True
+    assert by["matrix"]["configured"] is False and "MATRIX_HOMESERVER" in by["matrix"]["reason"]  # names what to set
+
+
+def test_status_webpush_is_not_environment_only(make):
+    n = make()  # push is None here
+    wp = {c["channel"]: c for c in n.status()}["webpush"]
+    assert wp["env_only"] is False and wp["configured"] is False and "not writable" in wp["reason"]
+    n.push = FakePush([{"id": "1"}])
+    assert {c["channel"]: c for c in n.status()}["webpush"]["configured"] is True
+    n.push = FakePush([])
+    off = {c["channel"]: c for c in n.status()}["webpush"]
+    assert off["configured"] is False and "No device subscribed" in off["reason"]
+
+
+def test_send_test_rejects_unknown_unconfigured_and_webpush(make):
+    n = make(TG)
+    with pytest.raises(ValueError, match="unknown channel"):
+        run(n.send_test("nope"))
+    with pytest.raises(ValueError, match="Web Push"):
+        run(n.send_test("webpush"))
+    with pytest.raises(ValueError, match="not configured"):
+        run(n.send_test("ntfy"))
+
+
+def test_send_test_telegram_and_matrix_use_the_chat_api(make):
+    n = make({**TG, **MX})
+    run(n.send_test("telegram"))
+    ((_, _, params),) = n.chat.sent("tg", "sendMessage")
+    assert params["chat_id"] == "777" and "test" in params["text"].lower() and "reply_markup" not in params
+    run(n.send_test("matrix"))
+    assert any("test" in body.lower() for body in n.chat.notices())
+
+
+def test_send_test_posts_to_ntfy_gotify_and_pushover(make):
+    n = make(
+        {
+            "NTFY_URL": "http://ntfy",
+            "GOTIFY_URL": "http://g",
+            "GOTIFY_TOKEN": "t",
+            "PUSHOVER_TOKEN": "a",
+            "PUSHOVER_USER": "u",
+        }
+    )
+    posts = []
+
+    async def fake_post(name, url, **kw):
+        posts.append((name, url))
+
+    n._post = fake_post
+    for channel in ("ntfy", "gotify", "pushover"):
+        run(n.send_test(channel))
+    assert [name for name, _ in posts] == ["ntfy", "gotify", "pushover"]
+    assert posts[1][1] == "http://g/message"
+
+
+def test_send_test_propagates_a_channel_failure(make):
+    n = make(TG)
+    n.chat.fail.add("sendMessage")
+    with pytest.raises(RuntimeError):
+        run(n.send_test("telegram"))
+
+
+def test_redact_strips_channel_tokens(make):
+    n = make(TG)  # TELEGRAM_BOT_TOKEN = SECRET
+    assert n.redact("boom at https://api.telegram.org/botSECRET/x") == "boom at https://api.telegram.org/bot<token>/x"
+
+
 # ---------------------------------------------------------------- context (#74)
 def test_context_line_only_for_push_and_bounded():
     assert notify.context_line({}) == "" and notify.context_line({"context": []}) == ""
