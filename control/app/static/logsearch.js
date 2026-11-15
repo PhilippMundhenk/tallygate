@@ -5,8 +5,8 @@
 (() => {
   const box = $("#searchBox");
   if (!box) return;
-  const RANGES = [["3600", "last hour"], ["86400", "last 24 h"], ["today", "today"], ["604800", "last 7 days"],
-    ["2592000", "last 30 days"], ["all", "everything"], ["custom", "custom…"]];
+  const RANGES = [["3600", "Last hour"], ["86400", "Last 24 h"], ["today", "Today"], ["604800", "Last 7 days"],
+    ["2592000", "Last 30 days"], ["all", "Everything"], ["custom", "Custom…"]];
   const BUILTIN = [
     { name: "Denied today", f: { view: "events", range: "today", kind: "conn", action: "deny" } },
     { name: "New destinations (24 h)", f: { view: "new", range: "86400" } },
@@ -15,20 +15,20 @@
   ];
   const STORE = "tallygate.logFilters";
   box.innerHTML = `<p class="hint">Searches the whole event log on the gateway (kept for <code>log_keep_days</code>), not
-      just the rows loaded below.</p>
+      only the rows loaded below.</p>
     <div class="row wrap" role="group" aria-label="Saved filters" id="lsSaved"></div>
     <form id="lsForm" class="search-grid">
-      <label>Show <select id="lsView"><option value="events">events</option><option value="dest">destinations</option>
-        <option value="new">new destinations</option></select></label>
+      <label>Show <select id="lsView"><option value="events">Events</option><option value="dest">Destinations</option>
+        <option value="new">New destinations</option></select></label>
       <label>Host <input id="lsHost" placeholder="api.example.com or *.example.com" autocomplete="off"></label>
-      <label>Kind <select id="lsKind"><option value="">any</option><option>conn</option><option>ask</option><option>dns</option>
+      <label>Kind <select id="lsKind"><option value="">Any</option><option>conn</option><option>ask</option><option>dns</option>
         <option>admin</option><option>grant</option></select></label>
-      <label>Action <select id="lsAction"><option value="">any</option><option>allow</option><option>deny</option><option>ask</option></select></label>
-      <label>Text <input id="lsQ" placeholder="in host / action / reason" autocomplete="off"></label>
+      <label>Action <select id="lsAction"><option value="">Any</option><option>allow</option><option>deny</option><option>ask</option></select></label>
+      <label>Text <input id="lsQ" placeholder="In host, action or reason" autocomplete="off"></label>
       <label>Time <select id="lsRange">${RANGES.map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}</select></label>
       <label class="ls-custom hidden">From <input id="lsFrom" type="datetime-local"></label>
       <label class="ls-custom hidden">To <input id="lsTo" type="datetime-local"></label>
-      <div class="btns"><button id="lsGo" type="submit">Search</button>
+      <div class="btns"><button id="lsGo" type="submit">Search log</button>
         <button id="lsSave" type="button" class="secondary">Save filter</button>
         <button id="lsCsv" type="button" class="secondary">Export CSV</button>
         <button id="lsJson" type="button" class="secondary">Export JSON</button></div>
@@ -71,12 +71,12 @@
     return p.toString();
   }
   function renderSaved() {
-    const el = $("#lsSaved"); el.innerHTML = '<span class="muted">Filters:</span>';
+    const el = $("#lsSaved"); el.innerHTML = '<span class="muted">Saved filters:</span>';
     const add = (s, user) => {
       const b = document.createElement("button"); b.type = "button"; b.className = "small secondary"; b.textContent = s.name;
       b.onclick = guard(() => { apply(s.f); return search(); }); el.appendChild(b);
       if (user) {
-        const x = document.createElement("button"); x.type = "button"; x.className = "small secondary"; x.textContent = "✕";
+        const x = document.createElement("button"); x.type = "button"; x.className = "small ghost danger"; x.textContent = "Delete";
         x.setAttribute("aria-label", `Delete saved filter ${s.name}`);
         x.onclick = () => { store(load().filter((y) => y.name !== s.name)); renderSaved(); $("#lsSave").focus(); };
         el.appendChild(x);
@@ -94,16 +94,18 @@
     $("#lsOut").innerHTML = `<div class="table-wrap"><table class="log"><thead><tr><th>Time</th><th>Kind</th><th>Destination</th>
       <th>Action</th><th>Reason</th></tr></thead><tbody>${rows.map((e) => `<tr><td>${esc(fmtDate(e.ts))}</td><td>${esc(e.kind)}</td>
       <td>${e.host && e.kind !== "admin" && e.kind !== "grant" ? destButton(e.host, e.port) : `<code>${esc(dest(e))}</code>`}</td>
-      <td class="a-${esc(e.action)}">${esc(e.action)}</td><td>${esc(e.reason)}</td></tr>`).join("")}</tbody></table></div>
+      <td class="a-${esc(e.action)}">${esc(e.action)}</td><td>${esc(e.reason)}</td></tr>`).join("")
+      || '<tr><td colspan="5" class="muted">No events match. Widen the time range or clear a filter.</td></tr>'}</tbody></table></div>
       ${more ? '<button id="lsMore" type="button" class="small secondary">Load older</button>' : ""}`;
     if (more) $("#lsMore").onclick = guard(() => search(true));
   }
   function renderDests(list) {
     $("#lsOut").innerHTML = `<div class="table-wrap"><table class="log"><thead><tr><th>Destination</th><th>Events</th><th>Allowed</th>
       <th>Denied</th><th>Asked</th><th>First seen</th><th>Last</th></tr></thead><tbody>${list.map((d) => `<tr>
-      <td>${destButton(d.host, d.port)}${d.new ? ' <span class="tag warn">new</span>' : ""}</td><td>${esc(d.events)}</td>
+      <td>${destButton(d.host, d.port)}${d.new ? ' <span class="status warn">new</span>' : ""}</td><td>${esc(d.events)}</td>
       <td class="a-allow">${esc(d.allowed)}</td><td class="a-deny">${esc(d.denied)}</td><td>${esc(d.asked)}</td>
-      <td>${esc(fmtDate(d.first_seen))}</td><td>${esc(fmtDate(d.last))}</td></tr>`).join("")}</tbody></table></div>`;
+      <td>${esc(fmtDate(d.first_seen))}</td><td>${esc(fmtDate(d.last))}</td></tr>`).join("")
+      || '<tr><td colspan="7" class="muted">No destinations match. Widen the time range or clear the text.</td></tr>'}</tbody></table></div>`;
   }
   async function search(more = false) {
     const f = current();
@@ -124,7 +126,7 @@
     const d = await gw("GET", `/destinations/detail?host=${encodeURIComponent(host)}&port=${encodeURIComponent(port || 443)}`);
     const r = d.decision.rule, s = d.stats;
     const el = $("#lsDest");
-    el.innerHTML = `<div class="row-between"><h4>${esc(d.host)}:${esc(d.port)}</h4><button type="button" id="lsBack" class="small secondary">Back to results</button></div>
+    el.innerHTML = `<div class="row-between"><h4>${esc(d.host)}:${esc(d.port)}</h4><button type="button" id="lsBack" class="small ghost">Show results</button></div>
       <p>Now: <b class="a-${esc(d.decision.action)}">${esc(d.decision.action)}</b> — ${r ? `rule <code>${esc(r.action)} ${esc(r.host || r.cidr)}${r.port !== undefined ? ":" + esc(Array.isArray(r.port) ? r.port.join(",") : r.port) : ""}</code>${r.note ? " (" + esc(r.note) + ")" : ""}${r.source ? ` [${esc(r.source)}]` : ""}` : esc(d.decision.reason)}
         <span class="muted">(decided on the name; the hard deny is checked again after resolving)</span></p>
       ${s ? `<p class="muted">${esc(s.events)} events · ${esc(s.allowed)} allowed · ${esc(s.denied)} denied · ${esc(s.asked)} asked · first seen ${esc(fmtDate(s.first_seen))} · last ${esc(fmtDate(s.last))}</p>` : '<p class="muted">No connections in the log.</p>'}
@@ -142,7 +144,7 @@
       for (;;) {
         const before = all.length ? { before: all[all.length - 1].id } : {};
         const got = await gw("GET", "/events?" + query(f, { limit: 2000, ...before }));
-        all = all.concat(got); $("#lsStatus").textContent = `exporting… ${all.length}`;
+        all = all.concat(got); $("#lsStatus").textContent = `Exporting… ${all.length}`;
         if (got.length < 2000 || all.length >= 50000) break;
       }
     } else all = await gw("GET", "/destinations?" + query(f, { limit: 2000 }));

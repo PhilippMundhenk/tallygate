@@ -35,25 +35,28 @@ window.addEventListener("tg:event", (e) => {
   clearTimeout(ov.timer); ov.timer = setTimeout(() => loadOverview().catch(() => {}), 1500);
 });
 
-function row(label, html, cls = "") { return `<dt>${esc(label)}</dt><dd class="${cls}">${html}</dd>`; }
-function renderOvStatus(st, info) {
+// A state is a .status word with a dot (docs/ux-concept.md); details follow in normal text.
+const ovSt = (cls, word) => `<span class="status ${cls}">${word}</span>`;
+const ovGo = (tab, label) => ` <button class="small ghost" data-ov-tab="${tab}">${esc(label)}</button>`;
+function row(label, html) { return `<dt>${esc(label)}</dt><dd>${html}</dd>`; }
+function renderOvStatus(status, info) {
   let h = "";
-  if (st.ok) {
-    const s = st.v;
-    h += row("Claude", s.claude_logged_in ? "✔ logged in" : '✖ not logged in · <button class="small secondary" data-ov-tab="setup">Setup</button>', s.claude_logged_in ? "ok" : "bad");
-    const rc = s.remote_control_enabled === false ? ["switched off (RC_ENABLE=0)", "muted"]
-      : s.remote_control_prompt ? [`⚠ waiting for an answer: <code>${esc(s.remote_control_prompt)}</code>`, "warn"]
-      : s.remote_control_running ? [`✔ running as <b>${esc(s.remote_control_name || "")}</b>`, "ok"] : ["✖ not running", "bad"];
-    h += row("Remote Control", rc[0], rc[1]);
+  if (status.ok) {
+    const s = status.v;
+    h += row("Claude", s.claude_logged_in ? ovSt("ok", "logged in") : ovSt("bad", "not logged in") + ovGo("setup", "Open Setup"));
+    const rc = s.remote_control_enabled === false ? `${ovSt("off", "off")} (RC_ENABLE=0)`
+      : s.remote_control_prompt ? `${ovSt("warn", "waiting")} for an answer: <code>${esc(s.remote_control_prompt)}</code>`
+      : s.remote_control_running ? `${ovSt("ok", "running")} as <b>${esc(s.remote_control_name || "")}</b>` : ovSt("bad", "not running");
+    h += row("Remote Control", rc);
     h += row("Claude Code", esc(String(s.claude_version || "?").replace(/\s*\(Claude Code\)$/, "")));
     const ws = diskText(s.workspace_disk);
-    h += row("Workspace disk", (ws.warn ? "⚠ " : "") + ws.html, ws.warn ? "warn" : "");
-  } else h += row("Agent", `✖ ${esc(st.e.message)}`, "bad");
+    h += row("Workspace disk", (ws.warn ? ovSt("warn", "almost full") + " " : "") + ws.html);
+  } else h += row("Agent", `${ovSt("bad", "failed")} ${esc(status.e.message)}`);
   if (info.ok) {
     const i = info.v, gd = diskText(i.data_disk);
-    h += row("Gateway", `✔ healthy · ${esc(i.pending)} waiting`, "ok");
-    h += row("Gateway state disk", `${gd.warn ? "⚠ " : ""}${gd.html} · event log ${fmtBytes(i.events_db_bytes)}`, gd.warn ? "warn" : "");
-  } else h += row("Gateway", `✖ ${esc(info.e.message)}`, "bad");
+    h += row("Gateway", `${ovSt("ok", "healthy")} · ${esc(i.pending)} waiting`);
+    h += row("Gateway state disk", `${gd.warn ? ovSt("warn", "almost full") + " " : ""}${gd.html} · event log ${fmtBytes(i.events_db_bytes)}`);
+  } else h += row("Gateway", `${ovSt("bad", "failed")} ${esc(info.e.message)}`);
   $("#ovStatus").innerHTML = h;
 }
 
@@ -64,21 +67,21 @@ async function checkGithub() {
 }
 function renderOvAttention() {
   const now = Date.now() / 1000, items = [];
-  const add = (cls, html, tab, label) => items.push(`<li class="${cls}">${html}${tab ? ` <button class="small secondary" data-ov-tab="${tab}">${esc(label)}</button>` : ""}</li>`);
-  if (pending.length) add("warn", `⚠ <b>${pending.length}</b> connection request${pending.length > 1 ? "s" : ""} waiting`, "approvals", "Approvals");
-  if (grants.requests.length) add("warn", `⚠ <b>${grants.requests.length}</b> grant request${grants.requests.length > 1 ? "s" : ""} waiting`, "approvals", "Approvals");
+  const add = (cls, html, tab, label) => items.push(`<li class="${cls}">${html}${tab ? ovGo(tab, label) : ""}</li>`);
+  if (pending.length) add("", `${ovSt("warn", "waiting")} <b>${pending.length}</b> connection request${pending.length > 1 ? "s" : ""}`, "approvals", "Open Approvals");
+  if (grants.requests.length) add("", `${ovSt("warn", "waiting")} <b>${grants.requests.length}</b> grant request${grants.requests.length > 1 ? "s" : ""}`, "approvals", "Open Approvals");
   for (const r of (ov.policy?.rules || []).filter((r) => r.expires && r.expires > now && r.expires - now < HOUR))
-    add("", `Rule <code>${esc(r.action)} ${esc(r.host || r.cidr)}</code>${r.source && r.source !== "user" ? ` <span class="muted">[${esc(r.source)}]</span>` : ""} ends in ${fmtLeft(r.expires)}`, "destinations", "Destinations");
+    add("", `Rule <code>${esc(r.action)} ${esc(r.host || r.cidr)}</code>${r.source && r.source !== "user" ? ` <span class="muted">[${esc(r.source)}]</span>` : ""} ends in ${fmtLeft(r.expires)}`, "destinations", "Open Destinations");
   for (const a of grants.active.filter((a) => a.expires - now < HOUR))
-    add("", `Grant <b>${esc(a.name)}</b> (${esc(a.level)}) ends in ${fmtLeft(a.expires)}`, "grants", "Grants");
-  if (ov.secrets && !ov.secrets.includes("github_token")) add("warn", "⚠ No GitHub token stored", "setup", "Setup");
+    add("", `Grant <b>${esc(a.name)}</b> (${esc(a.level)}) ends in ${fmtLeft(a.expires)}`, "grants", "Open Grants");
+  if (ov.secrets && !ov.secrets.includes("github_token")) add("", `${ovSt("warn", "missing")} No GitHub token saved`, "setup", "Open Setup");
   else if (ov.gh && ov.gh.checking) add("muted", "Checking the GitHub token…");
-  else if (ov.gh && !ov.gh.ok) add("warn", `⚠ GitHub token: ${esc(ov.gh.message)}`, "setup", "Setup");
+  else if (ov.gh && !ov.gh.ok) add("", `${ovSt("bad", "failed")} GitHub token: ${esc(ov.gh.message)}`, "setup", "Open Setup");
   else if (ov.gh && ov.gh.token_expires) {
     const exp = Date.parse(ov.gh.token_expires.replace(" UTC", "Z").replace(" ", "T"));
-    if (Number.isFinite(exp) && exp / 1000 - now < 7 * 86400) add("warn", `⚠ The GitHub token expires ${esc(ov.gh.token_expires)}`, "setup", "Setup");
+    if (Number.isFinite(exp) && exp / 1000 - now < 7 * 86400) add("", `${ovSt("warn", "expiring")} The GitHub token expires ${esc(ov.gh.token_expires)}`, "setup", "Open Setup");
   }
-  $("#ovAttention").innerHTML = items.join("") || '<li class="ok">✔ Nothing needs your attention.</li>';
+  $("#ovAttention").innerHTML = items.join("") || '<li class="muted">Nothing needs your attention.</li>';
 }
 
 function renderOvHour(sum) {
@@ -104,7 +107,7 @@ $("#ovWeb").onclick = guard(async () => {
 });
 $("#ovStop").onclick = confirmClick($("#ovStop"), "Revoke all grants, deny everything pending, undo the internet shortcuts and block everything unknown?", async () => {
   const r = await gw("POST", "/emergency-stop", {});
-  toast(r.ok ? "Emergency stop: unknown destinations are blocked" : "Emergency stop incomplete: see Rules → Shortcuts", !r.ok);
+  toast(r.ok ? "Emergency stop: unknown destinations are blocked" : "Emergency stop incomplete: see Quick settings", !r.ok);
   if (typeof showStopResult === "function") showStopResult(r);
   await Promise.allSettled([loadPending(), loadGrants(), loadOverview()]);
 });

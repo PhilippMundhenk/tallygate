@@ -31,10 +31,20 @@ CONTROL_PASSWORD = "e2e-password"
 TTYD_CREDENTIAL = "agent:e2e-ttyd"
 
 
+_HANDED_OUT: set[int] = set()
+
+
 def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+    """A free local port that was not handed out before in this session. The gateway of the session keeps the
+    rules tests leave behind (e.g. a permanent deny for 127.0.0.1:<port>); the kernel may give a port that a
+    test used and closed to a later test, which then met that stale rule (seen as flaky notification tests)."""
+    while True:
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        if port not in _HANDED_OUT:
+            _HANDED_OUT.add(port)
+            return port
 
 
 def clean_env(**extra) -> dict:

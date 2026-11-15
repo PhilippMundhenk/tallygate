@@ -116,6 +116,8 @@ Every Python module in `gateway/`, `control/`, `agent/` and `tools/` is gated th
 - Python ≥ 3.12, `ruff format` (line length 120) and `ruff check` (incl. bandit-style `S` rules).
 - Shell: `shellcheck`-clean, `set -uo pipefail` (`setup.sh` also uses `-e`).
 - Frontend: no framework, no build step, CSP-compatible (no inline scripts).
+- UI: build every page from the parts in [ux-concept.md](ux-concept.md) (button ranks, one verb per meaning,
+  three help levels, the status vocabulary); `tests/unit/test_ui_conventions.py` checks the mechanical rules.
 - `pre-commit install` runs the same checks on commit.
 
 ## Making changes safely

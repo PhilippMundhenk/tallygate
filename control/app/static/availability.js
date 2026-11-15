@@ -5,33 +5,35 @@
   const box = document.getElementById("availability");
   if (!box) return;
   const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-  const AWAY_FOR = [["", "until I'm back"], ["3600", "for 1 h"], ["14400", "for 4 h"], ["morning", "until 08:00"]];
+  const AWAY_FOR = [["", "Until I end it"], ["3600", "For 1 h"], ["14400", "For 4 h"], ["morning", "Until 08:00"]];
   const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   let state = null;
 
-  box.innerHTML = `<div class="row-between"><div><h2 class="inline-h">Availability</h2> <span class="tag" id="avState" role="status"></span></div>
+  box.innerHTML = `<div class="row-between"><div><h3 class="inline-h">Availability</h3> <span class="status ok" id="avState" role="status"></span></div>
       <div class="btns"><select id="avFor" aria-label="How long you are away">${AWAY_FOR.map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}</select>
-      <button id="avToggle" class="small"></button></div></div>
-    <p class="hint">While you are away or in quiet hours, nothing waits for you: new destinations and grant requests that
-      need your approval are refused at once, and the agent is told why. Nothing is allowed automatically. What was
-      refused is listed here and sent as one digest when you are back.</p>
-    <details id="avQuiet"><summary>Quiet hours: <span id="avQuietText"></span></summary>
+      <button id="avToggle"></button></div></div>
+    <p class="hint">While you are away or in quiet hours, requests that need you are refused at once; nothing is allowed automatically.</p>
+    <details class="help"><summary>What happens while I am away?</summary>
+      <p>Nothing waits for you: new destinations and grant requests that need your approval are refused at once,
+        and the agent is told why. Nothing is allowed automatically. What was refused is listed here and sent as
+        one digest when you are back.</p></details>
+    <details id="avQuiet" class="more"><summary>Quiet hours: <span id="avQuietText"></span></summary>
       <div class="row wrap">
-        <label class="check inline-check"><input type="checkbox" id="avQOn"> quiet hours on</label>
-        <label class="inline">from <input type="time" id="avQStart" value="22:00"></label>
-        <label class="inline">to <input type="time" id="avQEnd" value="07:00"></label>
+        <label class="check inline-check"><input type="checkbox" id="avQOn"> Quiet hours on</label>
+        <label class="inline">From <input type="time" id="avQStart" value="22:00"></label>
+        <label class="inline">To <input type="time" id="avQEnd" value="07:00"></label>
       </div>
-      <fieldset class="days"><legend>Starting on</legend>${DAYS.map((d) => `<label><input type="checkbox" value="${d}" checked> ${d}</label>`).join("")}</fieldset>
+      <fieldset class="days"><legend>Starting on</legend>${DAYS.map((d) => `<label><input type="checkbox" value="${d}" checked> ${d[0].toUpperCase() + d.slice(1)}</label>`).join("")}</fieldset>
       <p class="hint" id="avZone"></p>
-      <button id="avQSave" class="small">Save quiet hours</button>
+      <button id="avQSave" class="secondary">Save quiet hours</button>
     </details>
-    <div id="avMissed" class="hidden"><h3>Refused while you were away <span id="avMissedN" class="badge"></span></h3>
-      <div id="avMissedList"></div><button id="avMissedClear" class="small secondary">Dismiss all</button></div>`;
+    <div id="avMissed" class="hidden"><h4>Refused while you were away <span id="avMissedN" class="badge"></span></h4>
+      <div id="avMissedList"></div><button id="avMissedClear" class="small secondary">Dismiss list</button></div>`;
 
   // A small marker next to the brand, so the state is visible on every tab.
   const brand = document.querySelector("header .brand");
   const marker = document.createElement("span");
-  marker.className = "tag warn hidden"; marker.id = "avMarker";
+  marker.className = "status warn hidden"; marker.id = "avMarker";
   if (brand) brand.after(marker);
 
   function awayUntil() {
@@ -55,10 +57,11 @@
     state = s;
     const label = s.mode === "away" ? `away${s.until ? " until " + clock(s.until) : ""}`
       : s.mode === "quiet" ? `quiet hours until ${clock(s.until)}` : "available";
-    const st = $("#avState"); st.textContent = label; st.classList.toggle("warn", s.mode !== "available");
+    const st = $("#avState"); st.textContent = label;
+    st.classList.toggle("warn", s.mode !== "available"); st.classList.toggle("ok", s.mode === "available");
     marker.textContent = label; marker.classList.toggle("hidden", s.mode === "available");
     const away = s.mode === "away";
-    const t = $("#avToggle"); t.textContent = away ? "I'm back" : "I'm away"; t.classList.toggle("secondary", away);
+    $("#avToggle").textContent = away ? "End away mode" : "Start away mode";  // an action; the state is the status next to the title
     $("#avFor").classList.toggle("hidden", away);
     $("#avQuietText").textContent = quietText(s.quiet_hours) + (s.quiet_source === "config" && s.quiet_hours ? " (from the gateway config)" : "");
     if (!$("#avQuiet").dataset.dirty) {
@@ -80,7 +83,7 @@
       const what = m.kind === "grant" ? `grant ${m.host}` : `${m.host}:${m.port}`;
       row.innerHTML = `<div><code>${esc(what)}</code> <span class="muted">${m.count > 1 ? `×${esc(m.count)} · ` : ""}last ${esc(fmtDate(m.last))}</span></div>`;
       if (m.kind === "conn") {
-        const b = document.createElement("button"); b.className = "small"; b.textContent = "Allow 1 h";
+        const b = document.createElement("button"); b.className = "small ghost"; b.textContent = "Allow for 1 h";
         b.setAttribute("aria-label", `Allow ${what} for 1 hour`);
         b.onclick = guard(async () => {
           await gw("POST", "/destinations", { access: "allow", match: { host: m.host, port: m.port }, expires: Date.now() / 1000 + 3600, note: "refused while away" });
@@ -104,7 +107,7 @@
   $("#avToggle").onclick = guard(async () => {
     const body = state && state.mode === "away" ? { away: false } : { away: true, away_until: awayUntil() };
     render(await gw("PATCH", "/availability", body));
-    toast(body.away ? "Away: requests that need you are refused" : "Welcome back");
+    toast(body.away ? "Away mode started: requests that need you are refused" : "Away mode ended");
   });
   $("#avQuiet").addEventListener("input", () => ($("#avQuiet").dataset.dirty = "1"));
   $("#avQSave").onclick = guard(async () => {
@@ -116,9 +119,9 @@
     }
     delete $("#avQuiet").dataset.dirty;
     render(await gw("PATCH", "/availability", { quiet_hours: q }));
-    toast(q ? `Quiet hours ${q.start}–${q.end}` : "Quiet hours off");
+    toast(q ? `Quiet hours saved: ${q.start}–${q.end}` : "Quiet hours saved: off");
   });
-  $("#avMissedClear").onclick = guard(async () => render(await gw("DELETE", "/availability/missed")));
+  $("#avMissedClear").onclick = guard(async () => { render(await gw("DELETE", "/availability/missed")); toast("List dismissed"); });
 
   let soon = null;  // refused requests arrive as log events: reload at most every 2 s
   const later = () => { if (!soon) soon = setTimeout(() => { soon = null; load().catch(() => {}); }, 2000); };

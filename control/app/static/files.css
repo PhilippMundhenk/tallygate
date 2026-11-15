@@ -1,11 +1,11 @@
 /* workspace files (files.js) */
-.crumbs{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:0 0 10px}.crumbs span{color:var(--muted)}
-button.link{background:none;border:0;padding:0;color:#93c5fd;text-align:left;font:inherit;cursor:pointer;overflow-wrap:anywhere}
+.crumbs{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:0 0 8px}.crumbs span{color:var(--muted)}
+button.link{background:none;border:0;padding:0;color:var(--link);text-align:left;font:inherit;cursor:pointer;overflow-wrap:anywhere}
 button.link:hover{text-decoration:underline}
-table.files td{overflow-wrap:anywhere}table.files td.file-actions{white-space:nowrap}table.files td.file-actions .confirm-q{display:block;white-space:normal}table.files a.dl{color:#93c5fd}
-label.check-inline{display:flex;gap:5px;align-items:center;margin:0}label.check-inline input{flex:none!important;min-width:0!important}
+table.files td{overflow-wrap:anywhere}table.files td.file-actions{white-space:nowrap}table.files td.file-actions .confirm-q{display:block;white-space:normal}table.files a.dl{color:var(--link);font-size:12px;margin-right:8px}
+label.check-inline{display:flex;gap:4px;align-items:center;margin:0}label.check-inline input{flex:none!important;min-width:0!important}
 /* upload control stacks cleanly on mobile (#140): file picker on its own line, then checkbox + Upload */
-.upload-form{display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.upload-form{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
 .upload-form #fileInput{max-width:100%}
 .upload-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;width:100%}
 table.files{min-width:0!important}@media(max-width:600px){table.files th:nth-child(3),table.files td:nth-child(3){display:none}}

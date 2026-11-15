@@ -11,13 +11,15 @@
   const supported = secure && "PushManager" in window && "Notification" in window;
 
   box.innerHTML = `<h4>Phone approvals (Web Push)</h4>
-    <p class="hint">Install tallygate on your phone (browser menu → <i>Add to Home screen</i> / <i>Install app</i>) and turn
-      on notifications here. Each request arrives with <b>Allow once</b> and <b>Deny</b> buttons; tapping the
-      notification opens the approvals. No chat bot needed.</p>
-    <p id="pushUnsupported" class="meta warn hidden" role="note"></p>
+    <p class="hint">Approve from your phone without a chat bot: install tallygate there and add the device here.</p>
+    <details class="help"><summary>How do phone approvals work?</summary>
+      <p>Install tallygate on your phone (browser menu → <i>Add to Home screen</i> / <i>Install app</i>), open it
+        and use <i>Add this device</i>. Each request arrives with <b>Allow once</b> and <b>Deny</b> buttons;
+        tapping the notification opens the approvals.</p></details>
+    <p id="pushUnsupported" class="alert warn hidden" role="note"></p>
     <div class="row wrap" id="pushControls">
       <label class="inline">This device <input id="pushLabel" maxlength="40" placeholder="e.g. phone" autocomplete="off"></label>
-      <button id="pushOn" class="secondary">Turn on notifications on this device</button>
+      <button id="pushOn" class="secondary">Add this device</button>
     </div>
     <div id="pushDevices"></div>`;
 
@@ -33,12 +35,14 @@
     for (const d of st.subscriptions) {
       const row = document.createElement("div"); row.className = "row-between push-device";
       row.innerHTML = `<span><b>${esc(d.label)}</b> <span class="muted">${esc(d.service || "")} · since ${esc(fmtDate(d.created))}</span></span>`;
-      const b = document.createElement("button"); b.className = "small danger"; b.textContent = "Remove";
-      b.setAttribute("aria-label", `Stop notifications to ${d.label}`);
-      b.onclick = guard(async () => { await api("DELETE", `/api/push/${encodeURIComponent(d.id)}`); await load(); });
+      const b = document.createElement("button"); b.className = "small ghost danger"; b.textContent = "Remove";
+      b.setAttribute("aria-label", `Remove device ${d.label}`);
+      b.onclick = confirmClick(b, `Remove device ${d.label}? It stops receiving notifications.`, async () => {
+        await api("DELETE", `/api/push/${encodeURIComponent(d.id)}`); toast(`Device ${d.label} removed`); await load();
+      });
       row.appendChild(b); list.appendChild(row);
     }
-    if (!st.subscriptions.length) list.innerHTML = '<p class="muted">No device receives push notifications yet.</p>';
+    if (!st.subscriptions.length) list.innerHTML = '<p class="empty">No device receives push notifications yet. Add this one above.</p>';
     return st;
   }
 
@@ -58,7 +62,7 @@
     const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(st.public_key) });
     const label = $("#pushLabel").value.trim() || (/Mobi|Android/.test(navigator.userAgent) ? "phone" : "browser");
     await api("POST", "/api/push/subscribe", { subscription: sub.toJSON(), label });
-    toast(`Notifications on for ${label}`); await load();
+    toast(`Device ${label} added`); await load();
     // Refresh the Setup channel list so the Web Push row (and its Test button) reflects the new device.
     if (typeof tabHooks !== "undefined" && tabHooks.setup) tabHooks.setup().catch(() => {});
   });

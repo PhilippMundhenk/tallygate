@@ -8,29 +8,35 @@ const keyStore = {
   get(k) { try { const v = localStorage.getItem("tallygate." + k); return v === null ? KEY_SETTINGS[k] : v === "1"; } catch { return KEY_SETTINGS[k]; } },
   set(k, v) { try { localStorage.setItem("tallygate." + k, v ? "1" : "0"); } catch { /* private mode: not kept */ } },
 };
-const KEYS = [["j", "next request"], ["k", "previous request"], ["a", "Allow 5 min (grant request: approve)"],
-  ["d", "Deny forever (grant request: deny)"], ["?", "show these keys"], ["Esc", "close this list"]];
+const KEYS = [["j", "Next request"], ["k", "Previous request"], ["a", "Allow for 5 min (grant request: allow)"],
+  ["d", "Deny permanently (grant request: deny)"], ["?", "Show these keys"], ["Esc", "Close this list"]];
 
 (() => {
   const opts = $("#approvalOpts");
-  const box = (id, label, help) => `<label title="${esc(help)}"><input type="checkbox" id="${id}"> ${esc(label)}</label>`;
-  opts.innerHTML = box("optKeys", "Keyboard shortcuts", "j/k select, a/d decide, ? lists the keys")
-    + box("optCompact", "Compact list", "One line per connection request")
-    + box("optSound", "Sound", "A short tone when a request arrives while this tab is in the background")
-    // The keyboard cheat-sheet stays a modal dialog (a full reference, reachable anywhere via "?"), but its trigger
-    // uses the shared .help-trigger look so it reads as help like every details.help disclosure (#178).
-    + '<button id="keysBtn" class="help-trigger" aria-haspopup="dialog" title="Keyboard shortcuts (press ?)">Keyboard shortcuts</button>';
+  // Instant-apply checkboxes (each confirms with a toast). What they do is in the help disclosure below them: a
+  // tooltip never carries instructions, and no button merely reveals text (docs/ux-concept.md).
+  const LABELS = { keys: "Keyboard shortcuts", compact: "Compact list", sound: "Sound" };
+  const box = (id, label) => `<label><input type="checkbox" id="${id}"> ${esc(label)}</label>`;
+  opts.innerHTML = box("optKeys", LABELS.keys) + box("optCompact", LABELS.compact) + box("optSound", LABELS.sound);
+  const keyList = `<dl class="fieldhelp">${KEYS.map(([k, t]) => `<dt><kbd>${esc(k)}</kbd></dt><dd>${esc(t)}</dd>`).join("")}</dl>
+    <p>The keys work on the Approvals tab, outside text fields. a and d act on the selected request; without a
+      selection they select the first one. Switch them off with <i>Keyboard shortcuts</i>.</p>`;
+  opts.insertAdjacentHTML("afterend", `<details class="help" id="keysInline"><summary id="keysBtn">Which keys and options are there?</summary>
+    ${keyList}
+    <p><i>Compact list</i> shows one line per connection request. <i>Sound</i> plays a short tone when a request
+      arrives while this tab is in the background.</p></details>`);
+  // "?" still opens the same list as a dialog from any tab.
   const dlg = document.createElement("dialog"); dlg.id = "keysHelp"; dlg.setAttribute("aria-labelledby", "keysTitle");
-  dlg.innerHTML = `<h3 id="keysTitle">Keyboard shortcuts</h3><dl class="fieldhelp">${KEYS.map(([k, t]) => `<dt><kbd>${esc(k)}</kbd></dt><dd>${esc(t)}</dd>`).join("")}</dl>
-    <p class="hint">On the Approvals tab, outside text fields. a and d act on the selected request; without a
-      selection they select the first one. Switch them off with <i>Keyboard shortcuts</i>.</p>
-    <form method="dialog"><button>Close</button></form>`;
+  dlg.innerHTML = `<h3 id="keysTitle">Keyboard shortcuts</h3>${keyList}
+    <form method="dialog"><button class="secondary">Close list</button></form>`;
   document.body.appendChild(dlg);
   for (const [id, k] of [["#optKeys", "keys"], ["#optCompact", "compact"], ["#optSound", "sound"]]) {
     $(id).checked = keyStore.get(k);
-    $(id).addEventListener("change", () => { keyStore.set(k, $(id).checked); applyKeyOpts(); if (k === "sound" && $(id).checked) beep(); });
+    $(id).addEventListener("change", () => {
+      keyStore.set(k, $(id).checked); applyKeyOpts(); if (k === "sound" && $(id).checked) beep();
+      toast(`${LABELS[k]} ${$(id).checked ? "on" : "off"}`);
+    });
   }
-  $("#keysBtn").onclick = () => dlg.showModal();
   applyKeyOpts();
 })();
 
@@ -60,7 +66,7 @@ function move(step) {
 function act(key) {
   const list = cards(), i = list.findIndex((c) => c.dataset.id === selectedId);
   if (i < 0) {
-    if (list.length) { select(list[0]); toast(`Selected the first request: press ${key} again to decide`); } else toast("Nothing waiting");
+    if (list.length) { select(list[0]); toast(`First request selected: press ${key} again to decide`); } else toast("No request is waiting");
     return;
   }
   const el = list[i], grant = el.classList.contains("grantreq");

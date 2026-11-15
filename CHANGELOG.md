@@ -222,6 +222,21 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   prefix (#116).
 
 ### Changed
+- **One UX concept for the whole web UI** ([docs/ux-concept.md](docs/ux-concept.md), #202): every page is built
+  from the same parts. Each tab has one title and at most one line of purpose; a card or form has at most one
+  filled button, other actions are secondary, row actions (Edit, Delete, Undo, Test) are quiet "ghost" buttons.
+  Labels are verb + noun in sentence case with one verb per meaning, so some buttons were renamed: *Allow for
+  5 min*, *Allow … permanently*, *Deny permanently* on a request, *Allow read / write for …* on a grant request,
+  *Save token* (was *Validate & store*), *Save secret* (was *Store*), *Create grant…*, *Unblock range* /
+  *Undo unblock*, *Start / End away mode*, *Save policy*. Help has three levels only: a one-sentence hint, a
+  help disclosure for anything longer (the docs link is its last line), and the docs; long intro paragraphs
+  moved into help without losing text. States are a word with a dot (*active*, *off*, *waiting*, *failed*,
+  *done*) instead of emoji and check marks; access is always *allow / ask / deny*. Empty lists say why and
+  what to do next. *Revoke*, deleting a rule and removing a push device now ask for confirmation, like every
+  destructive action; the console is chosen from a list instead of buttons; the keyboard help is a help
+  disclosure (`?` still opens it as a dialog); Availability moved below the requests. Type is 20/15/13/12 px,
+  controls are at least 32 px high. What each control does, and every endpoint, is unchanged. A unit test
+  (`tests/unit/test_ui_conventions.py`) keeps the mechanical rules.
 - **One help affordance across the control UI (#178):** every in-place "more detail" trigger is now the same
   `<details class="help">` disclosure, marked with a muted ⓘ and a caret so it reads as help; the old
   `Keys (?)` button keeps its modal (a full keyboard reference) but its trigger now matches that look. The
