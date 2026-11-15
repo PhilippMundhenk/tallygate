@@ -24,6 +24,8 @@ agent has to ask for, what rules do, and where each is changed.
 
 ## Overview
 
+![Overview](images/overview.png)
+
 The start page: what the agent is doing and whether anything needs you soon. It refreshes every 30 seconds
 while it is open and at once when a request arrives or is decided.
 
@@ -189,6 +191,10 @@ One tab for everything about a destination — access rules, on-request grants, 
   policy with your UI grants as one YAML file. See [History and rollback](#history-and-rollback).
 
 ### Shortcuts
+
+The shortcuts, the per-ecosystem templates and learning mode are on the **Quick start** tab:
+
+![Quick start](images/quickstart.png)
 
 | Action | What it does | Undo |
 |---|---|---|
