@@ -154,7 +154,10 @@ def test_deny_floor_is_shown_and_editable_in_the_destinations_table(ui):
     page = ui.call("GET", "/")[1]
     assert b'id="neverBody"' not in page and b'id="hardDeny"' not in page and b'id="neverCard"' not in page
     assert b"loadNever" not in ui.call("GET", "/static/app.js")[1]
-    assert b"Allow (unblock)" in ui.call("GET", "/static/destinations.js")[1]
+    dest_js = ui.call("GET", "/static/destinations.js")[1]
+    # unblocking is confirmed, and the confirmation names the range and the consequence (docs/ux-concept.md)
+    assert b'mkbtn("Unblock range", null, `Unblock ${d.range}`, true)' in dest_js
+    assert b"confirmClick(b, `Unblock ${d.range}? The agent will be able to reach your local network.`" in dest_js
 
 
 def test_grant_editor_has_the_simple_form_and_keeps_every_setting_under_advanced(ui):

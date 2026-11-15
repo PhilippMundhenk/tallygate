@@ -297,9 +297,9 @@ to do ([user guide](user-guide.md#setup-wizard)):
 3. **Gateway**: must show "CA exported".
 4. **GitHub token**: create a fine-grained PAT (Settings → Developer settings → Fine-grained tokens) limited
    to the repositories the agent may work on, with *Contents*, *Pull requests*, *Issues* read/write.
-   *Validate & store* checks it against GitHub and stores it in the gateway only.
+   *Save token* checks it against GitHub and stores it in the gateway only.
 5. **Log in to Claude**: *Start login*, open the link, sign in, paste the code.
-6. **Git identity**: *Use my GitHub identity* → check the preview → *Apply* (needs the token from step 4).
+6. **Git identity**: *Use my GitHub identity* → check the preview → *Save identity* (needs the token from step 4).
 7. **Remote Control**: *Enable Remote Control*. The session appears in the Claude app under **Code**.
 8. **Starting policy** and **phone notifications** (optional).
 9. **Self-test**: all rows must be PASS.
