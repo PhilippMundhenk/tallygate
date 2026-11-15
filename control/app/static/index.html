@@ -344,12 +344,19 @@
         <div class="status"></div></li>
       <li id="st-notify"><h3 tabindex="-1">Notifications <span class="step-state"></span></h3>
         <div id="notifyStatus" class="muted notify-status"></div>
-        <p class="hint">Approval prompts are delivered through the channels below. The bot channels (Telegram, Matrix,
-          ntfy, Gotify, Pushover) are configured in the environment (<a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#telegram-approvals" target="_blank" rel="noopener">how</a>);
-          Web Push is set up on this device below. Use <b>Test</b> to send a sample through a channel.</p>
+        <p class="hint">Approval prompts are delivered through the channels below. Set up the bot channels (Telegram,
+          Matrix, ntfy, Gotify, Pushover) with <b>Configure</b> (<a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#notification-channels-in-the-web-ui" target="_blank" rel="noopener">how</a>):
+          a token you save is stored by the control plane and never shown again. Values from the environment keep
+          working; what you save here wins. Web Push is set up on this device below. Use <b>Test</b> to send a sample
+          through a channel.</p>
+        <p id="notifyReadonly" class="meta warn hidden" role="note"></p>
         <div id="notifyChannels"></div>
         <p class="hint">Browser notifications also appear for new requests while this tab is in the background.</p>
-        <button id="notifyBtn" class="secondary notify-btn">Enable browser notifications</button> <span id="notifyPerm" class="muted notify-perm"></span>
+        <div class="row notify-browser">
+          <button id="notifyBtn" class="secondary notify-btn">Request notification permission</button>
+          <button id="notifyLocalTest" class="secondary notify-local-test hidden">Send a test notification</button>
+        </div>
+        <p id="notifyPerm" class="muted notify-perm" role="status"></p>
         <div id="pushSetup"></div>
         <div class="status"></div></li>
       <li id="st-test" data-required="1"><h3 tabindex="-1">Isolation self-test <span class="step-state"></span></h3>

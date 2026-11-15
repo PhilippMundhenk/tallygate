@@ -376,6 +376,203 @@ def test_meta_carries_per_channel_notification_status(load):
     run(body())
 
 
+# ---------------------------------------------------------------- notification channels in the UI (#201)
+TG_TOKEN = "123456:" + "S" * 30
+NOTIFY_ENV = (
+    "TELEGRAM_CHAT_ID",
+    "TELEGRAM_ALLOWED_USER_IDS",
+    "MATRIX_ACCESS_TOKEN",
+    "MATRIX_ROOM_ID",
+    "MATRIX_ALLOWED_USERS",
+    "NTFY_URL",
+    "NTFY_TOKEN",
+    "GOTIFY_URL",
+    "GOTIFY_TOKEN",
+    "PUSHOVER_TOKEN",
+    "PUSHOVER_USER",
+)
+
+
+@pytest.fixture
+def notify_env(monkeypatch):
+    for k in NOTIFY_ENV:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("TELEGRAM_API_BASE", "http://127.0.0.1:1")  # never the real Telegram
+
+
+def idle_polls(n):
+    """Replace the chat poll loops by ones that only wait, and count how many run at a time."""
+    n.running = {"telegram": 0, "matrix": 0}
+
+    def loop(channel):
+        async def poll():
+            n.running[channel] += 1
+            try:
+                await asyncio.Event().wait()
+            finally:
+                n.running[channel] -= 1
+
+        return poll
+
+    n._tg_poll, n._mx_sync = loop("telegram"), loop("matrix")
+
+
+def test_notify_config_needs_a_session_and_the_csrf_header(load, notify_env):
+    main = load()
+
+    async def body():
+        async with started(main, World(), login=False) as c:
+            assert (await c.get("/api/notify/config")).status == 401
+            assert (await c.put("/api/notify/config/ntfy", json={"url": "http://n/t"}, headers=CSRF)).status == 401
+            assert (await c.delete("/api/notify/config/ntfy", headers=CSRF)).status == 401
+        async with started(main, World()) as c:
+            assert (await c.put("/api/notify/config/ntfy", json={"url": "http://n/t"})).status == 403
+            assert (await c.delete("/api/notify/config/ntfy")).status == 403
+            cross = {**CSRF, "Origin": "http://evil.example"}
+            assert (await c.put("/api/notify/config/ntfy", json={"url": "http://n/t"}, headers=cross)).status == 403
+            assert c.app["notifycfg"].overrides == {} and c.app["notifier"].ntfy_url == ""
+
+    run(body())
+
+
+def test_notify_config_is_saved_applied_live_and_never_returns_secrets(load, notify_env, tmp_path, caplog):
+    main = load()
+    full = {"bot_token": TG_TOKEN, "chat_id": "555", "allowed_user_ids": "4242"}
+
+    async def body():
+        async with started(main, World()) as c:
+            n = c.app["notifier"]
+            idle_polls(n)
+            data = await (await c.get("/api/notify/config")).json()
+            assert data["writable"] is True
+            assert [x["channel"] for x in data["channels"]] == ["telegram", "matrix", "ntfy", "gotify", "pushover"]
+            tg = data["channels"][0]
+            assert (tg["label"], tg["active"], tg["source"], tg["override"]) == ("Telegram", False, "unset", False)
+            assert "Use Configure" in tg["reason"] and tg["interactive"] is True
+
+            with caplog.at_level(logging.INFO, logger="control"):
+                r = await c.put("/api/notify/config/telegram", json=full, headers=CSRF)
+            data = await r.json()
+            assert r.status == 200 and data["changed"] == ["bot_token", "chat_id", "allowed_user_ids"]
+            tg = data["channels"][0]
+            assert tg["active"] is True and tg["source"] == "ui" and tg["reason"] == "Configured in the web UI."
+            token = next(f for f in tg["fields"] if f["name"] == "bot_token")
+            assert token["set"] is True and token["source"] == "ui" and "value" not in token
+            assert next(f for f in tg["fields"] if f["name"] == "chat_id")["value"] == "555"
+            for text in (json.dumps(data), await (await c.get("/api/notify/config")).text(), caplog.text):
+                assert TG_TOKEN not in text
+            assert "telegram saved by admin (changed: bot_token, chat_id, allowed_user_ids" in caplog.text
+            assert "555" not in caplog.text and "4242" not in caplog.text  # who and what, never the values
+
+            # applied without a restart: the notifier has the values and exactly one poll loop
+            await asyncio.sleep(0)
+            assert (n.tg_token, n.tg_chat, n.tg_users) == (TG_TOKEN, "555", {"4242"})
+            first = n.polls["telegram"]
+            assert n.running == {"telegram": 1, "matrix": 0}
+            meta = await (await c.get("/api/meta")).json()
+            assert meta["notify"]["telegram"] is True and meta["notify_status"][0]["source"] == "ui"
+            saved = json.loads((tmp_path / "data" / "notify.json").read_text())
+            assert saved["channels"]["telegram"]["bot_token"] == TG_TOKEN
+            assert (tmp_path / "data" / "notify.json").stat().st_mode & 0o777 == 0o600
+
+            # an empty secret keeps the stored one; the changed chat restarts the loop, once
+            r = await c.put("/api/notify/config/telegram", json={"bot_token": "", "chat_id": "556"}, headers=CSRF)
+            assert r.status == 200 and (await r.json())["changed"] == ["chat_id"]
+            await asyncio.sleep(0)
+            assert n.tg_token == TG_TOKEN and n.tg_chat == "556"
+            assert first.cancelled() and n.polls["telegram"] is not first and n.running["telegram"] == 1
+
+            # a channel without a poll loop leaves the Telegram loop alone
+            second = n.polls["telegram"]
+            r = await c.put("/api/notify/config/ntfy", json={"url": "http://ntfy.test/topic"}, headers=CSRF)
+            assert r.status == 200 and n.ntfy_url == "http://ntfy.test/topic" and n.polls["telegram"] is second
+
+            # removing the override: nothing in the environment, so the channel and its loop stop
+            with caplog.at_level(logging.INFO, logger="control"):
+                r = await c.delete("/api/notify/config/telegram", headers=CSRF)
+            data = await r.json()
+            assert r.status == 200 and data["removed"] is True and data["channels"][0]["active"] is False
+            assert n.polls == {} and n.running["telegram"] == 0 and second.cancelled()
+            assert "UI override of telegram removed by admin" in caplog.text
+            r = await c.delete("/api/notify/config/telegram", headers=CSRF)
+            assert r.status == 200 and (await r.json())["removed"] is False  # nothing left to remove
+
+    run(body())
+
+
+def test_notify_config_removal_falls_back_to_the_environment(load, notify_env, monkeypatch):
+    monkeypatch.setenv("NTFY_URL", "http://env.test/topic")
+    main = load()
+
+    async def body():
+        async with started(main, World()) as c:
+            n = c.app["notifier"]
+            r = await c.put("/api/notify/config/ntfy", json={"url": "http://ui.test/topic"}, headers=CSRF)
+            ntfy = (await r.json())["channels"][2]
+            assert n.ntfy_url == "http://ui.test/topic" and ntfy["source"] == "ui" and ntfy["active"] is True
+            ntfy = (await (await c.delete("/api/notify/config/ntfy", headers=CSRF)).json())["channels"][2]
+            assert n.ntfy_url == "http://env.test/topic" and ntfy["source"] == "environment"
+
+    run(body())
+
+
+def test_notify_config_refuses_bad_input_and_interactive_channels_without_allowed_users(load, notify_env):
+    main = load()
+
+    async def body():
+        async with started(main, World()) as c:
+            n = c.app["notifier"]
+            idle_polls(n)
+
+            async def put(channel, **kw):
+                r = await c.put(f"/api/notify/config/{channel}", headers=CSRF, **kw)
+                return r.status, (await r.json()).get("error", "")
+
+            assert await put("bogus", json={}) == (400, "unknown channel")
+            assert await put("webpush", json={}) == (400, "unknown channel")
+            assert await put("ntfy", data="{not json") == (400, "invalid JSON body")
+            assert await put("ntfy", json=["x"]) == (400, "expected a JSON object of field values")
+            assert await put("ntfy") == (400, "expected a JSON object of field values")
+            assert (await put("ntfy", json={"url": "file:///etc/passwd"}))[0] == 400
+            assert (await put("ntfy", json={"url": 7}))[0] == 400
+            status, error = await put("telegram", json={"bot_token": TG_TOKEN, "chat_id": "5"})
+            assert status == 400 and "Allowed user ids are required" in error  # ADR-0010
+            mx = {"homeserver": "http://hs.test", "access_token": "t", "room_id": "!r:hs.test"}
+            status, error = await put("matrix", json=mx)
+            assert status == 400 and "Allowed users are required" in error
+            assert (await c.delete("/api/notify/config/bogus", headers=CSRF)).status == 400
+            assert c.app["notifycfg"].overrides == {} and n.polls == {} and not any(n.describe().values())
+
+    run(body())
+
+
+def test_notify_config_on_an_unwritable_volume_is_environment_only(load, notify_env, monkeypatch):
+    monkeypatch.setenv("GOTIFY_URL", "http://g.test")
+    monkeypatch.setenv("GOTIFY_TOKEN", "env-app-token")
+    main = load()
+
+    async def body():
+        async with started(main, World()) as c:
+            c.app["notifycfg"].writable = False  # as when /data is a read-only mount
+            data = await (await c.get("/api/notify/config")).json()
+            gotify = data["channels"][3]
+            assert data["writable"] is False and gotify["active"] is True and gotify["source"] == "environment"
+            assert "env-app-token" not in json.dumps(data)
+            r = await c.put("/api/notify/config/ntfy", json={"url": "http://n.test/t"}, headers=CSRF)
+            assert r.status == 503 and "not writable" in (await r.json())["error"]
+            status = {x["channel"]: x for x in (await (await c.get("/api/meta")).json())["notify_status"]}
+            assert status["gotify"]["configurable"] is False and "environment" in status["ntfy"]["reason"]
+
+            def boom(_channel):
+                raise main.notifyconfig.ReadOnlyError("could not write the notification config (disk full)")
+
+            c.app["notifycfg"].remove = boom
+            r = await c.delete("/api/notify/config/gotify", headers=CSRF)
+            assert r.status == 503 and "disk full" in (await r.json())["error"]
+
+    run(body())
+
+
 def test_mode_patch_and_emergency_stop_are_relayed_and_attributed(load):
     main = load()
     world = World()

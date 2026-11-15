@@ -15,7 +15,7 @@ import pytest
 pytest.importorskip("aiohttp")
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "control"))
 
-from app import notify
+from app import notify, notifyconfig
 
 TG = {"TELEGRAM_BOT_TOKEN": "SECRET", "TELEGRAM_CHAT_ID": "777", "TELEGRAM_ALLOWED_USER_IDS": "4242"}
 MX = {
@@ -134,7 +134,8 @@ def test_a_channel_without_allowed_users_is_disabled(make, caplog, env, channel)
     with caplog.at_level(logging.ERROR, logger="notify"):
         n = make(env)
     assert n.describe()[channel] is False
-    assert "is required" in caplog.text
+    assert "are required" in caplog.text
+    assert "required" in {c["channel"]: c for c in n.status()}[channel]["reason"]  # the UI says why it is off
 
 
 def test_full_queue_drops_new_events(make, monkeypatch, caplog):
@@ -551,17 +552,19 @@ def test_status_lists_every_channel_with_a_reason(make):
     by = {c["channel"]: c for c in detail}
     assert (
         by["telegram"]["configured"]
-        and by["telegram"]["env_only"]
+        and by["telegram"]["source"] == "environment"
         and by["telegram"]["reason"] == "Configured in the environment."
     )
+    assert by["telegram"]["configurable"] is False  # no writable store here: environment-only
     assert by["ntfy"]["configured"] is True
     assert by["matrix"]["configured"] is False and "MATRIX_HOMESERVER" in by["matrix"]["reason"]  # names what to set
 
 
-def test_status_webpush_is_not_environment_only(make):
+def test_status_webpush_is_set_up_per_browser(make):
     n = make()  # push is None here
     wp = {c["channel"]: c for c in n.status()}["webpush"]
-    assert wp["env_only"] is False and wp["configured"] is False and "not writable" in wp["reason"]
+    assert wp["source"] is None and wp["configurable"] is False
+    assert wp["configured"] is False and "not writable" in wp["reason"]
     n.push = FakePush([{"id": "1"}])
     assert {c["channel"]: c for c in n.status()}["webpush"]["configured"] is True
     n.push = FakePush([])
@@ -615,6 +618,149 @@ def test_send_test_propagates_a_channel_failure(make):
     n.chat.fail.add("sendMessage")
     with pytest.raises(RuntimeError):
         run(n.send_test("telegram"))
+
+
+# ---------------------------------------------------------------- configured in the UI, applied live (#201)
+UI_TG = {"bot_token": "123456:" + "A" * 30, "chat_id": "555", "allowed_user_ids": "4242"}
+UI_MX = {"homeserver": "http://hs2", "access_token": "tok2", "room_id": "!r2:hs2", "allowed_users": "@me:hs2"}
+
+
+@pytest.fixture
+def ui(make, tmp_path):
+    """A notifier whose channels can be configured through a writable store, as the web UI does."""
+
+    def _ui(env=None):
+        n = make(env)
+        n.config = notifyconfig.NotifyConfig(tmp_path / "notify.json")
+        n._load()
+        return n
+
+    return _ui
+
+
+def idle_chat(n):
+    """Poll loops that wait (as a long poll does) and count how many are running per channel."""
+    n.running = {"telegram": 0, "matrix": 0}
+    n.started = {"telegram": 0, "matrix": 0}
+
+    def loop(channel):
+        async def poll():
+            n.started[channel] += 1
+            n.running[channel] += 1
+            try:
+                await asyncio.Event().wait()
+            finally:
+                n.running[channel] -= 1
+
+        return poll
+
+    n._tg_poll, n._mx_sync = loop("telegram"), loop("matrix")
+
+
+def test_ui_values_override_the_environment_and_status_names_the_source(ui):
+    n = ui(TG)
+    assert n.tg_chat == "777" and n.status()[0]["source"] == "environment" and n.status()[0]["configurable"]
+    n.config.update("telegram", {"chat_id": "555"})
+    run(n.reconfigure())
+    by = {c["channel"]: c for c in n.status()}
+    assert n.tg_chat == "555" and n.tg_token == "SECRET"  # the token still comes from the environment
+    assert by["telegram"]["source"] == "mixed" and "web UI and the environment" in by["telegram"]["reason"]
+    n.config.update("telegram", UI_TG)
+    run(n.reconfigure())
+    assert n.tg_token == UI_TG["bot_token"] and n.status()[0]["reason"] == "Configured in the web UI."
+    n.config.remove("telegram")
+    run(n.reconfigure())
+    assert (n.tg_token, n.tg_chat) == ("SECRET", "777") and n.status()[0]["source"] == "environment"
+
+
+def test_status_says_how_to_configure_a_channel_that_is_off(ui):
+    n = ui()
+    by = {c["channel"]: c for c in n.status()}
+    assert "Use Configure" in by["ntfy"]["reason"] and "NTFY_URL" in by["ntfy"]["reason"]
+    n.config.update("gotify", {"url": "http://g"})  # no token yet
+    run(n.reconfigure())
+    gotify = {c["channel"]: c for c in n.status()}["gotify"]
+    assert gotify["configured"] is False and gotify["reason"].startswith("Incomplete")
+
+
+def test_reconfigure_restarts_only_the_changed_poll_loop_and_never_duplicates_it(ui):
+    n = ui({**TG, **MX})
+    idle_chat(n)
+
+    async def body():
+        tasks = n.start()
+        await asyncio.sleep(0)
+        assert len(tasks) == 3 and n.running == {"telegram": 1, "matrix": 1}
+        tg, mx = n.polls["telegram"], n.polls["matrix"]
+        assert await n.reconfigure() == [] and n.polls == {"telegram": tg, "matrix": mx}  # nothing changed
+
+        n.config.update("ntfy", {"url": "http://ntfy/topic"})  # a channel without a poll loop
+        assert await n.reconfigure() == [] and n.polls["telegram"] is tg and n.ntfy_url == "http://ntfy/topic"
+
+        n.config.update("telegram", UI_TG)
+        assert await n.reconfigure() == ["telegram"]
+        await asyncio.sleep(0)
+        assert tg.cancelled() and n.polls["telegram"] is not tg and n.polls["matrix"] is mx
+        assert n.running == {"telegram": 1, "matrix": 1} and n.started == {"telegram": 2, "matrix": 1}
+
+        n.config.update("matrix", UI_MX)
+        n.config.update("telegram", {"chat_id": "556"})
+        both = await asyncio.gather(n.reconfigure(), n.reconfigure())  # two saves at once: still one loop each
+        await asyncio.sleep(0)
+        assert both == [["telegram", "matrix"], []] and n.running == {"telegram": 1, "matrix": 1}
+        assert not n.worker.done()  # the worker (and with it the queue) is never restarted
+        polls = list(n.polls.values())
+        await n.close()
+        assert all(t.cancelled() for t in polls) and n.polls == {} and n.running == {"telegram": 0, "matrix": 0}
+
+    run(body())
+
+
+def test_reconfigure_starts_and_stops_a_channel_and_keeps_open_prompts(ui):
+    n = ui()
+    idle_chat(n)
+
+    async def body():
+        assert n.start() == [n.worker] and n.polls == {}  # nothing configured: only the worker
+        n.config.update("telegram", UI_TG)
+        assert await n.reconfigure() == ["telegram"]
+        await asyncio.sleep(0)
+        assert n.running["telegram"] == 1
+        await n.handle({"type": "ask", "pending": pending("p1")})
+        assert n.msgs["p1"]["tg"] == 41 and n.chat.sent("tg", "sendMessage")[0][2]["chat_id"] == "555"
+
+        n.config.update("telegram", {"chat_id": "556"})  # the loop restarts, the open prompt stays
+        assert await n.reconfigure() == ["telegram"]
+        assert n.msgs["p1"]["short"] == 1 and n.short == {1: "p1"}
+        await n.handle({"type": "resolved", "id": "p1", "action": "allow", "scope": "once"})
+        assert n.chat.sent("tg", "editMessageText")[0][2]["message_id"] == 41
+
+        n.config.remove("telegram")  # no environment to fall back to: the channel and its loop stop
+        assert await n.reconfigure() == ["telegram"]
+        assert n.polls == {} and n.running["telegram"] == 0 and n.describe()["telegram"] is False
+        await n.close()
+
+    run(body())
+
+
+def test_reconfigure_before_start_starts_no_loop(ui):
+    n = ui()
+    idle_chat(n)
+    n.config.update("matrix", UI_MX)
+    assert run(n.reconfigure()) == ["matrix"]
+    assert n.polls == {} and n.describe()["matrix"] is True
+
+
+def test_a_stored_channel_without_allowed_users_stays_off(ui, tmp_path, caplog):
+    """The store refuses this, so write the file directly: the notifier is the second line (ADR-0010)."""
+    n = ui()
+    (tmp_path / "notify.json").write_text(
+        '{"version": 1, "channels": {"telegram": {"bot_token": "123456:%s", "chat_id": "5"}}}' % ("A" * 30)
+    )
+    n.config = notifyconfig.NotifyConfig(tmp_path / "notify.json")
+    with caplog.at_level(logging.ERROR, logger="notify"):
+        run(n.reconfigure())
+    assert n.describe()["telegram"] is False and n.polls == {} and "are required" in caplog.text
 
 
 def test_redact_strips_channel_tokens(make):

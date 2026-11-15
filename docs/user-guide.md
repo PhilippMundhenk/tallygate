@@ -18,6 +18,7 @@ agent has to ask for, what rules do, and where each is changed.
 - [Setup wizard](#setup-wizard)
 - [Telegram approvals](#telegram-approvals)
 - [Matrix approvals](#matrix-approvals)
+- [Notification channels in the web UI](#notification-channels-in-the-web-ui)
 - [Phone approvals without a chat bot](#phone-approvals-without-a-chat-bot)
 - [Rule cookbook](#rule-cookbook)
 - [Working with the agent](#working-with-the-agent)
@@ -43,7 +44,7 @@ while it is open and at once when a request arrives or is decided.
 
 When the agent connects somewhere that no rule covers (and the default is `ask`), the connection is **held**
 and appears here, on Telegram/Matrix if configured, and as a desktop notification while the tab is in the
-background (turn these on once with **Enable browser notifications** in the Setup tab), and as a push
+background (turn these on once with **Request notification permission** in the Setup tab), and as a push
 notification on your phone ([without a chat bot](#phone-approvals-without-a-chat-bot)). The countdown shows
 when it will be denied automatically.
 
@@ -352,7 +353,7 @@ password change runs on the Docker host.
 | Git identity | *Use my GitHub identity* asks GitHub, through the gateway with the stored token, who you are (`gh api user`) and shows the name and the noreply address `<id>+<login>@users.noreply.github.com`; *Apply* sets them. Without a stored token, or when GitHub refuses it or cannot be reached, it says so and links to the token step. *Enter it yourself* is the fallback. Empty values are never written; a name or address that is set but empty (for example from a `git config` whose `$(…)` failed) is reported as such. |
 | Remote Control | *Enable Remote Control* answers Claude Code's one-time question `Enable Remote Control? (y/n)` with yes, trusts `/workspace` and restarts Remote Control. The step is done when it runs; it also tells you when Remote Control waits for an answer in the *rc* console. Switched off with `RC_ENABLE=0`. |
 | Starting policy | *Ask me* or *Strict* sets what happens with unknown destinations; *Shortcuts* opens them in the Destinations tab. *Learn from a first task* takes you to [learning mode](#learning-mode), the quickest way to a working set of rules: run one task, then keep what it used. |
-| Notifications | One section for every channel (Telegram, Matrix, ntfy, Gotify, Pushover, Web Push). Each row says whether the channel is active and, when it is off, why (e.g. which environment variables are missing); the bot channels are marked *environment-only*. A **Test** button on each active channel sends a sample notification through just that channel and reports the result. Web Push devices (and the browser-permission button) are set up in the same section. |
+| Notifications | One section for every channel (Telegram, Matrix, ntfy, Gotify, Pushover, Web Push). Each row says whether the channel is active, where its settings come from (*web UI* or *environment*) and, when it is off, why. **Configure** on a bot channel opens its settings ([details](#notification-channels-in-the-web-ui)); a **Test** button on each active channel sends a sample notification through just that channel and reports the result. Web Push devices and the [browser-notification permission](#browser-notifications) are set up in the same section. |
 | Isolation self-test | Runs the in-agent self-test. |
 
 ## Telegram approvals
@@ -360,8 +361,10 @@ password change runs on the Docker host.
 1. Create a bot: talk to [@BotFather](https://t.me/BotFather), `/newbot`, copy the token.
 2. Send any message to your bot, then get your chat ID:
    `curl https://api.telegram.org/bot<TOKEN>/getUpdates` → `message.chat.id` (and `message.from.id`).
-3. In `.env`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ALLOWED_USER_IDS=<your from.id>`.
-4. `docker compose up -d control`.
+3. **Setup → Notifications → Telegram → Configure**: enter the bot token, the chat id and the allowed user ids
+   (your `from.id`), then **Save**. It works at once; **Test** sends a sample.
+   Or in `.env`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ALLOWED_USER_IDS=<your from.id>`, then
+   `docker compose up -d control`.
 
 Each request arrives with **Allow once**, **Always allow**, **Deny** and **More…**; *More…* adds *Allow 1 h*,
 *Always (\*.domain)* (when the name has a registrable domain) and *Block forever* to the same message. After a
@@ -372,14 +375,53 @@ decision the message is edited to show the outcome and who decided. Taps from us
 1. Create a dedicated bot user on your homeserver (e.g. `@tallygate:example.org`) and get an access token
    (log in once with any client and copy the token, or use the login API).
 2. Create an **unencrypted** room, invite the bot and join with the bot user.
-3. In `.env`: `MATRIX_HOMESERVER`, `MATRIX_ACCESS_TOKEN`, `MATRIX_ROOM_ID` (`!…:example.org`),
-   `MATRIX_ALLOWED_USERS=@you:example.org`.
-4. `docker compose up -d control`.
+3. **Setup → Notifications → Matrix → Configure**: enter the homeserver URL, the access token, the room id
+   (`!…:example.org`) and the allowed users (`@you:example.org`), then **Save**.
+   Or in `.env`: `MATRIX_HOMESERVER`, `MATRIX_ACCESS_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_ALLOWED_USERS`, then
+   `docker compose up -d control`.
 
 Each request is posted as `🔐 #3 Agent wants to connect: host:port …` with three pre-seeded reactions: tap
 👍 allow once, ✅ always allow or 👎 deny. The message lists the others, which you add yourself: ⏰ 1 h,
 🌐 domain, ⛔ block. Or reply `allow 3`, `hour 3`, `always 3`, `domain 3`, `deny 3` or `block 3`. The bot
 confirms the outcome in a reply.
+
+## Notification channels in the web UI
+
+Telegram, Matrix, ntfy, Gotify and Pushover can be set up in **Setup → Notifications** instead of the
+environment. Each of them has a **Configure** disclosure with the same fields as its environment variables,
+**Save**, **Remove override** and the **Test** button.
+
+- **Saving applies at once.** No restart: the notifier takes the new values, and the Telegram or Matrix
+  connection is restarted only when that channel changed. Requests that are waiting for an answer stay open.
+- **Tokens are write-only.** A token you save is stored by the control plane (in its data volume, file
+  `notify.json`, readable only by the control container) and is never shown again, not in the UI, not through
+  the API and not in the log. The token fields are therefore always empty: *stored – leave empty to keep*.
+  URLs, chat and room ids and allowed users are shown.
+- **The web UI wins over the environment, field by field.** A field you fill in overrides its environment
+  variable; a field you leave empty uses the environment variable (it is shown as the placeholder). Each
+  channel and field says where its value comes from. **Remove override** deletes what the UI saved for that
+  channel: it then uses the environment again, or is off when nothing is set there.
+- **Changing the server needs the token again.** When you change the Matrix homeserver, the ntfy topic URL or
+  the Gotify server, enter the token too. A stored token is never sent to a different server than the one it
+  was saved for.
+- **Telegram and Matrix need their allowed users.** They are refused without them, because otherwise everyone
+  in the chat could approve.
+- If the control data volume is not writable, the section says so and the channels can only be configured in
+  the environment.
+
+The decision behind this is recorded in [ADR-0018](adr/0018-notification-credentials-stored-by-the-control-plane.md).
+
+### Browser notifications
+
+While the UI is open in a background tab, new requests also appear as notifications of the browser itself.
+The Notifications section shows what applies to your browser:
+
+| State | What you see |
+|---|---|
+| Not asked yet | **Request notification permission**: the browser asks you. |
+| Allowed | *Browser notifications are on* and **Send a test notification**, which shows one right away. |
+| Blocked | The button stays (some browsers ask again when you press it) and the text says where to change it: allow notifications in the site permissions (address bar → site information / permissions), then reload. |
+| Plain HTTP | *Browser notifications need HTTPS (or localhost)*: browsers refuse notifications otherwise. Open the UI through your TLS reverse proxy. |
 
 ## Phone approvals without a chat bot
 
@@ -410,9 +452,9 @@ so, and everything else keeps working. Control sends the messages to the browser
 Mozilla, Apple or Microsoft); the content is end-to-end encrypted to your device, only the timing and size
 are visible to the push service.
 
-**ntfy, Gotify, Pushover.** For a notification on the phone with apps you may already use, set `NTFY_URL`
-(+ `NTFY_TOKEN`), `GOTIFY_URL` + `GOTIFY_TOKEN` or `PUSHOVER_TOKEN` + `PUSHOVER_USER` (see
-[configuration](configuration.md)). They get the same text as Telegram and a link to the UI (`PUBLIC_URL`),
+**ntfy, Gotify, Pushover.** For a notification on the phone with apps you may already use, configure them
+under **Setup → Notifications → Configure**, or set `NTFY_URL` (+ `NTFY_TOKEN`), `GOTIFY_URL` +
+`GOTIFY_TOKEN` or `PUSHOVER_TOKEN` + `PUSHOVER_USER` (see [configuration](configuration.md)). They get the same text as Telegram and a link to the UI (`PUBLIC_URL`),
 but no decision buttons: an approve link would work for anyone who sees it. These services see the
 destinations in plain text, like Telegram does.
 

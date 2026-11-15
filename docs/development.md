@@ -35,6 +35,7 @@
 │       ├── bootstrap.py      #   secrets and UI password on first start
 │       ├── passwd.py         #   `python -m app.passwd`: change the stored UI password
 │       ├── notify.py         #   Telegram + Matrix bots, Web Push, ntfy, Gotify, Pushover
+│       ├── notifyconfig.py   #   notification settings saved in the UI (write-only secrets, ADR-0018)
 │       ├── webpush.py        #   Web Push: VAPID, RFC 8291 encryption, subscriptions, action tokens
 │       └── static/           #   single-page UI (vanilla JS, no build step)
 ├── agent/                    # agent container

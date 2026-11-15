@@ -270,7 +270,7 @@ It never becomes an `allow`. Refused destinations are collected and sent as one 
 | UI-defined grants | `gateway-data`: `grants.yaml` | egress-gw | Active grants and pending requests live in memory (a restart ends them: fail closed). |
 | Agent home | `agent-home` | agent (uid 1000) | Claude login, settings, skills, `.gitconfig`, tmux/shell history. |
 | Workspace | `workspace` | agent | Repositories. |
-| Control | `control-data`: `session-secret`, `password-hash`, `vapid-private.pem`, `push-subscriptions.json` | control (uid 10002) | Created on first start unless set by environment. Sessions in memory (a restart logs everyone out). Without a writable volume, Web Push is off. |
+| Control | `control-data`: `session-secret`, `password-hash`, `vapid-private.pem`, `push-subscriptions.json`, `notify.json` (notification channels saved in the UI, ADR-0018) | control (uid 10002) | Created on first start unless set by environment. Sessions in memory (a restart logs everyone out). Without a writable volume, Web Push is off and the notification channels are environment-only. |
 | Shared secrets | `gw-token` (gateway rw, control ro), `ttyd` (control rw, agent ro) | – | API token and console credential, created on first start. The agent never mounts `gw-token`. |
 
 ## Process model
