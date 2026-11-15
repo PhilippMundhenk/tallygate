@@ -87,12 +87,18 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - **Test and status for every notification channel** (#180): *Setup → Notifications* is now one section (the
   wizard step and the old standalone card are folded together). Each channel (Telegram, Matrix, ntfy, Gotify,
   Pushover, Web Push) shows whether it is active and, when off, why — e.g. the environment variables still to
-  set — with the bot channels marked *environment-only*. A **Test** button on each active channel sends a short
+  set — and where its settings come from. A **Test** button on each active channel sends a short
   "tallygate test" through just that channel and reports the result (`POST /api/notify/test` with `{"channel"}`
-  for the bot channels, through the notifier's normal sender; Web Push keeps `POST /api/push/test`). UI
-  configuration of the bot-channel secrets stays out of scope: the notifier reads its config once at startup
-  and owns long-lived poll loops, so a write-back store would be a larger change; the channels remain
-  environment-configured and the UI says so.
+  for the bot channels, through the notifier's normal sender; Web Push keeps `POST /api/push/test`).
+- **Notification channels can be configured in the web UI** (#201, ADR-0018): Telegram, Matrix, ntfy, Gotify
+  and Pushover each have a **Configure** disclosure in *Setup → Notifications* with the fields of their
+  environment variables, **Save** and **Remove override**. Saving applies at once, without a restart: only the
+  poll loop of a changed channel is restarted, waiting requests stay open. Tokens are write-only (stored in
+  `notify.json` in the control data volume, mode 0600; never returned by the API, shown or logged), a value
+  saved in the UI overrides its environment variable field by field, and removing the override falls back to
+  the environment. A changed server URL needs its token again, and Telegram/Matrix are refused without their
+  allowed users. New routes: `GET /api/notify/config`, `PUT`/`DELETE /api/notify/config/{channel}`. On a
+  read-only data volume the UI says so and the channels stay environment-only.
 - **Behaviour settings in the UI** (ADR-0015): the gateway's tunables — log retention, learning-mode ports and
   limit, rule-suggestion thresholds, grant-request timeout and cap, policy-history depth, pending caps — are
   edited under *Setup → Behaviour settings* (`GET`/`PATCH /settings`) and persisted to a backend-owned
@@ -273,6 +279,11 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   (#17, #18).
 
 ### Fixed
+- **Browser-notification permission in Setup** (#201): the hint for a blocked site named a "lock / ⓘ icon"
+  that Firefox does not have, and on plain HTTP it offered a button that could never work. The section now
+  says what applies: on plain HTTP that browser notifications need HTTPS (or localhost); otherwise a
+  **Request notification permission** button, which stays when the site is blocked (some browsers ask again)
+  next to a browser-neutral explanation; and once allowed, **Send a test notification**.
 - **Docs read-through** after the rework (#99): the user guide, rules and grants guides, API reference and
   configuration reference now describe the single **Destinations** tab (the Rules tab was folded in), the
   `/destinations` API (the old `/rules`/`/grants` CRUD is gone) and the `destinations:` config form. Added

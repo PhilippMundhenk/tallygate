@@ -19,3 +19,4 @@ Format: [MADR](https://adr.github.io/madr/)-style, one decision per file. Status
 | [0012](0012-grants-for-scoped-temporary-access.md) | Grants for scoped, temporary access | Accepted |
 | [0013](0013-sni-and-host-bound-to-the-checked-name.md) | TLS SNI and HTTP Host are bound to the checked name | Accepted |
 | [0014](0014-one-destination-model.md) | One destination model and one evaluation path | Accepted |
+| [0018](0018-notification-credentials-stored-by-the-control-plane.md) | Notification credentials may be stored by the control plane (write-only) | Accepted |

@@ -26,7 +26,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import WSMsgType, web
 
-from app import bootstrap, notify, webpush
+from app import bootstrap, notify, notifyconfig, webpush
 
 log = logging.getLogger("control")
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -501,7 +501,7 @@ async def api_push_test(request: web.Request):
 
 async def api_notify_test(request: web.Request):
     """Send a one-off test notification through a single bot channel (#180). Body: {"channel": ...}.
-    Web Push is tested separately via /api/push/test (it is subscribed per-browser, not env-configured).
+    Web Push is tested separately via /api/push/test (it is subscribed per browser, not configured here).
     400 if the channel is unknown or not configured; 502 if the channel's service rejected the send."""
     body = await json_body(request)
     channel = body.get("channel") if isinstance(body, dict) else None
@@ -514,6 +514,62 @@ async def api_notify_test(request: web.Request):
         return web.json_response({"error": notifier.redact(str(e))}, status=502)
     log.info("notification test sent through %s by %s", channel, request["user"])
     return web.json_response({"ok": True, "channel": channel})
+
+
+def _notify_config(app: web.Application) -> dict:
+    """The channel settings as the UI may see them: no secret values, only set / source (#201)."""
+    data = app["notifycfg"].public()
+    status = {c["channel"]: c for c in app["notifier"].status()}
+    for c in data["channels"]:
+        st = status[c["channel"]]
+        c.update(label=st["label"], active=st["configured"], reason=st["reason"])
+    return data
+
+
+async def api_notify_config(request: web.Request):
+    return web.json_response(_notify_config(request.app))
+
+
+async def api_notify_config_put(request: web.Request):
+    """Save UI settings for one bot channel and apply them at once. Body: {field: value, ...}. A secret
+    sent empty keeps the stored one; a non-secret field sent empty falls back to the environment.
+    400 for a bad channel/field/value, 503 when the data volume is not writable. Values are never logged."""
+    channel = request.match_info["channel"]
+    try:
+        changed = request.app["notifycfg"].update(channel, await json_body(request))
+    except notifyconfig.ConfigError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except notifyconfig.ReadOnlyError as e:
+        return web.json_response({"error": str(e)}, status=503)
+    restarted = await request.app["notifier"].reconfigure()
+    log.info(
+        "notification config: %s saved by %s (changed: %s; poll loops restarted: %s)",
+        channel,
+        request["user"],
+        ", ".join(changed) or "nothing",
+        ", ".join(restarted) or "none",
+    )
+    return web.json_response({"ok": True, "changed": changed, **_notify_config(request.app)})
+
+
+async def api_notify_config_delete(request: web.Request):
+    """Drop the UI override of one bot channel: it falls back to the environment (or switches off)."""
+    channel = request.match_info["channel"]
+    try:
+        removed = request.app["notifycfg"].remove(channel)
+    except notifyconfig.ConfigError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except notifyconfig.ReadOnlyError as e:
+        return web.json_response({"error": str(e)}, status=503)
+    restarted = await request.app["notifier"].reconfigure()
+    if removed:
+        log.info(
+            "notification config: UI override of %s removed by %s (poll loops restarted: %s)",
+            channel,
+            request["user"],
+            ", ".join(restarted) or "none",
+        )
+    return web.json_response({"ok": True, "removed": removed, **_notify_config(request.app)})
 
 
 async def api_push_act(request: web.Request):
@@ -1167,6 +1223,7 @@ async def on_startup(app: web.Application):
         revoke_grant=lambda aid, by: gw(app, "DELETE", f"/active-grants/{aid}?" + urllib.parse.urlencode({"by": by})),
         decide=lambda pid, scope, by: gw(app, "POST", f"/pending/{pid}/decide", {"scope": scope, "by": by}),
         push=app["webpush"],
+        config=app["notifycfg"],
     )
     app["bg"] = [asyncio.create_task(watch_gateway(app)), *app["notifier"].start()]
 
@@ -1235,6 +1292,7 @@ def build_app() -> web.Application:
         if pem
         else None
     )
+    app["notifycfg"] = notifyconfig.NotifyConfig(bootstrap.DATA / "notify.json")
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
     app.router.add_get("/healthz", healthz)
@@ -1254,6 +1312,9 @@ def build_app() -> web.Application:
     app.router.add_post("/api/push/subscribe", api_push_subscribe)
     app.router.add_post("/api/push/test", api_push_test)
     app.router.add_post("/api/notify/test", api_notify_test)
+    app.router.add_get("/api/notify/config", api_notify_config)
+    app.router.add_put("/api/notify/config/{channel}", api_notify_config_put)
+    app.router.add_delete("/api/notify/config/{channel}", api_notify_config_delete)
     app.router.add_post(PUSH_ACT, api_push_act)
     app.router.add_delete("/api/push/{sid}", api_push_delete)
     for path in PUBLIC_FILES:

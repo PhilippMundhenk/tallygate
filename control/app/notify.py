@@ -8,6 +8,9 @@ ntfy:     NTFY_URL (topic URL), NTFY_TOKEN (optional).  Gotify: GOTIFY_URL, GOTI
 Pushover: PUSHOVER_TOKEN (application), PUSHOVER_USER (user or group key).
           These three only notify (with a link to the UI): deciding needs the UI, a chat bot or Web Push.
 
+The bot channels take their settings from the web UI (app/notifyconfig.py, ADR-0018) or, per field, from
+the environment variables above; reconfigure() applies a change without a restart.
+
 Two kinds of prompts: connection requests (scopes below) and grant requests (approve / read-only /
 deny, then revoke). Both share one short-number space for Matrix text replies.
 """
@@ -25,6 +28,8 @@ import urllib.parse
 import uuid
 
 import aiohttp
+
+from app.notifyconfig import NotifyConfig
 
 log = logging.getLogger("notify")
 QUEUE_SIZE = 1000  # gateway events waiting for delivery; beyond that new events are dropped (logged)
@@ -55,8 +60,8 @@ TEXT_TO_SCOPE = {
 
 # Channel metadata for the Setup UI and the per-channel Test button (#180). The order is the order
 # the UI lists them in. CHANNEL_ENV names the environment variables each bot channel needs, shown
-# when it is off so the operator knows what to set (the values themselves are write-only, never read
-# back). Web Push is set up per-browser in the UI instead and is tested via /api/push/test.
+# when it is off as the alternative to configuring it in the UI (#201). Web Push is set up per-browser
+# in the UI instead and is tested via /api/push/test.
 CHANNEL_LABELS = {
     "telegram": "Telegram",
     "matrix": "Matrix",
@@ -72,6 +77,12 @@ CHANNEL_ENV = {
     "gotify": "GOTIFY_URL, GOTIFY_TOKEN",
     "pushover": "PUSHOVER_TOKEN, PUSHOVER_USER",
 }
+SOURCE_TEXT = {
+    "ui": "Configured in the web UI.",
+    "environment": "Configured in the environment.",
+    "mixed": "Configured in the web UI and the environment.",
+}
+POLLS = ("telegram", "matrix")  # channels with a long-lived poll loop (they receive the decisions)
 TEST_TITLE = "tallygate test"
 TEST_TEXT = "tallygate test notification - this channel is working."
 
@@ -120,7 +131,7 @@ def _scope_label(scope: str, label: str, p: dict) -> str:
 
 
 class Notifier:
-    def __init__(self, app, decide, decide_grant=None, revoke_grant=None, push=None) -> None:
+    def __init__(self, app, decide, decide_grant=None, revoke_grant=None, push=None, config=None) -> None:
         self.app = app
         self.push = push  # webpush.WebPush, or None when Web Push is off
         self.decide = decide  # async (pending_id, scope, by) -> (status, data)
@@ -128,28 +139,9 @@ class Notifier:
         self.revoke_grant = revoke_grant  # async (active_id, by) -> (status, data)
         self.gmsgs: dict[str, dict] = {}  # grant request id -> {"tg", "mx", "short", "text", "aid", "expires"}
         self.public_url = os.environ.get("PUBLIC_URL", "")
-        self.tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-        self.tg_base = os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
-        self.tg_chat = os.environ.get("TELEGRAM_CHAT_ID", "")
-        self.tg_users = {u.strip() for u in os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").split(",") if u.strip()}
-        self.mx_hs = os.environ.get("MATRIX_HOMESERVER", "").rstrip("/")
-        self.mx_token = os.environ.get("MATRIX_ACCESS_TOKEN", "")
-        self.mx_room = os.environ.get("MATRIX_ROOM_ID", "")
-        self.mx_users = {u.strip() for u in os.environ.get("MATRIX_ALLOWED_USERS", "").split(",") if u.strip()}
-        if self.mx_hs and not self.mx_users:
-            log.error("MATRIX_ALLOWED_USERS is required - Matrix approvals disabled")
-            self.mx_hs = ""
-        self.ntfy_url = os.environ.get("NTFY_URL", "").strip()
-        self.ntfy_token = os.environ.get("NTFY_TOKEN", "")
-        self.gotify_url = os.environ.get("GOTIFY_URL", "").rstrip("/")
-        self.gotify_token = os.environ.get("GOTIFY_TOKEN", "")
-        self.po_token = os.environ.get("PUSHOVER_TOKEN", "")
-        self.po_user = os.environ.get("PUSHOVER_USER", "")
-        self.po_base = os.environ.get("PUSHOVER_API_BASE", "https://api.pushover.net").rstrip("/")
-        if self.tg_token and not self.tg_users:
-            # In a group chat every member could otherwise press "Allow".
-            log.error("TELEGRAM_ALLOWED_USER_IDS is required - Telegram approvals disabled")
-            self.tg_token = ""
+        self.config: NotifyConfig = config or NotifyConfig(None)  # UI values over the environment (#201)
+        self.problems: dict[str, str] = {}  # channel -> why it is off although it has settings
+        self._load()
         # pending id -> {"tg": message_id, "mx": event_id, "short": n, "text": str}
         self.msgs: dict[str, dict] = {}
         self.short: dict[int, str] = {}
@@ -157,6 +149,43 @@ class Notifier:
         # Gateway events wait here, so slow chat APIs never block the reader of the gateway stream.
         self.queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=QUEUE_SIZE)
         self.tasks: set[asyncio.Task] = set()  # background work outside the worker (Matrix reaction seeding)
+        self.worker: asyncio.Task | None = None
+        self.polls: dict[str, asyncio.Task] = {}  # channel -> its poll loop (at most one each)
+        self._started = False
+        self._reconfigure = asyncio.Lock()
+
+    def _load(self) -> None:
+        """Read the channel settings: per field the value saved in the UI, else the environment variable.
+        Telegram and Matrix decide approvals, so without their allowed users they stay off (ADR-0010)."""
+        tg, mx = self.config.effective("telegram"), self.config.effective("matrix")
+        ntfy, gotify, po = (self.config.effective(c) for c in ("ntfy", "gotify", "pushover"))
+        self.problems = {}
+        self.tg_token = tg["bot_token"]
+        self.tg_base = os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
+        self.tg_chat = tg["chat_id"]
+        self.tg_users = {u.strip() for u in tg["allowed_user_ids"].split(",") if u.strip()}
+        self.mx_hs = mx["homeserver"].rstrip("/")
+        self.mx_token = mx["access_token"]
+        self.mx_room = mx["room_id"]
+        self.mx_users = {u.strip() for u in mx["allowed_users"].split(",") if u.strip()}
+        if self.mx_hs and not self.mx_users:
+            log.error("the allowed Matrix users (MATRIX_ALLOWED_USERS) are required - Matrix approvals disabled")
+            self.mx_hs = ""
+            self.problems["matrix"] = "Off: the allowed users are required (only they may decide)."
+        self.ntfy_url = ntfy["url"].strip()
+        self.ntfy_token = ntfy["token"]
+        self.gotify_url = gotify["url"].rstrip("/")
+        self.gotify_token = gotify["token"]
+        self.po_token = po["token"]
+        self.po_user = po["user"]
+        self.po_base = os.environ.get("PUSHOVER_API_BASE", "https://api.pushover.net").rstrip("/")
+        if self.tg_token and not self.tg_users:
+            # In a group chat every member could otherwise press "Allow".
+            log.error(
+                "the allowed Telegram user ids (TELEGRAM_ALLOWED_USER_IDS) are required - Telegram approvals disabled"
+            )
+            self.tg_token = ""
+            self.problems["telegram"] = "Off: the allowed user ids are required (only they may decide)."
 
     def describe(self) -> dict:
         return {
@@ -169,19 +198,16 @@ class Notifier:
         }
 
     def status(self) -> list[dict]:
-        """Per-channel detail for the Setup UI (#180): configured?, a short human-readable why,
-        whether the channel is environment-only, and whether a Test button can send through it.
-        describe() stays a plain bool map (used internally and by /api/meta's "notify" for
-        backward compatibility, see tests/e2e/test_notifications.py); this adds the detail.
-
-        Assumption (documented in the PR): the bot channels are configured only through environment
-        variables (ADR-0010 outbound-polling bots); UI configuration of them is out of scope for #180
-        because the Notifier reads its config once at startup and owns long-lived poll loops, so a
-        write-back store would be a sizeable refactor. Web Push is the one channel set up in the UI."""
+        """Per-channel detail for the Setup UI (#180, #201): configured?, a short human-readable why,
+        where the settings come from (source: ui / environment / mixed / unset; None for Web Push, which is
+        subscribed per browser) and whether the UI can configure the channel (configurable: a bot channel
+        and the data volume is writable). describe() stays a plain bool map (used internally and by
+        /api/meta's "notify" for backward compatibility, see tests/e2e/test_notifications.py)."""
         on = self.describe()
         out: list[dict] = []
         for key, label in CHANNEL_LABELS.items():
             configured = on[key]
+            source = None
             if key == "webpush":
                 if self.push is None:
                     reason = "Unavailable: the control data volume is not writable."
@@ -189,22 +215,34 @@ class Notifier:
                     reason = "Device(s) subscribed in this browser; set up below."
                 else:
                     reason = "No device subscribed yet - turn it on below."
-                env_only = False
-            elif configured:
-                reason = "Configured in the environment."
-                env_only = True
             else:
-                reason = f"Not configured in the environment ({CHANNEL_ENV[key]})."
-                env_only = True
+                source = self.config.source(key)
+                if configured:
+                    reason = SOURCE_TEXT[source]
+                elif key in self.problems:
+                    reason = self.problems[key]
+                elif source != "unset":
+                    reason = "Incomplete: a required setting is missing."
+                elif self.config.writable:
+                    reason = f"Not configured. Use Configure, or set {CHANNEL_ENV[key]} in the environment."
+                else:
+                    reason = f"Not configured in the environment ({CHANNEL_ENV[key]})."
             out.append(
-                {"channel": key, "label": label, "configured": configured, "env_only": env_only, "reason": reason}
+                {
+                    "channel": key,
+                    "label": label,
+                    "configured": configured,
+                    "source": source,
+                    "configurable": key != "webpush" and self.config.writable,
+                    "reason": reason,
+                }
             )
         return out
 
     def redact(self, msg: str) -> str:
         """Strip channel tokens from an error before it reaches the UI (an aiohttp error can carry the
         request URL, and Telegram/ntfy/Gotify/Pushover put the token in the URL or headers)."""
-        for secret in (self.tg_token, self.mx_token, self.ntfy_token, self.gotify_token, self.po_token):
+        for secret in (self.tg_token, self.mx_token, self.ntfy_token, self.gotify_token, self.po_token, self.po_user):
             if secret:
                 msg = msg.replace(secret, "<token>")
         return msg
@@ -236,12 +274,43 @@ class Notifier:
             await self._pushover(TEST_TITLE, TEST_TEXT, high=False)
 
     def start(self) -> list[asyncio.Task]:
-        tasks = [asyncio.create_task(self._worker())]
-        if self.describe()["telegram"]:
-            tasks.append(asyncio.create_task(self._tg_poll()))
-        if self.describe()["matrix"]:
-            tasks.append(asyncio.create_task(self._mx_sync()))
-        return tasks
+        self._started = True
+        self.worker = asyncio.create_task(self._worker())
+        for channel in POLLS:
+            self._start_poll(channel)
+        return [self.worker, *self.polls.values()]
+
+    def _poll_key(self, channel: str) -> tuple | None:
+        """Everything a poll loop depends on; None while the channel is off. A loop is restarted exactly
+        when this changes."""
+        if not self.describe()[channel]:
+            return None
+        if channel == "telegram":
+            return (self.tg_token, self.tg_base, self.tg_chat, frozenset(self.tg_users))
+        return (self.mx_hs, self.mx_token, self.mx_room, frozenset(self.mx_users))
+
+    def _start_poll(self, channel: str) -> None:
+        if self._poll_key(channel) is not None:
+            self.polls[channel] = asyncio.create_task(self._tg_poll() if channel == "telegram" else self._mx_sync())
+
+    async def reconfigure(self) -> list[str]:
+        """Apply changed channel settings without a restart (#201). The senders read the new values at
+        once. A poll loop is touched only when its own channel changed: the old loop is cancelled and
+        awaited before the new one starts, so there is never more than one per channel. The worker, the
+        queue and the open prompts (msgs, gmsgs, short numbers) stay, so a prompt that is waiting can
+        still be answered. Returns the channels whose poll loop was stopped or (re)started."""
+        async with self._reconfigure:
+            before = {c: self._poll_key(c) for c in POLLS}
+            self._load()
+            changed = [c for c in POLLS if self._poll_key(c) != before[c]]
+            for channel in changed:
+                old = self.polls.pop(channel, None)
+                if old:
+                    old.cancel()
+                    await asyncio.gather(old, return_exceptions=True)
+                if self._started:
+                    self._start_poll(channel)
+            return changed
 
     def _background(self, coro) -> None:
         """Run coro without holding up the worker (the next prompt must not wait for it); kept until done."""
@@ -251,7 +320,8 @@ class Notifier:
 
     async def close(self) -> None:
         """Cancel background work and wait for it, so nothing uses the HTTP session after it is closed."""
-        tasks = list(self.tasks)
+        tasks = [*self.tasks, *self.polls.values(), *([self.worker] if self.worker else [])]
+        self.polls, self.worker, self._started = {}, None, False
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -281,10 +351,7 @@ class Notifier:
         ok = {}
         for name, res in zip(names, results, strict=True):
             if isinstance(res, Exception):
-                msg = str(res)
-                for secret in (self.tg_token, self.ntfy_token, self.gotify_token, self.po_token):
-                    msg = msg.replace(secret, "<token>") if secret else msg
-                log.warning("%s: sending %s failed: %s", name, what, msg)
+                log.warning("%s: sending %s failed: %s", name, what, self.redact(str(res)))
             else:
                 ok[name] = res
         return ok
@@ -713,7 +780,7 @@ class Notifier:
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
-                log.warning("telegram poll: %s", str(e).replace(self.tg_token, "<token>"))
+                log.warning("telegram poll: %s", self.redact(str(e)))
                 await asyncio.sleep(5)
 
     # ---------------------------------------------------------------- Matrix

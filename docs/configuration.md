@@ -46,7 +46,7 @@ All variables are optional. Secrets are created on first start when they are not
 | `AGENT_EXTRA_PACKAGES` | – | Only when building from source: extra Debian packages for the agent image, e.g. `build-essential golang-go`. With published images, use a [custom agent image](operations.md#custom-agent-image). |
 | `AGENT_MEM_LIMIT` | `6g` | Memory limit of the agent container. |
 | `AGENT_CPUS` | `0` | CPU limit of the agent container (e.g. `2`); `0` means no limit. See [resource limits](operations.md#resource-limits). |
-| `TELEGRAM_BOT_TOKEN` | – | Bot token from @BotFather. Enables Telegram approvals together with the chat ID. |
+| `TELEGRAM_BOT_TOKEN` | – | Bot token from @BotFather. Enables Telegram approvals together with the chat ID. This and the other notification variables below (Telegram, Matrix, ntfy, Gotify, Pushover) can also be set in the UI (*Setup → Notifications → Configure*); a value saved there overrides the variable, see [the user guide](user-guide.md#notification-channels-in-the-web-ui). |
 | `TELEGRAM_CHAT_ID` | – | Chat (user or group) that receives approval requests. |
 | `TELEGRAM_ALLOWED_USER_IDS` | – | **Required** for Telegram: comma-separated user IDs allowed to decide. Without it Telegram approvals stay disabled. |
 | `MATRIX_HOMESERVER` | – | e.g. `https://matrix.example.org`. |
@@ -396,7 +396,7 @@ one that `compose.yaml` does not list, add it to that service's `environment:` b
 | control | `AGENT_HOST`, `AGENT_STATUS_PORT`, `TERMINALS` | Agent address, status port, `name:port` list of ttyd consoles. |
 | control | `SESSION_TTL`, `LOG_LEVEL` | Session lifetime (s, default 12 h), log level. |
 | control | `SESSION_RECHECK` | Seconds between session re-checks of open event streams and consoles (10). |
-| control | `CONTROL_DATA` | Control state directory inside the container (`/data`): session secret, password hash, VAPID key, push subscriptions. Not the `.env` variable of the same name, which is the host path or volume mounted there. |
+| control | `CONTROL_DATA` | Control state directory inside the container (`/data`): session secret, password hash, VAPID key, push subscriptions, notification settings saved in the UI (`notify.json`). Not the `.env` variable of the same name, which is the host path or volume mounted there. |
 | control, agent | `TTYD_CREDENTIAL_FILE` | Credential file in the `ttyd` volume (`/run/tallygate/ttyd/credential`), used when `TTYD_CREDENTIAL` is not set. |
 | control | `GITHUB_API_URL` | Releases API base URL for the update check (the test suite points it at a mock server). |
 | control | `TELEGRAM_API_BASE`, `PUSHOVER_API_BASE` | API base URLs (the test suite points them at mock servers). |

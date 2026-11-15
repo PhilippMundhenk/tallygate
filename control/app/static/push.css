@@ -4,6 +4,17 @@
 #notifyChannels .notify-channel{padding:6px 0;border-bottom:1px solid var(--line)}
 #notifyChannels .notify-channel:last-child{border-bottom:0}
 #notifyChannels .notify-why{font-size:12px;margin-top:2px}
+#notifyChannels .notify-channel>.row-between{padding:0;border-bottom:0}
+/* channel settings (#201): a controls disclosure (plain caret, no help mark) with the fields of one channel */
+details.notify-config{margin:6px 0 2px}
+details.notify-config>summary{cursor:pointer;width:fit-content;font-size:13px;padding:2px 0}
+details.notify-config form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 14px;margin:8px 0 4px}
+details.notify-config label{margin:0}
+details.notify-config input{width:100%;margin:2px 0 0}
+details.notify-config .btns{grid-column:1/-1;margin-top:0}
+.notify-browser{margin:6px 0 2px}
+.notify-perm{font-size:13px;margin:2px 0 0}
+.notify-perm:empty{display:none}
 .tag.ok{border-color:var(--green);color:var(--green)}
 #pushSetup{margin-top:12px;border-top:1px solid var(--line);padding-top:4px}
 #pushSetup .push-device{padding:4px 0;border-bottom:1px solid var(--line)}

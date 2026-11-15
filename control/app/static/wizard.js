@@ -23,14 +23,14 @@ function gotoStep(id) {
 
 async function loadWizard() {
   const q = (p) => p.then((v) => ({ ok: true, v }), (e) => ({ ok: false, e }));
-  const [checks, info, sec, st, meta, pol] = await Promise.all([
+  const [checks, info, sec, st, meta, pol, ncfg] = await Promise.all([
     q(api("GET", "/api/setup/checks?origin=" + encodeURIComponent(location.origin))),
     q(gw("GET", "/info")), q(gw("GET", "/secrets")), q(api("GET", "/api/agent/status")),
-    q(api("GET", "/api/meta")), q(gw("GET", "/policy")),
+    q(api("GET", "/api/meta")), q(gw("GET", "/policy")), q(api("GET", "/api/notify/config")),
   ]);
   wz.secrets = sec.ok ? sec.v.names : null;
   renderAccess(checks); renderGateway(info, sec); renderToken(sec);
-  renderClaude(st); renderGit(st); renderRc(st); renderPolicy(pol); renderNotify(meta); renderSelftest();
+  renderClaude(st); renderGit(st); renderRc(st); renderPolicy(pol); renderNotify(meta, ncfg); renderSelftest();
   renderSummary();
   if (st.ok && !st.v.claude_logged_in && $("#clFlow").classList.contains("hidden")) {
     const l = await api("GET", "/api/agent/setup/claude-login").catch(() => null);  // resume a waiting login
@@ -112,13 +112,60 @@ function renderPolicy(pol) {
 // #180: one Notifications section. Each channel shows whether it is active and why, with a Test
 // button that sends a sample through just that channel (disabled, with the reason, when it is off).
 // notify_status is the rich per-channel detail; fall back to the plain bool map for older backends.
+// #201: each bot channel also has a "Configure" disclosure. Secrets are write-only: the backend only
+// says whether one is set and where it comes from, so a password field is always empty ("leave empty
+// to keep"). A text field holds the value saved in the UI; a value from the environment is shown as
+// the placeholder, and saving the field empty returns it to the environment.
 const CHANNEL_LABELS = { telegram: "Telegram", matrix: "Matrix", ntfy: "ntfy", gotify: "Gotify", pushover: "Pushover", webpush: "Web Push" };
 function notifyDetail(meta) {
   if (Array.isArray(meta.notify_status)) return meta.notify_status;
   const n = meta.notify || {};
   return Object.entries(CHANNEL_LABELS)
     .filter(([k]) => k in n)
-    .map(([k, label]) => ({ channel: k, label, configured: !!n[k], env_only: k !== "webpush", reason: n[k] ? "Configured." : "Off." }));
+    .map(([k, label]) => ({ channel: k, label, configured: !!n[k], source: null, reason: n[k] ? "Configured." : "Off." }));
+}
+const NOTIFY_SOURCE = { ui: "web UI", environment: "environment", mixed: "web UI + environment" };
+const FIELD_SOURCE = { ui: "saved in the web UI", environment: "from the environment", unset: "not set" };
+const notifyOpen = new Set();  // channels whose Configure disclosure is open: kept across re-renders
+
+function notifyConfigForm(c, label) {
+  const det = document.createElement("details"); det.className = "notify-config"; det.open = notifyOpen.has(c.channel);
+  det.addEventListener("toggle", () => (det.open ? notifyOpen.add(c.channel) : notifyOpen.delete(c.channel)));
+  const sum = document.createElement("summary"); sum.textContent = "Configure";
+  sum.setAttribute("aria-label", `Configure ${label}`);
+  const form = document.createElement("form"); form.autocomplete = "off";
+  for (const f of c.fields) {
+    const lab = document.createElement("label"); lab.append(f.label + (f.required ? "" : " (optional)"));
+    const input = document.createElement("input");
+    input.name = f.name; input.type = f.secret ? "password" : "text"; input.maxLength = 2048;
+    input.autocomplete = f.secret ? "new-password" : "off"; input.spellcheck = false;
+    if (f.secret) input.placeholder = f.set ? "stored – leave empty to keep" : "";
+    else if (f.source === "ui") input.value = f.value || "";
+    else if (f.source === "environment") input.placeholder = `${f.value} (environment)`;
+    const small = document.createElement("small");
+    small.textContent = [f.hint, `${FIELD_SOURCE[f.source] || f.source}${f.source === "environment" ? ` (${f.env})` : ""}`].filter(Boolean).join(" · ");
+    lab.append(input, small); form.appendChild(lab);
+  }
+  const btns = document.createElement("div"); btns.className = "btns";
+  const save = document.createElement("button"); save.type = "submit"; save.className = "small"; save.textContent = "Save";
+  save.setAttribute("aria-label", `Save the ${label} settings`);
+  const remove = document.createElement("button"); remove.type = "button"; remove.className = "small secondary"; remove.textContent = "Remove override";
+  remove.setAttribute("aria-label", `Remove the ${label} settings saved in the web UI`);
+  remove.disabled = !c.override;
+  remove.title = c.override ? "" : "Nothing is saved in the web UI for this channel.";
+  btns.append(save, remove); form.appendChild(btns);
+  form.addEventListener("submit", guard(async (e) => {
+    e.preventDefault();
+    const body = {}; for (const f of c.fields) body[f.name] = form.elements[f.name].value;
+    await api("PUT", `/api/notify/config/${encodeURIComponent(c.channel)}`, body);
+    toast(`${label} settings saved and applied`); await loadWizard();
+  }));
+  remove.onclick = confirmClick(remove, `Delete what the web UI saved for ${label}? The channel falls back to the environment, or switches off.`, async () => {
+    await api("DELETE", `/api/notify/config/${encodeURIComponent(c.channel)}`);
+    toast(`${label}: web UI settings removed`); await loadWizard();
+  });
+  det.append(sum, form);
+  return det;
 }
 
 async function notifyTest(c) {
@@ -130,23 +177,34 @@ async function notifyTest(c) {
   toast(`${c.label} test notification sent`);
 }
 
-function renderNotify(meta) {
+function renderNotify(meta, ncfg) {
   if (!meta.ok) return step("st-notify", "info", esc(meta.e.message), "bad");
   const detail = notifyDetail(meta.v);
+  const cfg = ncfg && ncfg.ok && Array.isArray(ncfg.v.channels) ? ncfg.v : null;  // null: an older backend
+  const ro = $("#notifyReadonly");
+  if (ro) {
+    ro.textContent = cfg && !cfg.writable
+      ? "The control data volume is not writable, so channels cannot be saved here: configure them in the environment." : "";
+    ro.classList.toggle("hidden", !ro.textContent);
+  }
   const box = $("#notifyChannels");
   if (box) {
     box.innerHTML = "";
     for (const c of detail) {
-      const row = document.createElement("div"); row.className = "row-between notify-channel";
+      const item = document.createElement("div"); item.className = "notify-channel";
+      const row = document.createElement("div"); row.className = "row-between";
       const info = document.createElement("div");
       info.innerHTML = `<b>${esc(c.label)}</b> <span class="tag ${c.configured ? "ok" : "warn"}">${c.configured ? "active" : "off"}</span>`
-        + (c.env_only ? ' <span class="muted">· environment-only</span>' : "")
+        + (NOTIFY_SOURCE[c.source] ? ` <span class="muted notify-source">· ${NOTIFY_SOURCE[c.source]}</span>` : "")
         + `<div class="muted notify-why">${esc(c.reason)}</div>`;
       const btn = document.createElement("button"); btn.className = "small secondary notify-test"; btn.textContent = "Test";
       btn.setAttribute("aria-label", `Send a test notification through ${c.label}`);
       if (!c.configured) { btn.disabled = true; btn.title = c.reason; }
       else btn.onclick = guard(() => notifyTest(c));
-      row.append(info, btn); box.appendChild(row);
+      row.append(info, btn); item.appendChild(row);
+      const conf = cfg && cfg.writable && cfg.channels.find((x) => x.channel === c.channel);
+      if (conf) item.appendChild(notifyConfigForm(conf, c.label));
+      box.appendChild(item);
     }
   }
   const active = detail.filter((c) => c.configured).length;
@@ -282,18 +340,41 @@ $("#selftestBtn").onclick = guard(async () => {
   renderSelftest(); renderSummary();
 });
 
-// Browsers only show the permission prompt after a user gesture, so it is asked from a button.
+// Browser notifications (#201). Browsers only show the permission prompt after a user gesture, so it is
+// asked from a button, and they refuse notifications outside a secure context (HTTPS or localhost), so that
+// is said first. When the site is blocked the button stays: some browsers ask again, the others answer
+// "denied" at once, and the text says where to allow it without naming one browser's icons.
+const NOTIFY_BLOCKED = "Blocked in this browser for this site. Allow notifications in the site permissions "
+  + "(address bar → site information / permissions), then reload.";
 function showNotifyPerm() {
-  const supported = "Notification" in window;
-  const hide = !supported || Notification.permission !== "default";
-  $$(".notify-btn").forEach((b) => b.classList.toggle("hidden", hide));
-  const text = !supported ? "not supported by this browser"
-    : Notification.permission === "granted" ? "browser notifications are on"
-    : Notification.permission === "denied"
-      ? "Blocked for this site, so the browser will not ask again. To switch it on: click the lock / ⓘ icon left of "
-        + "the address bar → Site settings → Notifications → Allow, then reload this page."
-      : "";
+  const supported = "Notification" in window, secure = !!window.isSecureContext;
+  const perm = supported ? Notification.permission : "";
+  const ask = secure && supported && perm !== "granted", on = secure && perm === "granted";
+  $$(".notify-btn").forEach((b) => b.classList.toggle("hidden", !ask));
+  $$(".notify-local-test").forEach((b) => b.classList.toggle("hidden", !on));
+  const text = !secure ? "Browser notifications need HTTPS (or localhost): open the UI through your TLS reverse proxy."
+    : !supported ? "This browser does not support notifications."
+    : on ? "Browser notifications are on"
+    : perm === "denied" ? NOTIFY_BLOCKED : "";
   $$(".notify-perm").forEach((e) => (e.textContent = text));  // one Notifications section since #180
 }
-$$(".notify-btn").forEach((b) => (b.onclick = guard(async () => { await Notification.requestPermission(); showNotifyPerm(); })));
+$$(".notify-btn").forEach((b) => (b.onclick = guard(async () => {
+  const before = Notification.permission, result = await Notification.requestPermission();
+  showNotifyPerm();
+  if (result === "granted") toast("Browser notifications are on");
+  else if (before === "denied") toast("Still blocked: the browser did not ask again. Allow notifications in the site permissions, then reload.", true);
+})));
+// A local notification, no server involved. Android browsers only allow them through the service worker.
+async function localNotification(title, options) {
+  try { new Notification(title, options); } catch (e) {
+    const reg = "serviceWorker" in navigator ? await navigator.serviceWorker.getRegistration() : null;
+    if (!reg) throw e;
+    await reg.showNotification(title, options);
+  }
+}
+$$(".notify-local-test").forEach((b) => (b.onclick = guard(async () => {
+  if (!("Notification" in window) || Notification.permission !== "granted") { showNotifyPerm(); throw new Error("Notifications are not allowed for this site"); }
+  await localNotification("tallygate", { body: "Test notification: browser notifications work.", tag: "tallygate-test" });
+  toast("Test notification sent");
+})));
 showNotifyPerm();
