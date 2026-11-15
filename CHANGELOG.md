@@ -84,6 +84,15 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - CI: actions pinned to commit SHAs, base images by digest, gitleaks secret scan, Trivy image scan (#18).
 
 ### Added
+- **Test and status for every notification channel** (#180): *Setup → Notifications* is now one section (the
+  wizard step and the old standalone card are folded together). Each channel (Telegram, Matrix, ntfy, Gotify,
+  Pushover, Web Push) shows whether it is active and, when off, why — e.g. the environment variables still to
+  set — with the bot channels marked *environment-only*. A **Test** button on each active channel sends a short
+  "tallygate test" through just that channel and reports the result (`POST /api/notify/test` with `{"channel"}`
+  for the bot channels, through the notifier's normal sender; Web Push keeps `POST /api/push/test`). UI
+  configuration of the bot-channel secrets stays out of scope: the notifier reads its config once at startup
+  and owns long-lived poll loops, so a write-back store would be a larger change; the channels remain
+  environment-configured and the UI says so.
 - **Behaviour settings in the UI** (ADR-0015): the gateway's tunables — log retention, learning-mode ports and
   limit, rule-suggestion thresholds, grant-request timeout and cap, policy-history depth, pending caps — are
   edited under *Setup → Behaviour settings* (`GET`/`PATCH /settings`) and persisted to a backend-owned

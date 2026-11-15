@@ -18,7 +18,6 @@
     <div class="row wrap" id="pushControls">
       <label class="inline">This device <input id="pushLabel" maxlength="40" placeholder="e.g. phone" autocomplete="off"></label>
       <button id="pushOn" class="secondary">Turn on notifications on this device</button>
-      <button id="pushTest" class="small secondary">Send a test</button>
     </div>
     <div id="pushDevices"></div>`;
 
@@ -40,7 +39,6 @@
       row.appendChild(b); list.appendChild(row);
     }
     if (!st.subscriptions.length) list.innerHTML = '<p class="muted">No device receives push notifications yet.</p>';
-    $("#pushTest").classList.toggle("hidden", !st.subscriptions.length);
     return st;
   }
 
@@ -61,10 +59,8 @@
     const label = $("#pushLabel").value.trim() || (/Mobi|Android/.test(navigator.userAgent) ? "phone" : "browser");
     await api("POST", "/api/push/subscribe", { subscription: sub.toJSON(), label });
     toast(`Notifications on for ${label}`); await load();
-  });
-  $("#pushTest").onclick = guard(async () => {
-    const r = await api("POST", "/api/push/test", {});
-    toast(`Test sent to ${r.delivered} device(s)`);
+    // Refresh the Setup channel list so the Web Push row (and its Test button) reflects the new device.
+    if (typeof tabHooks !== "undefined" && tabHooks.setup) tabHooks.setup().catch(() => {});
   });
 
   if (!secure) {

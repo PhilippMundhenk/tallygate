@@ -343,20 +343,20 @@
           time. The local network and the always-blocked ranges stay closed.</p>
         <div class="row"><button id="wzLearn" class="secondary">Learn from a first task&hellip;</button></div>
         <div class="status"></div></li>
-      <li id="st-notify"><h3 tabindex="-1">Phone notifications <span class="step-state"></span></h3>
+      <li id="st-notify"><h3 tabindex="-1">Notifications <span class="step-state"></span></h3>
         <div id="notifyStatus" class="muted notify-status"></div>
-        <p class="hint">Telegram and Matrix are set up in the environment (<a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#telegram-approvals" target="_blank" rel="noopener">how</a>).
-          Browser notifications appear for new requests while this tab is in the background.</p>
+        <p class="hint">Approval prompts are delivered through the channels below. The bot channels (Telegram, Matrix,
+          ntfy, Gotify, Pushover) are configured in the environment (<a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#telegram-approvals" target="_blank" rel="noopener">how</a>);
+          Web Push is set up on this device below. Use <b>Test</b> to send a sample through a channel.</p>
+        <div id="notifyChannels"></div>
+        <p class="hint">Browser notifications also appear for new requests while this tab is in the background.</p>
         <button id="notifyBtn" class="secondary notify-btn">Enable browser notifications</button> <span id="notifyPerm" class="muted notify-perm"></span>
+        <div id="pushSetup"></div>
         <div class="status"></div></li>
       <li id="st-test" data-required="1"><h3 tabindex="-1">Isolation self-test <span class="step-state"></span></h3>
         <p class="hint">Runs inside the agent: direct internet, raw TCP, UDP DNS, LAN via proxy, gateway API and control UI must all be <b>blocked</b>; the proxy path to Anthropic must work.</p>
         <button id="selftestBtn">Run self-test</button><div class="status"></div></li>
     </ol>
-    <div class="card"><h3>Notifications</h3><div id="notifyStatusCard" class="muted notify-status"></div>
-      <p class="hint">Browser notifications appear for new requests while this tab is in the background.</p>
-      <button id="notifyBtnCard" class="secondary notify-btn">Enable browser notifications</button> <span id="notifyPermCard" class="muted notify-perm"></span>
-      <div id="pushSetup"></div></div>
   </section>
 </main>
 </div>

@@ -1,4 +1,10 @@
 /* phone approvals (#72) */
+/* notification channels list (#180) */
+#notifyChannels{margin:8px 0}
+#notifyChannels .notify-channel{padding:6px 0;border-bottom:1px solid var(--line)}
+#notifyChannels .notify-channel:last-child{border-bottom:0}
+#notifyChannels .notify-why{font-size:12px;margin-top:2px}
+.tag.ok{border-color:var(--green);color:var(--green)}
 #pushSetup{margin-top:12px;border-top:1px solid var(--line);padding-top:4px}
 #pushSetup .push-device{padding:4px 0;border-bottom:1px solid var(--line)}
 #pushSetup label.inline{max-width:320px}

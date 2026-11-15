@@ -329,6 +329,53 @@ def test_revoking_a_grant_is_attributed_to_the_session_user(load):
     ]
 
 
+def test_notify_test_routes_to_one_channel_and_reports_failures(load):
+    main = load()
+
+    async def body():
+        async with started(main, World()) as c:
+            n = c.app["notifier"]
+            calls = []
+
+            async def tg(method, **params):
+                calls.append((method, params))
+
+            n._tg, n.tg_token, n.tg_chat = tg, "t", "9"  # mark Telegram configured for describe()
+            r = await c.post("/api/notify/test", json={"channel": "telegram"}, headers=CSRF)
+            assert r.status == 200 and (await r.json())["channel"] == "telegram" and calls
+            assert (await c.post("/api/notify/test", json={"channel": "ntfy"}, headers=CSRF)).status == 400  # off
+            assert (await c.post("/api/notify/test", json={"channel": "bogus"}, headers=CSRF)).status == 400
+            assert (await c.post("/api/notify/test", json={}, headers=CSRF)).status == 400  # no channel
+
+            async def boom(method, **params):
+                raise RuntimeError("telegram sendMessage: upstream is down")
+
+            n._tg = boom
+            r = await c.post("/api/notify/test", json={"channel": "telegram"}, headers=CSRF)
+            assert r.status == 502 and "down" in (await r.json())["error"]
+
+    run(body())
+
+
+def test_meta_carries_per_channel_notification_status(load):
+    main = load()
+
+    async def body():
+        async with started(main, World()) as c:
+            meta = await (await c.get("/api/meta")).json()
+            assert "notify" in meta and isinstance(meta["notify_status"], list)
+            assert {c["channel"] for c in meta["notify_status"]} == {
+                "telegram",
+                "matrix",
+                "ntfy",
+                "gotify",
+                "pushover",
+                "webpush",
+            }
+
+    run(body())
+
+
 def test_mode_patch_and_emergency_stop_are_relayed_and_attributed(load):
     main = load()
     world = World()
