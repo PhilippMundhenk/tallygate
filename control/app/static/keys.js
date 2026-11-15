@@ -17,7 +17,9 @@ const KEYS = [["j", "next request"], ["k", "previous request"], ["a", "Allow 5 m
   opts.innerHTML = box("optKeys", "Keyboard shortcuts", "j/k select, a/d decide, ? lists the keys")
     + box("optCompact", "Compact list", "One line per connection request")
     + box("optSound", "Sound", "A short tone when a request arrives while this tab is in the background")
-    + '<button id="keysBtn" class="small secondary" aria-haspopup="dialog">Keys (?)</button>';
+    // The keyboard cheat-sheet stays a modal dialog (a full reference, reachable anywhere via "?"), but its trigger
+    // uses the shared .help-trigger look so it reads as help like every details.help disclosure (#178).
+    + '<button id="keysBtn" class="help-trigger" aria-haspopup="dialog" title="Keyboard shortcuts (press ?)">Keyboard shortcuts</button>';
   const dlg = document.createElement("dialog"); dlg.id = "keysHelp"; dlg.setAttribute("aria-labelledby", "keysTitle");
   dlg.innerHTML = `<h3 id="keysTitle">Keyboard shortcuts</h3><dl class="fieldhelp">${KEYS.map(([k, t]) => `<dt><kbd>${esc(k)}</kbd></dt><dd>${esc(t)}</dd>`).join("")}</dl>
     <p class="hint">On the Approvals tab, outside text fields. a and d act on the selected request; without a

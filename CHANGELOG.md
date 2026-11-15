@@ -212,6 +212,12 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   prefix (#116).
 
 ### Changed
+- **One help affordance across the control UI (#178):** every in-place "more detail" trigger is now the same
+  `<details class="help">` disclosure, marked with a muted ⓘ and a caret so it reads as help; the old
+  `Keys (?)` button keeps its modal (a full keyboard reference) but its trigger now matches that look. The
+  longest inline explanations on the Approvals, Quick start, Grants and Settings surfaces moved into that
+  collapsible help so the default view is terse, and a duplicated "what stays in the gateway config" note was
+  removed. No behaviour, IDs or copy were lost — only relocated.
 - **The never-reachable deny floor is shown and edited in the one Destinations table (ADR-0017, #177):** every
   blocked range is listed with its reason; an authenticated admin may unblock a LAN, cloud-metadata or own
   `hard_deny` range for normal connections (a new `floor_open` policy field) behind a per-range confirmation,

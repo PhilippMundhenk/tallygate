@@ -82,7 +82,17 @@ label.inline{display:flex;gap:6px;align-items:center;margin:0;flex:1;min-width:1
 button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:2px solid #93c5fd;outline-offset:2px}
 @media(max-width:600px){main{padding:10px}.portw,.port{width:100%}.target-row .t-address,.inject-row .i-host,.inject-row .i-header{width:100%}pre{word-break:break-word}code{word-break:break-all}}
 .templates{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}.tpl{border:1px solid var(--line);border-radius:8px;padding:10px}.tpl code{font-size:11px;overflow-wrap:anywhere}#quick button[aria-pressed=true]{outline:2px solid var(--blue)}#qaActive .row{margin:4px 0}
-details.help{margin:6px 0 10px;font-size:13px;color:var(--muted)}details.help summary{cursor:pointer;color:var(--blue)}details.help ul{margin:6px 0;padding-left:18px}details.help li{margin:3px 0}details.help a{color:var(--blue)}.fieldhelp{display:grid;grid-template-columns:max-content 1fr;gap:3px 10px;font-size:12px;color:var(--muted);margin:8px 0}.fieldhelp dt{font-weight:600}.fieldhelp dd{margin:0}label small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+/* The one in-place help affordance (#178): a details.help disclosure marked with a muted ⓘ and a caret, so every
+   "more help" trigger reads the same. .help-trigger gives the Keys modal button the same look (its content is a full
+   keyboard reference, better as a dialog than an inline disclosure). */
+details.help{margin:6px 0 10px;font-size:13px;color:var(--muted)}
+details.help>summary,.help-trigger{cursor:pointer;color:var(--blue);display:inline-flex;align-items:center;gap:5px;width:fit-content;list-style:none}
+details.help>summary::-webkit-details-marker{display:none}
+details.help>summary::before,.help-trigger::before{content:"ⓘ";color:var(--muted);font-style:normal;font-weight:400}
+details.help>summary::after{content:"▸";color:var(--muted);font-size:10px}
+details.help[open]>summary::after{content:"▾"}
+.help-trigger{background:none;border:0;padding:0;font:inherit;font-size:13px}
+details.help ul{margin:6px 0;padding-left:18px}details.help li{margin:3px 0}details.help a{color:var(--blue)}.fieldhelp{display:grid;grid-template-columns:max-content 1fr;gap:3px 10px;font-size:12px;color:var(--muted);margin:8px 0}.fieldhelp dt{font-weight:600}.fieldhelp dd{margin:0}label small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
 button.armed{outline:2px solid var(--amber);outline-offset:2px}.confirm-q{color:var(--amber);font-size:12px;flex-basis:100%}
 .banner{margin:0;padding:8px 16px;font-size:13px;background:#2a2108;border-bottom:1px solid var(--amber)}.banner a{color:var(--amber)}
 /* policy history (#71) */
