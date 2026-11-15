@@ -42,7 +42,10 @@ def gw(tmp_path, monkeypatch):
         )
     )
     (tmp_path / "policy.yaml").write_text(
-        yaml.safe_dump({"default": "ask", "rules": [{"id": "ok", "action": "allow", "host": "ok.example"}]})
+        # the current form (ADR-0019); the built-in blocks are seeded below the rule at the first start
+        yaml.safe_dump(
+            {"default": "ask", "seeded": [], "rules": [{"id": "ok", "action": "allow", "host": "ok.example"}]}
+        )
     )
     g = core.Gateway()
     g.api_token = TOKEN
@@ -103,8 +106,8 @@ def test_destinations_crud_for_rules_and_grants(gw):
 
 
 def test_destinations_api_cannot_set_file_only_grant_properties(gw):
-    # ADR-0014 trust split (#137): the API/UI may not set credentials, lan (outside lan_allow) or
-    # tls_verify:false, and may not change a config-file grant. Only the read-only config file may.
+    # ADR-0014 trust split (#137): the API/UI may not set credentials or tls_verify:false, and may not change a
+    # config-file grant. Only the read-only config file may. (`lan` is gone, ADR-0019: read and ignored.)
     base = {"targets": [{"host": "x.example", "port": 443}], "levels": ["read"], "approval": {"read": "ask"}}
     creds = {**base, "inject": [{"host": "x.example", "header": "Authorization", "value": "Bearer ${tok}"}]}
     assert admin(gw, "PUT", "/destinations/grant/withcreds", creds)[0] == 400  # credential injection is file-only
@@ -119,7 +122,8 @@ def test_destinations_api_cannot_set_file_only_grant_properties(gw):
         "levels": ["read"],
         "approval": {"read": "ask"},
     }
-    assert admin(gw, "PUT", "/destinations/grant/lanone", lanone)[0] == 400  # LAN needs lan_allow in the config
+    status, saved = admin(gw, "PUT", "/destinations/grant/lanone", lanone)  # accepted, the flag is dropped
+    assert status == 200 and saved["targets"] == [{"host": "x.example", "port": 443, "scheme": "https", "paths": ["/*"]}]
     assert admin(gw, "PUT", "/destinations/grant/nas", base)[0] == 400  # nas is a config-file grant, read-only here
     assert admin(gw, "PUT", "/destinations/grant/ok2", base)[0] == 200 and gw.grants.defs["ok2"].source == "ui"
     # the same credential injection smuggled through POST /destinations (a single-target request) is refused too
@@ -147,8 +151,10 @@ def test_settings_get_and_patch(gw):
 
 def test_model_endpoint_returns_the_whole_destination_model(gw):
     status, model = admin(gw, "GET", "/model")
-    assert status == 200 and set(model) == {"default", "destinations", "never"}
+    assert status == 200 and set(model) == {"default", "destinations", "locked"}
     assert model["default"] == gw.policy.default
+    rules = [d["id"] for d in model["destinations"] if d.get("access") in ("allow", "ask", "deny")]
+    assert rules == [r.id for r in gw.policy.rules] and rules[0] == "ok" and rules[1].startswith("block-")
     accesses = [d for d in model["destinations"] if d.get("access")]
     assert any(d["match"].get("host") == "ok.example" and d["access"] == "allow" for d in accesses)
 
@@ -261,7 +267,11 @@ def test_policy_test_endpoint_never_resolves_names_that_are_not_allowed(gw, monk
 
 def test_policy_test_endpoint_with_ips(gw):
     body = admin(gw, "POST", "/test", {"host": "192.168.1.1", "port": 80})[1]
-    assert body["action"] == "deny" and body["rule_id"] == "hard_deny" and body["ips"] == ["192.168.1.1"]
+    assert body["action"] == "deny" and body["rule_id"] == "block-192.168.0.0_16" and body["ips"] == ["192.168.1.1"]
+    # the deciding rule and its position in the list come with the answer
+    assert body["rule"] == {"id": "block-192.168.0.0_16", "action": "deny", "cidr": "192.168.0.0/16",
+                            "note": "built-in block", "source": "builtin"}  # fmt: skip
+    assert gw.policy.rules[body["pos"] - 1].id == body["rule_id"] and body["shadow"] is None
     assert admin(gw, "POST", "/test", {})[0] == 400  # missing host
 
 
@@ -278,14 +288,13 @@ def _has(rows, **kw):
     return [r for r in rows if all(r.get(k) == v for k, v in kw.items())]
 
 
-def test_never_reachable_lists_every_source(tmp_path, monkeypatch, gw):
-    # one read-only list for the UI. The fixture's gateway has no extra configuration.
+def test_never_reachable_is_what_is_locked_and_config_never_entries_are_rules(tmp_path, monkeypatch, gw):
+    # ADR-0019: what no rule can open is the locked list. The fixture's gateway has no stack networks; its
+    # listeners bind to 127.0.0.1 with the default ports.
     status, rows = admin(gw, "GET", "/never-reachable")
-    assert status == 200 and {r["source"] for r in rows} == {"builtin"}
-    # ADR-0017: every row carries removable/open; the built-in floor is removable and nothing is open.
-    assert all(set(r) == {"range", "source", "scope", "removable", "open"} for r in rows)
-    assert _has(rows, range="10.0.0.0/8", source="builtin", scope="all", removable=True, open=False)
-    assert _has(rows, range="127.0.0.0/8", source="builtin", scope="all+lan", removable=True)  # LAN grants too
+    assert status == 200 and {r["source"] for r in rows} == {"listener"}
+    assert all(set(r) == {"range", "source", "reason"} for r in rows)
+    assert _has(rows, range="127.0.0.1:8081", reason="the gateway's own listener")
     assert admin(gw, "GET", "/never-reachable", auth=False)[0] == 401
 
     cfg = {
@@ -298,32 +307,91 @@ def test_never_reachable_lists_every_source(tmp_path, monkeypatch, gw):
     monkeypatch.setenv("GW_INTERNAL_NETS", "172.31.11.0/24")
     monkeypatch.setenv("GW_API_HOST", "172.31.11.2")
     monkeypatch.setenv("GW_API_PORT", "8081")
-    monkeypatch.delenv("GW_LISTEN_HOST", raising=False)
+    monkeypatch.setenv("GW_LISTEN_HOST", "172.31.10.2")
     g = core.Gateway()
-    assert g.old_never_keys == ["hard_deny_floor", "grants_never"]
-    rows = g.never_reachable()
-    cfg_rows = {r["range"]: r["scope"] for r in rows if r["source"] == "config"}
-    assert cfg_rows == {
-        "8.8.8.0/24": "all",
-        "8.8.4.0/24": "all",
-        "192.168.50.0/24": "all+lan",
-        "192.168.60.0/24": "all+lan",
-    }
-    assert len(_has(rows, range="10.0.0.0/8", source="builtin", scope="all")) == 1  # listed once, as built in
-    assert [r["range"] for r in rows if r["source"] == "policy"] == ["9.9.9.9/32"]
-    assert {r["range"]: r["scope"] for r in rows if r["source"] in ("stack", "listener")} == {
-        "172.31.11.0/24": "all+lan",
-        "172.31.11.2:8081": "all+lan",
-    }
-    assert len({r["range"] for r in rows}) == len(rows)  # every range once
-    # ADR-0017: the scope-all floor and the policy addition are removable; the stack and the gateway's own
-    # listener stay locked.
-    assert _has(rows, range="9.9.9.9/32", source="policy", removable=True)
-    assert _has(rows, range="8.8.8.0/24", source="config", removable=True)
-    assert not _has(rows, source="stack", removable=True) and not _has(rows, source="listener", removable=True)
-    # an all+lan range closes every connection too, and every grant
-    assert g.policy.hard_denied("x", 443, ["192.168.60.5"]) and g.policy.hard_denied("x", 443, ["8.8.8.8"])
-    assert [str(n) for n in g.grants.never_configured] == ["192.168.50.0/24", "192.168.60.0/24"]
+    assert g.old_never_keys == ["scope all+lan", "hard_deny_floor", "grants_never"]
+    assert [(r["range"], r["source"]) for r in g.never_reachable()] == [
+        ("172.31.11.0/24", "stack"),
+        ("172.31.11.2:8081", "listener"),
+        ("172.31.10.2:8079", "listener"),
+        ("172.31.10.2:3128", "listener"),
+        ("172.31.10.2:1080", "listener"),
+    ]
+    # every `never` entry, whatever key or scope it was written with, is one deny rule (source config), seeded
+    # below the built-in blocks; 10.0.0.0/8 is built in and listed once, as that
+    cfg_rules = [r.cidr for r in g.policy.rules if r.source == "config"]
+    assert cfg_rules == ["8.8.8.0/24", "192.168.50.0/24", "8.8.4.0/24", "192.168.60.0/24"]
+    assert g.blocks_config == cfg_rules and [r.source for r in g.policy.rules if r.cidr == "10.0.0.0/8"] == ["builtin"]
+    assert len({r.cidr for r in g.policy.rules}) == len(g.policy.rules)  # every range once
+    # the policy's old hard_deny extra is the operator's own deny rule, above the blocks
+    assert (g.policy.rules[0].id, g.policy.rules[0].cidr, g.policy.rules[0].source) == ("block-9.9.9.9_32", "9.9.9.9/32", "user")
+    for ip in ("192.168.60.5", "8.8.8.8", "9.9.9.9", "10.1.1.1"):
+        assert g.policy.evaluate("x.example", 443, [ip]).action == "deny", ip
+    assert g.policy.evaluate("x.example", 443, ["172.31.11.9"]).rule_id == "locked"
+
+
+def test_move_api_and_its_validation(gw):
+    for host in ("a.example", "b.example"):
+        admin(gw, "POST", "/destinations", {"match": {"host": host}, "access": "allow", "id": host[0]})
+    order = lambda: [r.id for r in gw.policy.rules if r.source == "user"]  # noqa: E731
+    assert order() == ["b", "a", "ok"]  # new rules go to the top
+    status, r = admin(gw, "POST", "/destinations/ok/move", {"before": "b"})
+    assert status == 200 and r["order"][:3] == ["ok", "b", "a"] and r["order"] == [x.id for x in gw.policy.rules]
+    assert gw.history.versions()[0]["what"] == "rule ok moved before b"
+    assert gw.events.recent(1)[0]["reason"] == "rule ok moved before b"
+    # the built-in blocks are rules: one can be moved above an allow, and an allow below the last block
+    assert admin(gw, "POST", "/destinations/block-10.0.0.0_8/move", {"before": "ok"})[0] == 200
+    assert gw.policy.rules[0].id == "block-10.0.0.0_8"
+    status, r = admin(gw, "POST", "/destinations/a/move", {"before": None})
+    assert status == 200 and r["order"][-1] == "a" and gw.history.versions()[0]["what"] == "rule a moved to the end"
+    saved = yaml.safe_load((core.DATA_DIR / "policy.yaml").read_text())
+    assert [d["id"] for d in saved["destinations"]] == r["order"]  # the order is what is stored
+    before = [x.id for x in gw.policy.rules]
+    for did, body, status, error in (
+        ("nope", {"before": "ok"}, 404, "not found"),
+        ("ok", {"before": "nope"}, 400, "no rule 'nope'"),
+        ("ok", {"before": "ok"}, 400, "before itself"),
+        ("ok", {"before": "locked"}, 400, "no rule 'locked'"),  # the locked rows have no position to take
+        ("ok", {"before": 3}, 400, "rule id or null"),
+        ("ok", {"before": ["b"]}, 400, "rule id or null"),
+        ("ok", {}, 400, "expected {before"),
+        ("ok", {"before": "b", "after": "a"}, 400, "expected {before"),
+        ("ok", ["b"], 400, "expected {before"),
+        ("grant:nas", {"before": "ok"}, 400, "only rules have a position"),
+        ("locked", {"before": "ok"}, 404, "not found"),
+    ):
+        got, data = admin(gw, "POST", f"/destinations/{did}/move", body)
+        assert got == status and error in data["error"], (did, body, data)
+    assert [x.id for x in gw.policy.rules] == before
+    assert admin(gw, "POST", "/destinations/ok/move", {"before": "b"}, auth=False)[0] == 401
+
+
+def test_restore_blocks_api(gw):
+    assert admin(gw, "POST", "/destinations/restore-blocks")[1] == {"added": []}
+    assert admin(gw, "DELETE", "/destinations/block-192.168.0.0_16")[0] == 200
+    assert admin(gw, "PATCH", "/destinations/block-10.0.0.0_8", {"access": "allow"})[0] == 200
+    assert gw.policy.evaluate("192.168.1.1", 80, []).reason == "default"
+    status, r = admin(gw, "POST", "/destinations/restore-blocks")
+    assert status == 200 and [(x["id"], x["cidr"]) for x in r["added"]] == [
+        ("block-10.0.0.0_8-2", "10.0.0.0/8"),
+        ("block-192.168.0.0_16", "192.168.0.0/16"),
+    ]
+    assert [x.id for x in gw.policy.rules[-2:]] == ["block-10.0.0.0_8-2", "block-192.168.0.0_16"]  # at the bottom
+    assert gw.policy.evaluate("192.168.1.1", 80, []).action == "deny"
+    assert gw.history.versions()[0]["what"] == "2 built-in block(s) restored"
+    assert "10.0.0.0/8, 192.168.0.0/16" in gw.events.recent(1)[0]["reason"]
+    assert admin(gw, "POST", "/destinations/restore-blocks", auth=False)[0] == 401
+
+
+def test_an_address_typed_as_a_host_becomes_an_address_rule(gw):
+    # "An allow rule for a local address silently did nothing": typed into the host field it is still an address
+    status, d = admin(gw, "POST", "/destinations", {"match": {"host": "192.168.1.5", "port": 8123}, "access": "allow"})
+    assert status == 201 and d["match"] == {"cidr": "192.168.1.5/32", "port": 8123}
+    assert gw.policy.evaluate("192.168.1.5", 8123, []).action == "allow"
+    assert gw.policy.evaluate("ha.lan", 8123, ["192.168.1.5"]).action == "allow"
+    status, d = admin(gw, "POST", "/destinations", {"match": {"host": "[FD00::5]"}, "access": "deny"})
+    assert status == 201 and d["match"] == {"cidr": "fd00::5/128"}
+    assert admin(gw, "POST", "/destinations", {"match": {"host": "x.example"}, "access": "allow", "id": "ok"})[0] == 400
 
 
 @pytest.mark.parametrize(

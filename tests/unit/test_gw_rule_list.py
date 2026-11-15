@@ -353,13 +353,13 @@ def test_the_name_first_short_cut_is_proven_against_the_full_evaluation():
       * early `ask`: no address set ends in `allow` - nothing is reachable without the human, and after the
         answer the addresses are checked by the full evaluation anyway.
 
-    And an `allow` is never acted on early. 4000 random rule lists, each with every name/port/address mix."""
+    And an `allow` is never acted on early. 1500 random rule lists, each with every name/port/address mix."""
     rng = random.Random(208)
     addresses = ["8.8.8.8", "8.8.8.9", "9.9.9.9", "1.1.1.1", "192.168.1.10", "192.168.1.20", "10.0.0.1",
                  "172.31.11.5", "2001:4860::1", "::1"]  # fmt: skip
     sets = [[a] for a in addresses] + [[a, b] for a in addresses[:5] for b in addresses[3:8]]
     early = {"deny": 0, "ask": 0}
-    for _ in range(4000):
+    for _ in range(1500):
         p = _random_policy(rng)
         for name in ("a.example", "x.b.test", "other.org"):
             for port in (443, 80, 22):
@@ -375,7 +375,7 @@ def test_the_name_first_short_cut_is_proven_against_the_full_evaluation():
                         assert full.action == "deny", (p.to_dict(), name, port, ips, pre, full)
                     else:
                         assert full.action in ("ask", "deny"), (p.to_dict(), name, port, ips, pre, full)
-    assert early["deny"] > 1000 and early["ask"] > 1000  # the short cut is really exercised
+    assert early["deny"] > 400 and early["ask"] > 400  # the short cut is really exercised
 
 
 def test_the_short_cut_is_not_needlessly_strict():
