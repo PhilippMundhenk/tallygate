@@ -192,9 +192,9 @@ One tab for everything about a destination — access rules, on-request grants, 
 
 ### Shortcuts
 
-The shortcuts, the per-ecosystem templates and learning mode are on the **Quick start** tab:
+The shortcuts, the per-ecosystem templates and learning mode are on the **Quick settings** tab:
 
-![Quick start](images/quickstart.png)
+![Quick settings](images/quickstart.png)
 
 | Action | What it does | Undo |
 |---|---|---|

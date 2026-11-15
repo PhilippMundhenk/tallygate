@@ -19,14 +19,14 @@
   <nav id="tabs" role="tablist" aria-label="Sections" aria-orientation="vertical">
     <button data-tab="overview" id="tabbtn-overview" role="tab" aria-selected="false" aria-controls="tab-overview">Overview</button>
     <button data-tab="approvals" id="tabbtn-approvals" role="tab" aria-selected="false" aria-controls="tab-approvals">Approvals <span id="pendingCount" class="badge hidden">0</span></button>
-    <button data-tab="log" id="tabbtn-log" role="tab" aria-selected="false" aria-controls="tab-log">Log</button>
+    <button data-tab="setup" id="tabbtn-setup" role="tab" aria-selected="false" aria-controls="tab-setup">Setup</button>
+    <button data-tab="quickstart" id="tabbtn-quickstart" role="tab" aria-selected="false" aria-controls="tab-quickstart">Quick settings</button>
     <button data-tab="destinations" id="tabbtn-destinations" role="tab" aria-selected="false" aria-controls="tab-destinations">Destinations</button>
-    <button data-tab="quickstart" id="tabbtn-quickstart" role="tab" aria-selected="false" aria-controls="tab-quickstart">Quick start</button>
     <button data-tab="grants" id="tabbtn-grants" role="tab" aria-selected="false" aria-controls="tab-grants">Grants <span id="grantActiveCount" class="badge ok hidden">0</span></button>
+    <button data-tab="log" id="tabbtn-log" role="tab" aria-selected="false" aria-controls="tab-log">Log</button>
     <button data-tab="console" id="tabbtn-console" role="tab" aria-selected="false" aria-controls="tab-console">Console</button>
     <button data-tab="files" id="tabbtn-files" role="tab" aria-selected="false" aria-controls="tab-files">Files</button>
     <button data-tab="settings" id="tabbtn-settings" role="tab" aria-selected="false" aria-controls="tab-settings">Settings</button>
-    <button data-tab="setup" id="tabbtn-setup" role="tab" aria-selected="false" aria-controls="tab-setup">Setup</button>
   </nav>
 <main>
   <!-- OVERVIEW (overview.js) -->
@@ -81,6 +81,7 @@
 
   <!-- LOG -->
   <section id="tab-log" role="tabpanel" aria-labelledby="tabbtn-log" class="hidden">
+    <details class="card" id="historyCard"><summary>History, export and import</summary><div id="historyBox"></div></details>
     <details class="card" id="searchCard"><summary>Search, time ranges and export</summary><div id="searchBox"></div></details>
     <div class="toolbar">
       <input id="logFilter" type="search" aria-label="Filter log" placeholder="filter host / action / reason">
@@ -91,60 +92,65 @@
     <div class="table-wrap"><table class="log"><thead><tr><th scope="col">Time</th><th scope="col">Kind</th><th scope="col">Proto</th><th scope="col">Destination</th><th scope="col">Action</th><th scope="col">Reason</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody id="logBody"></tbody></table></div>
     <p id="logEmpty" class="muted hidden">No events yet.</p>
-    <details class="card" id="historyCard"><summary>History, export and import</summary><div id="historyBox"></div></details>
   </section>
 
   <!-- RULES -->
   <section id="tab-destinations" role="tabpanel" aria-labelledby="tabbtn-destinations" class="hidden">
     <h2>Destinations</h2>
-    <div id="destBox"></div>
     <div class="card">
       <h3>Test a destination</h3>
       <p class="hint">Dry run: what would happen if the agent connected now? Shows the decision and what made it.</p>
       <div class="row"><input id="testHost" aria-label="Host or IP to test" placeholder="host or IP"><input id="testPort" type="number" value="443" class="port" aria-label="Port"><button id="testBtn">Test</button></div>
       <pre id="testOut" class="muted"></pre>
     </div>
+    <div id="destBox"></div>
   </section>
 
-  <!-- QUICK START (shortcuts + learning) -->
+  <!-- QUICK SETTINGS (learning + shortcuts) -->
   <section id="tab-quickstart" role="tabpanel" aria-labelledby="tabbtn-quickstart" class="hidden">
-    <div class="card" id="quick">
-      <h3>Shortcuts</h3>
-      <p class="hint">Common changes in one click. A shortcut adds normal rules, tagged with its name, which you can see in
-        the table below and undo here.</p>
-      <h4>Internet</h4>
-      <div class="row wrap">
-        <button data-preset="open" data-ttl="900">Allow web (HTTP/HTTPS) for 15 min</button>
-        <button data-preset="open" data-ttl="3600">Allow web for 1 h</button>
-        <button data-preset="open">Allow web permanently</button>
-        <button data-preset="internet" data-ttl="900" class="secondary">Allow all ports for 15 min</button>
-      </div>
-      <div class="row wrap" role="group" aria-label="What happens with unknown destinations">
-        <span class="muted">Unknown destinations:</span>
-        <button data-mode="ask" class="secondary small" aria-pressed="false">ask me</button>
-        <button data-mode="deny" class="secondary small" aria-pressed="false">block</button>
-        <button data-mode="allow" class="secondary small" aria-pressed="false">allow (log only)</button>
-        <button id="qaStop" class="danger small">Emergency stop</button>
-      </div>
-      <details class="help"><summary>What Emergency stop does</summary>
-        <p>Revokes all active grants, denies everything still waiting for approval, undoes the internet shortcuts
-          above, blocks everything unknown and suspends automatic grant approval until you change the mode again.
-          Claude itself stays reachable through your allow rules.</p></details>
-      <div id="qaStopResult" class="hint hidden" role="status"></div>
-      <div id="qaActive"></div>
-      <h4>Local network</h4>
-      <p class="hint">The local network, the Docker host and cloud metadata addresses are <b>always blocked</b> (hard deny).</p>
-      <details class="help"><summary>Reaching one device on the local network</summary>
-        <p>No rule can open the blocked ranges. To let the agent reach one device, define a <b>grant</b>: exact host
-          and port, a time limit, and your approval each time it is used.</p></details>
-      <button id="qaLan" class="secondary">Allow a device on the local network&hellip;</button>
-      <div id="qaLanHelp" class="hint hidden"></div>
-      <h4>Tool ecosystems</h4>
-      <p class="hint">One shortcut per tool ecosystem, for everything it needs. Optional time limit; <i>Undo</i> removes
-        exactly that shortcut's rules.</p>
-      <div id="qaTemplates" class="templates"></div>
-    </div>
+    <h2>Quick settings</h2>
     <div class="card" id="learnCard" tabindex="-1"><h3>Learning mode</h3><div id="learnBox"></div></div>
+    <div id="quick">
+      <div class="card">
+        <div class="row-between"><h3>Internet</h3><button id="qaStop" class="danger">Emergency stop</button></div>
+        <p class="hint">A shortcut adds normal rules, tagged with its name; undo it here or on <i>Destinations</i>.</p>
+        <div class="row wrap">
+          <button data-preset="open" data-ttl="900" class="secondary">Allow web for 15 min</button>
+          <button data-preset="open" data-ttl="3600" class="secondary">Allow web for 1 h</button>
+          <button data-preset="open" class="secondary">Allow web permanently</button>
+          <button data-preset="internet" data-ttl="900" class="secondary">Allow all ports for 15 min</button>
+        </div>
+        <details class="help"><summary>What Emergency stop does</summary>
+          <p>Revokes all active grants, denies everything still waiting for approval, undoes the internet shortcuts,
+            blocks everything unknown and suspends automatic grant approval until you change the mode under
+            <i>Settings</i>. Claude itself stays reachable through your allow rules.</p></details>
+        <div id="qaStopResult" class="hint hidden" role="status"></div>
+        <div id="qaActive"></div>
+      </div>
+      <div class="card">
+        <h3>Local network</h3>
+        <p class="hint">Blocked by default. Give the agent one device, for a limited time, each use approved by you.</p>
+        <form id="qaLanForm" class="lan-form hidden">
+          <label>Name <input id="qlName" placeholder="homeassistant" pattern="[a-z0-9][a-z0-9_-]{0,47}" required></label>
+          <label>Host or IP <input id="qlHost" placeholder="192.168.1.20" required></label>
+          <label>Port <input id="qlPort" type="number" min="1" max="65535" value="80" class="port" required></label>
+          <label>Type <select id="qlKind"><option value="http">Web / API (HTTP)</option><option value="https">Web / API (HTTPS)</option><option value="tcp">Other (TCP, e.g. SSH)</option></select></label>
+          <label>Access <select id="qlAccess"><option value="read">Read-only</option><option value="full">Full access</option></select></label>
+          <label>For how long <select id="qlDur"><option value="30m">30 minutes</option><option value="1h" selected>1 hour</option><option value="4h">4 hours</option><option value="1d">1 day</option></select></label>
+          <button>Create grant</button>
+        </form>
+        <p id="qaLanHelp" class="hint hidden"></p>
+        <details class="help"><summary>How local access works</summary>
+          <p>The form creates a <b>grant</b> for exactly this host and port. The agent requests it with
+            <code>tallygate request &lt;name&gt;</code> and you approve each use; edit or remove it on the
+            <i>Grants</i> tab. To open a whole range instead, unblock it on <i>Destinations</i>.</p></details>
+      </div>
+      <div class="card">
+        <h3>Tool ecosystems</h3>
+        <p class="hint">Everything one ecosystem needs, with an optional time limit.</p>
+        <div id="qaTemplates" class="templates"></div>
+      </div>
+    </div>
   </section>
 
   <!-- GRANTS -->
@@ -184,10 +190,11 @@
             <option value="4h">4 hours</option><option value="1d">1 day</option></select>
           <small>Every approval ends by itself after this time. You approve each request.</small></label>
       </div>
-      <label class="check ge-lan"><input type="checkbox" id="geLan"> This is a device on my local network</label>
+      <label class="check ge-lan"><input type="checkbox" id="geLan"> Local-network device
+        <small>Local addresses are blocked by default. Tick this to let <b>this grant only</b> reach the address above; it is ticked for you when the address is a private IP or a <code>.lan</code>/<code>.local</code> name.</small></label>
       <p id="geSimpleNote" class="hint hidden" role="status">This grant uses settings that only <b>Advanced</b> shows
         (several targets, paths, automatic approval, a fixed IP or a pinned certificate). They are kept as they are.</p>
-      <details id="geAdvanced" class="help"><summary>Advanced: levels, automatic approval, paths, several targets</summary>
+      <details id="geAdvanced" class="more"><summary>Advanced options</summary>
       <div class="grid4">
         <label class="check"><input type="checkbox" id="geRead" checked> read level</label>
         <label>approval <select id="geApprRead"><option>ask</option><option>auto</option></select></label>
@@ -278,6 +285,12 @@
       <label>Approval timeout (s) <input type="number" id="askTimeout" min="5" max="3600"></label>
       <button id="saveMode">Save</button>
     </div>
+    <div class="card">
+      <h3>Menu</h3>
+      <label class="check"><input type="checkbox" id="navShowSetup" checked> Show <b>Setup</b> in the menu</label>
+      <label class="check"><input type="checkbox" id="navShowQuick" checked> Show <b>Quick settings</b> in the menu</label>
+      <p class="hint">Kept in this browser. Hidden pages stay reachable from Overview links.</p>
+    </div>
     <details class="card" id="settingsCard"><summary>Behaviour settings</summary>
       <p class="hint">Tunables the gateway owns — log retention, learning mode, rule suggestions and grant-request
         limits. Saved here without editing a file or restarting; a few take effect only after a restart (marked).</p>
@@ -319,7 +332,7 @@
         <button id="gitPreview">Use my GitHub identity</button>
         <div id="gitBox" class="hidden preview"><dl class="fieldhelp"><dt>Name</dt><dd id="gitName"></dd><dt>Email</dt><dd id="gitEmail"></dd></dl>
           <button id="gitApply">Apply</button></div>
-        <details class="help"><summary>Enter it yourself</summary>
+        <details class="more"><summary>Enter it yourself</summary>
           <form id="gitManual" class="row"><input id="gitManName" aria-label="Name" placeholder="Your Name" autocomplete="off">
             <input id="gitManEmail" aria-label="Email" placeholder="id+user@users.noreply.github.com" autocomplete="off"><button>Save</button></form></details>
         <div class="status"></div></li>
@@ -328,18 +341,6 @@
           account. <i>Enable</i> answers Claude Code's one-time question <code>Enable Remote Control? (y/n)</code> with yes,
           trusts <code>/workspace</code>, and restarts Remote Control.</p>
         <div class="row"><button id="rcEnable">Enable Remote Control</button><button data-term="rc" class="secondary">Watch the rc console</button></div>
-        <div class="status"></div></li>
-      <li id="st-policy"><h3 tabindex="-1">What to do with an unknown destination <span class="step-state"></span></h3>
-        <p class="hint">When the agent tries to reach a host that no rule covers, tallygate can <b>ask you</b> each time
-          or <b>block it</b> outright. Pick a starting point — you can change it whenever you like, and fine-tune per
-          host, under <i>Destinations</i> and <i>Quick start</i>.</p>
-        <div class="row" role="group" aria-label="Default for unknown destinations"><button data-policy="ask" class="secondary">Ask me each time (recommended)</button>
-          <button data-policy="deny" class="secondary">Block everything unknown</button><button id="wzTemplates" class="secondary">Pre-allow a tool ecosystem&hellip;</button></div>
-        <p class="hint"><b>The quickest way to a working set of rules:</b> run your first task in <i>learning mode</i>.
-          For a time you choose, the agent may reach any public host on the web ports and everything it uses is
-          recorded. Afterwards you tick what to keep and save as rules, instead of answering one prompt at a
-          time. The local network and the always-blocked ranges stay closed.</p>
-        <div class="row"><button id="wzLearn" class="secondary">Learn from a first task&hellip;</button></div>
         <div class="status"></div></li>
       <li id="st-notify"><h3 tabindex="-1">Notifications <span class="step-state"></span></h3>
         <div id="notifyStatus" class="muted notify-status"></div>

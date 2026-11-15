@@ -69,7 +69,7 @@ function showTab(name) {
   });
   history.replaceState(null, "", "#" + name);
   if (name === "destinations") guard(loadPolicy)();  // the rules table
-  if (name === "quickstart") guard(loadPolicy)();  // shortcuts/presets reflect the current policy
+  if (name === "quickstart") { guard(loadPolicy)(); guard(loadGrants)(); }  // shortcuts reflect the policy; the LAN form needs lan_allow_ui
   if (name === "settings") guard(loadPolicy)();  // Mode + raw policy JSON come from the policy
   if (name === "grants") { guard(loadGrants)(); guard(loadSecrets)(); }
   if (tabHooks[name]) guard(tabHooks[name])();
@@ -96,6 +96,15 @@ function setHeaderH() { const h = $("header"); if (h) document.documentElement.s
 setHeaderH(); window.addEventListener("resize", setHeaderH);
 
 $$("#tabs button").forEach((b) => b.addEventListener("click", () => { showTab(b.dataset.tab); setNav(false); }));
+// Setup and Quick settings can be hidden from the menu (Settings > Menu); the choice is kept in this browser.
+for (const [box, tab] of [["#navShowSetup", "setup"], ["#navShowQuick", "quickstart"]]) {
+  const key = "tallygate.nav." + tab, btn = $("#tabbtn-" + tab), cb = $(box);
+  const apply = (show) => { btn.classList.toggle("hidden", !show); cb.checked = show; };
+  let show = true;
+  try { show = localStorage.getItem(key) !== "0"; } catch { /* private mode: not kept */ }
+  apply(show);
+  cb.onchange = () => { apply(cb.checked); try { localStorage.setItem(key, cb.checked ? "1" : "0"); } catch { /* not kept */ } };
+}
 $("#tabs").addEventListener("keydown", (e) => {  // arrow keys move between tabs (WAI-ARIA tabs pattern; vertical sidebar)
   const tabs = $$("#tabs button"), i = tabs.indexOf(document.activeElement);
   if (i < 0 || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
@@ -368,7 +377,6 @@ function hideKeepingFocus(el, fallback) {
 }
 async function renderQuick() {
   if (!presetInfo) presetInfo = await gw("GET", "/presets?details=1");
-  $$("#quick [data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === policy.default)));
   // active shortcuts (internet) with their remaining time
   const box = $("#qaActive");
   if (!box.firstElementChild) box.innerHTML = '<h4 class="hidden">Active</h4>';
@@ -417,12 +425,6 @@ async function renderQuick() {
   }
 }
 $$("#quick [data-preset]").forEach((b) => (b.onclick = guard(() => applyPreset(b.dataset.preset, b.dataset.ttl))));
-$$("#quick [data-mode]").forEach((b) => {
-  const set = () => patchPolicy({ default: b.dataset.mode });
-  b.onclick = b.dataset.mode === "allow"
-    ? confirmClick(b, "Allow every unknown public destination? The local network stays blocked; everything is still logged.", set)
-    : guard(set);
-});
 const STOP_STEPS = {
   suspend_auto_approval: "Automatic grant approval suspended", revoke_grants: "Active grants revoked",
   deny_pending: "Waiting connections denied", deny_grant_requests: "Grant requests denied",
@@ -441,26 +443,34 @@ $("#qaStop").onclick = confirmClick($("#qaStop"), "Revoke all grants, deny every
   showStopResult(r); toast(r.ok ? "Emergency stop: unknown destinations are blocked" : "Emergency stop incomplete", !r.ok);
   await Promise.allSettled([loadPolicy(true), loadGrants(), loadPending()]);
 });
-$("#qaLan").onclick = guard(async () => {
-  const g = await gw("GET", "/grants");
-  const help = $("#qaLanHelp");
-  if (!(g.lan_allow_ui || []).length) {
-    // No LAN range is allowed for UI grants yet, so there is nothing to fill a form with: explain the one-time
-    // config step. A second click now dismisses it — it used to open and never close again (#178).
-    help.innerHTML = `Grants created in the UI may only reach local addresses inside <code>grants_lan_allow</code>, which
-      is empty. An admin adds your home network to the gateway config and restarts it, e.g.
-      <pre>grants_lan_allow: [192.168.1.0/24]</pre> (see <i>Configuration</i> in the docs), or defines the grant in the
-      config file itself. Once a range is set, this button opens a ready-made grant form.`;
-    help.classList.toggle("hidden"); return;
-  }
-  help.classList.add("hidden");
-  showTab("grants");
-  openGrantEditor(null);
-  $("#geTargets").innerHTML = "";
-  $("#geTargets").appendChild(targetRow({ scheme: "http", host: "", port: 80, lan: true }));
-  $("#geLan").dataset.touched = "1"; grantAdvancedToSimple();  // the simple form starts as "HTTP, local network"
-  $("#geDesc").value = "Device on the local network";
-  toast(`Local targets must be inside ${g.lan_allow_ui.join(", ")}`);
+// Local network (#198): a short form that creates a grant for one device directly. UI grants may only reach
+// addresses inside grants_lan_allow (gateway config, file-only by the trust split), so without it the form is
+// replaced by a hint that says what to do instead - never a button that only reveals text.
+function renderLan() {
+  const allow = grants.lan_allow_ui || [], help = $("#qaLanHelp");
+  $("#qaLanForm").classList.toggle("hidden", !allow.length);
+  help.classList.toggle("hidden", false);
+  help.innerHTML = allow.length ? `Devices inside <code>${esc(allow.join(", "))}</code>.`
+    : `Not available yet: set <code>grants_lan_allow</code> (e.g. <code>[192.168.1.0/24]</code>) in the gateway config
+       and restart the gateway, or unblock a whole range on <i>Destinations</i>.
+       <a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/grants.md" target="_blank" rel="noopener">Grants guide</a>`;
+}
+$("#qlKind").onchange = () => {
+  const tcp = $("#qlKind").value === "tcp";  // raw TCP cannot be limited to reading
+  $("#qlAccess").options[0].disabled = tcp; if (tcp) $("#qlAccess").value = "full";
+};
+$("#qaLanForm").onsubmit = guard(async (e) => {
+  e.preventDefault();
+  const name = $("#qlName").value.trim(), kind = $("#qlKind").value, full = $("#qlAccess").value === "full" || kind === "tcp";
+  if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(name)) throw new Error("Name: lower case letters, digits, - and _");
+  if (grants.defs.some((d) => d.name === name)) throw new Error(`A grant named ${name} exists already: edit it on the Grants tab`);
+  const target = { scheme: kind, host: $("#qlHost").value.trim(), port: Number($("#qlPort").value), lan: true };
+  if (kind !== "tcp") target.paths = ["/*"];
+  const levels = kind === "tcp" ? ["write"] : full ? ["read", "write"] : ["read"];
+  await gw("PUT", `/destinations/grant/${encodeURIComponent(name)}`, {
+    description: "Device on the local network", levels, approval: Object.fromEntries(levels.map((l) => [l, "ask"])),
+    default_ttl: $("#qlDur").value, max_ttl: $("#qlDur").value, targets: [target] });
+  toast(`Grant ${name} created: the agent can request it`); e.target.reset(); await loadGrants();
 });
 
 /* ---------------- grants ---------------- */
@@ -468,7 +478,7 @@ let grants = { defs: [], active: [], requests: [], lan_allow_ui: [], missing_sec
 const fmtLeft = (exp) => { const s = Math.max(0, Math.round(exp - Date.now() / 1000)); return s > 5400 ? `${Math.round(s / 3600)} h` : s > 90 ? `${Math.round(s / 60)} min` : `${s} s`; };
 async function loadGrants() {
   grants = await gw("GET", "/grants");
-  renderGrantRequests(); renderGrants();
+  renderGrantRequests(); renderGrants(); renderLan();
 }
 function grantTargets(d) {
   return d.targets.map((t) => `<code>${esc(t.scheme)}://${esc(t.host)}:${esc(t.port)}${t.paths && t.paths.join(",") !== "/*" ? esc(" " + t.paths.join(",")) : ""}</code>${t.lan ? ' <span class="tag warn">LAN</span>' : ""}`).join("<br>");
@@ -500,7 +510,7 @@ function renderGrants() {
   const act = $("#activeGrants"); act.innerHTML = "";
   const sus = grants.auto_suspended;
   $("#autoSuspended").classList.toggle("hidden", !sus);
-  if (sus) $("#autoSuspended").textContent = `Automatic approval is suspended since the emergency stop${sus.since ? " at " + fmtDate(sus.since) : ""}: every grant request needs you. Change the mode on the Destinations tab to resume it.`;
+  if (sus) $("#autoSuspended").textContent = `Automatic approval is suspended since the emergency stop${sus.since ? " at " + fmtDate(sus.since) : ""}: every grant request needs you. Change the mode under Settings to resume it.`;
   $("#activeEmpty").classList.toggle("hidden", grants.active.length > 0);
   for (const a of grants.active) {
     const el = document.createElement("div"); el.className = "card row-between";
