@@ -203,6 +203,13 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   prefix (#116).
 
 ### Changed
+- **The never-reachable deny floor is shown and edited in the one Destinations table (ADR-0017, #177):** every
+  blocked range is listed with its reason; an authenticated admin may unblock a LAN, cloud-metadata or own
+  `hard_deny` range for normal connections (a new `floor_open` policy field) behind a per-range confirmation,
+  and re-block it. The gateway's own networks (`GW_INTERNAL_NETS`) stay locked and are checked first, so
+  opening a broad range can never expose the stack, and the grant path is unchanged (grants still cannot reach
+  loopback/metadata/the stack). Secure by default: a fresh install blocks everything it did before. The
+  separate *Never reachable* card and the hard-deny textarea are retired.
 - **Accessibility:** the filled buttons now meet WCAG AA contrast (the blue and red were 3.7:1 with white text; now 5.2:1 and 4.8:1), the Log tab shows an empty state instead of a bare table, the upgrade-command copy box is a labelled button for screen readers, the keyboard help matches the "Allow once" label, and "load the next page" reads *Load older* everywhere (#143).
 - **One `never` list in the gateway config** replaces `hard_deny_floor` and `grants_never`: a plain range is
   closed for every connection; `{range, scope: all+lan}` is closed for LAN grants too. The old keys still
