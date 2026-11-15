@@ -2,8 +2,10 @@
 show a diff between any two versions and restore one. Also export/import of the policy and the UI grants
 as one YAML document.
 
-A version holds what `policy.yaml` holds: mode, approval timeout, the hard-deny *extras* and the rules.
-Never the hard-deny floor (static config) and never secrets (they live in secrets.json, write-only).
+A version holds what `policy.yaml` holds: mode, approval timeout, which blocks were seeded and the rules in
+their order (the seeded blocks are rules among them, ADR-0019). Never the locked ranges (they come from the
+environment) and never secrets (they live in secrets.json, write-only). A version from before ADR-0019 is
+translated when it is compared or restored.
 """
 
 from __future__ import annotations
@@ -82,15 +84,12 @@ class PolicyHistory:
 
 
 def diff(old: dict, new: dict) -> dict:
-    """What changed from `old` to `new` (both policy dicts as in policy.yaml). Rules are compared by id."""
+    """What changed from `old` to `new` (both policy dicts in the current form). Rules are compared by id;
+    `reordered` says that rules both versions have stand in another order - which changes what is decided."""
     out: dict = {}
     for k in ("default", "ask_timeout"):
         if old.get(k) != new.get(k):
             out[k] = [old.get(k), new.get(k)]
-    oh, nh = old.get("hard_deny") or [], new.get("hard_deny") or []
-    hd = {"added": [c for c in nh if c not in oh], "removed": [c for c in oh if c not in nh]}
-    if hd["added"] or hd["removed"]:
-        out["hard_deny"] = hd
     orules = {r["id"]: r for r in old.get("rules") or []}
     nrules = {r["id"]: r for r in new.get("rules") or []}
     rules = {
@@ -144,7 +143,13 @@ def parse_import(text: str) -> tuple[dict, dict, list[str]]:
     if not isinstance(grants, dict) or not all(isinstance(g, dict) for g in grants.values()):
         raise ValueError("grants: expected a mapping of name to definition")
     warnings = []
-    if "hard_deny_floor" in policy:
-        policy = {k: v for k, v in policy.items() if k != "hard_deny_floor"}
-        warnings.append("hard_deny_floor ignored: the floor comes only from the gateway config file")
+    if any(k in policy for k in ("hard_deny", "floor_open", "hard_deny_floor")) or "seeded" not in policy:
+        warnings.append(
+            "export from before ADR-0019: CIDR deny rules move to the top, hard_deny becomes deny rules, and the "
+            "built-in blocks are added at the bottom (except ranges in floor_open)"
+        )
+    for name, g in grants.items():
+        targets = g.get("targets") if isinstance(g.get("targets"), list) else []
+        if any(isinstance(t, dict) and t.get("lan") for t in targets):
+            warnings.append(f"grant {name}: `lan` is ignored; a local target needs an IP or a fixed address")
     return policy, {str(n): g for n, g in grants.items()}, warnings

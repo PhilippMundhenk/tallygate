@@ -22,14 +22,13 @@ _DROP = ("never", "hard_deny_floor", "grants_never", *CONFIG_KEYS)
 
 def convert(config: dict) -> tuple[dict, list[str]]:
     """(the config in the current form, what was changed). The property keys and `grants` become one
-    `destinations:` list, the never keys become one `never:` list; other keys are kept as they are. Reuses
+    `destinations:` list, the never keys become one `never:` list of plain ranges; other keys are kept as they are. Reuses
     the gateway parsers, so a broken config is an error here as at start."""
-    every, lan, old = parse_never(config)  # validates the never keys
+    never, old = parse_never(config)  # validates the never keys
     dests = config_destinations(config)  # validates readonly/inject/github/grants
     out = {k: v for k, v in config.items() if k not in _DROP}
     if dests:
         out["destinations"] = [d.to_dict() for d in dests]
-    never = [*every, *({"range": c, "scope": "all+lan"} for c in lan)]
     if never:
         out["never"] = never
     moved = [k for k in CONFIG_KEYS if config.get(k)]
@@ -38,11 +37,15 @@ def convert(config: dict) -> tuple[dict, list[str]]:
         changes.append(f"{', '.join(moved)} -> destinations")
     changes += [
         {
-            "hard_deny_floor": "hard_deny_floor -> never (scope all)",
-            "grants_never": "grants_never -> never (scope all+lan: also closed for every connection)",
+            "hard_deny_floor": "hard_deny_floor -> never",
+            "grants_never": "grants_never -> never",
+            "scope all+lan": "never: the scope all+lan is gone (ADR-0019), entries are plain ranges",
         }[k]
         for k in old
     ]
+    if config.get("grants_lan_allow"):
+        out.pop("grants_lan_allow", None)
+        changes.append("grants_lan_allow dropped: it is ignored since ADR-0019")
     return out, changes
 
 

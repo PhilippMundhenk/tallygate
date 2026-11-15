@@ -2,8 +2,9 @@
 
 Every upstream connection (HTTP proxy CONNECT, plain HTTP, SOCKS5, reverse:tcp service
 ports) passes through `server_connect`, where the policy is evaluated on the requested
-host:port *and* its resolved IPs. Hostnames are decided on the name first and only resolved
-once the policy (or a human) allows them, so denied/pending names never leak through DNS.
+host:port *and* its resolved IPs (one ordered rule list, first match wins: ADR-0019). Hostnames
+are decided on the name first where no address can change the result, and are only resolved once the
+policy (or a human) allows them, so denied/pending names never leak through DNS.
 Allowed hostnames are pinned to the checked IP to defeat DNS rebinding. TLS is passed through
 untouched when its SNI matches the checked name, except for hosts configured for credential injection
 or read-only access, which are intercepted (the agent never sees injected secrets; its own credentials
@@ -39,15 +40,17 @@ from egressgw.learning import REASON as LEARNING
 from egressgw.learning import Learning, parse_ports
 from egressgw.model import INTERCEPT, Access, Req, Verdict
 from egressgw.policy import (
-    DEFAULT_HARD_DENY,
+    LOCKED,
     Decision,
     Exception_,
     Policy,
+    builtin_blocks,
     ip_addr,
     is_ip,
+    is_pre_0019,
     load_preset,
-    parse_cidrs,
     parse_never,
+    policy_from_any,
     registrable_domain,
     rule_for_approval,
     valid_hostname,
@@ -67,7 +70,8 @@ DUP_WINDOW = 2.0  # identical events within this window are counted, not stored 
 # TEST ONLY: "name=ip,name=ip" static resolution used by the e2e test-suite instead of /etc/hosts.
 # Never set this in production; the gateway logs a loud warning when it is active.
 STATIC_HOSTS = dict(kv.split("=", 1) for kv in os.environ.get("GW_TEST_STATIC_HOSTS", "").split(",") if "=" in kv)
-# TEST ONLY: the configured hard_deny_floor replaces the built-in list (the e2e upstreams live on 127.0.0.1).
+# TEST ONLY: with a configured `never` list the built-in blocks are not seeded (the e2e upstreams live on
+# 127.0.0.1). Never set this in production; the gateway logs a loud warning when it is active.
 FLOOR_REPLACE = os.environ.get("GW_TEST_FLOOR_REPLACE") == "1"
 
 
@@ -170,32 +174,38 @@ class Gateway:
         self.config = self.config or {}
         self._read_destinations()  # ADR-0014: a `destinations:` block feeds the old keys the parsers expect
         self.policy_path = DATA_DIR / "policy.yaml"
-        # The hard-deny floor comes only from the (read-only mounted) static config, never from the API:
-        # the built-in list plus `hard_deny_floor`. Validated here: a broken entry must stop the gateway.
-        # `never` in the config (ADR-0014; the old keys hard_deny_floor and grants_never are still read). Every
-        # range closes all connections; the `all+lan` ones also close LAN grant targets (see Grants).
-        every, lan, self.old_never_keys = parse_never(self.config)
-        configured = parse_cidrs([*every, *lan], "never")
-        builtin = [] if FLOOR_REPLACE and configured else DEFAULT_HARD_DENY
-        self.hard_deny_floor = parse_cidrs([*builtin, *configured], "never")
-        self.floor_configured = [c for c in configured if c not in builtin]  # for the "never reachable" view
+        # The blocks that are seeded once as ordinary `deny` rules at the bottom of the rule list (ADR-0019):
+        # the built-in ranges and `never` from the (read-only mounted) config; the old keys hard_deny_floor and
+        # grants_never are still read. Validated here: a broken entry must stop the gateway.
+        self.blocks_config, self.old_never_keys = parse_never(self.config)
+        self.blocks_builtin = [] if FLOOR_REPLACE and self.blocks_config else builtin_blocks()
+        self.blocks_config = [c for c in self.blocks_config if c not in self.blocks_builtin]
         # ADR-0015: behaviour tunables live in a backend-owned settings.yaml, edited in the UI (not file-only).
         self.settings = Settings(DATA_DIR / "settings.yaml", self.config)
         self.history = PolicyHistory(DATA_DIR / "policy-history.db", int(self.settings.get("policy_history_keep")))
+        # Before the policy: the grants know the locked ranges (the stack's own networks and listeners), which
+        # every policy that is adopted gets attached.
+        self.grants = Grants(self.config, DATA_DIR)
+        self.grants.request_timeout = int(self.settings.get("grant_request_timeout"))
+        self.grants.max_requests = int(self.settings.get("grant_max_pending"))
+        migration: list[str] | None = None
         if not self.policy_path.exists():
             initial = self.config.get("initial_preset", "baseline")
             preset = PRESET_DIR / f"{initial}.yaml"
-            self.policy = load_preset(preset)[1] if preset.exists() else Policy()
-            self._write_policy_file()
+            policy, rewrite = (load_preset(preset)[1] if preset.exists() else Policy()), True
             what = f"initial policy (preset {initial})"
         else:
-            self.policy = self._load_policy_file()
+            policy, rewrite, migration = self._load_policy_file()
             what = (
                 "policy.yaml changed while the gateway was stopped"
                 if self.history.latest
                 else "policy at gateway start"
             )
-        self.adopt(self.policy)
+            if migration is not None:
+                what = "policy migrated to one ordered rule list (ADR-0019)"
+        self.adopt(policy)
+        if rewrite or self.seeded_now:
+            self._write_policy_file()
         self._history("gateway", what)  # nothing is stored when it equals the latest version
         self.events = EventLog(
             DATA_DIR / "events.db",
@@ -219,16 +229,13 @@ class Gateway:
         self.max_pending = int(self.settings.get("max_pending"))
         # rule usage (#70): matches per rule id since the last flush to the event log, as [count, last ts]
         self.hits: dict[str, list] = {}
+        # name rules that an address deny rule below them blocked (ADR-0019), since the last flush:
+        # {name rule id: {count, last, address, by, range}}
+        self.shadows: dict[str, dict] = {}
         self.stale_days = int(self.settings.get("rule_stale_days"))
         self.suggest_min = int(self.settings.get("suggest_min_approvals"))
         self.suggest_days = int(self.settings.get("suggest_window_days"))
         self._dups: dict[tuple, list] = {}
-        self.grants = Grants(self.config, DATA_DIR)
-        # ADR-0017: the structural locks come from the grants' internal networks; wire them now that grants
-        # exist (the first adopt() above ran before them), so `floor_open` can never open the stack.
-        self.policy.locked_nets = list(self.grants.internal)
-        self.grants.request_timeout = int(self.settings.get("grant_request_timeout"))
-        self.grants.max_requests = int(self.settings.get("grant_max_pending"))
         self.availability = Availability(self.config, DATA_DIR)
         self.activity = Activity()
         self._unavailable = self.availability.mode()[0]  # last state seen by availability_tick
@@ -249,24 +256,46 @@ class Gateway:
         self.subscribers: set[asyncio.Queue] = set()
         self.api_token = os.environ.get("GW_API_TOKEN", "")
         self._tasks: list[asyncio.Task] = []
+        if migration is not None:  # in the log the operator reads, not only in the container output
+            self.record(
+                kind="admin",
+                action="policy",
+                reason="policy.yaml migrated to one ordered rule list (ADR-0019): " + ("; ".join(migration) or "ok"),
+            )
 
     def _write_policy_file(self) -> None:
         """Write policy.yaml in the destinations form (ADR-0014)."""
         atomic_write(self.policy_path, yaml.safe_dump(destinations.policy_to_file(self.policy), sort_keys=False))
 
-    def _load_policy_file(self) -> Policy:
-        """Load policy.yaml in either form; a pre-0014 file (with `rules`) is migrated once - backed up next to
-        it as `*.pre-0014` and rewritten as destinations. A file that cannot be translated stops the gateway."""
-        raw = yaml.safe_load(self.policy_path.read_text())
-        policy = Policy.from_dict(destinations.policy_from_file(raw))
-        if not (raw or {}).get("destinations") and (raw or {}).get("rules"):  # old form with rules: migrate once
-            backup = self.policy_path.with_suffix(self.policy_path.suffix + ".pre-0014")
-            if not backup.exists():
-                atomic_write(backup, self.policy_path.read_text())
-            self.policy = policy
-            self._write_policy_file()
-            log.info("migrated %s to the destinations form (backup at %s)", self.policy_path, backup)
-        return policy
+    def _load_policy_file(self) -> tuple[Policy, bool, list[str] | None]:
+        """Load policy.yaml in any form it ever had: (policy, the file must be rewritten, migration notes).
+
+        A pre-0014 file (with `rules`) and a pre-0019 file (no `seeded`; `hard_deny`/`never`, `floor_open`) are
+        migrated once: the old file is kept next to it as `*.pre-0014` / `*.pre-0019`, written BEFORE anything
+        is changed, and the caller rewrites the file. A file that cannot be translated, or a backup that cannot
+        be written, raises and stops the gateway (fail closed) with the old file untouched."""
+        text = self.policy_path.read_text()
+        raw = yaml.safe_load(text)
+        if raw is not None and not isinstance(raw, dict):
+            raise ValueError(f"{self.policy_path}: expected a mapping")
+        doc = destinations.policy_from_file(raw)
+        pre14 = not (raw or {}).get("destinations") and bool((raw or {}).get("rules"))
+        pre19 = is_pre_0019(doc)
+        policy, notes = policy_from_any(doc, self.blocks_builtin, self.blocks_config)
+        for suffix, needed in ((".pre-0014", pre14), (".pre-0019", pre19)):
+            backup = self.policy_path.with_suffix(self.policy_path.suffix + suffix)
+            if needed and not backup.exists():
+                atomic_write(backup, text)
+        if pre14:
+            log.warning("migrated %s to the destinations form (the old file is kept as *.pre-0014)", self.policy_path)
+        if pre19:
+            log.warning(
+                "migrated %s to one ordered rule list (ADR-0019); the old file is kept as *.pre-0019",
+                self.policy_path,
+            )
+            for n in notes:
+                log.warning("policy migration: %s", n)
+        return policy, pre14 or pre19, notes if pre19 else None
 
     def _read_destinations(self) -> None:
         """ADR-0014 §5: a `destinations:` block in the gateway config is an alternative to the old property
@@ -290,53 +319,75 @@ class Gateway:
         del self.config["destinations"]
 
     def adopt(self, policy: Policy) -> Policy:
-        """Attach the static parts (floor, structural locks, service exceptions) to a policy loaded from
-        file/API. ADR-0017: `floor_open` may open the scope-all floor, but never the structural locks
-        (`grants.internal`, the stack's own networks), which `hard_denied` enforces first."""
-        policy.use_floor(self.hard_deny_floor)
-        # `grants` is built after the first adopt() at startup; wire the locks here when it exists, and again
-        # right after the grants are built (see __init__).
-        policy.locked_nets = list(self.grants.internal) if getattr(self, "grants", None) is not None else []
+        """Make a policy loaded from file/API the one in force. Attaches what is never part of a stored
+        policy - the locked ranges (the stack's own networks and listeners, denied before the rule list) and
+        the service exceptions - and seeds the built-in and config blocks it does not remember as seeded, as
+        `deny` rules at the bottom (ADR-0019). The caller saves it."""
+        policy.locked_nets = list(self.grants.internal)
+        policy.locked_socks = list(self.grants.own)
+        self.seeded_now = policy.seed_blocks(self.blocks_builtin, self.blocks_config)
+        if self.seeded_now:
+            log.warning("blocks seeded as deny rules at the bottom: %s", ", ".join(r.cidr for r in self.seeded_now))
         self.policy = policy
         self._apply_service_exceptions()
         return policy
 
+    def read_policy(self, doc: dict) -> tuple[Policy, list[str]]:
+        """A policy document from the API, an import or the history, in the current or a pre-0019 form, as a
+        validated Policy plus what the migration changed. Not in force until `adopt`."""
+        return policy_from_any(doc, self.blocks_builtin, self.blocks_config)
+
+    def preview_policy(self, doc: dict) -> Policy:
+        """`doc` as the policy it would be once adopted: migrated if it is a pre-0019 document, and with the
+        blocks seeded that it does not remember. Nothing is put in force."""
+        policy, _notes = self.read_policy(doc)
+        policy.locked_nets, policy.locked_socks = list(self.grants.internal), list(self.grants.own)
+        policy.seed_blocks(self.blocks_builtin, self.blocks_config)
+        return policy
+
+    def restore_blocks(self) -> list[dict]:
+        """Add the built-in and config blocks that are missing back at the bottom (ADR-0019)."""
+        return [r.to_dict() for r in self.policy.restore_blocks(self.blocks_builtin, self.blocks_config)]
+
     def never_reachable(self) -> list[dict]:
-        """Every range that is never reachable, from all the places that define one, for one view in the UI.
-        `scope` is "all" (every connection; a LAN grant target may be exempt) or "all+lan" (LAN grant targets
-        included). ADR-0017: each row also carries `removable` (a scope-all floor range the admin may open
-        from the UI: `hard_deny_floor` + the policy `hard_deny`, but never the structural stack networks) and
-        `open` (the admin has opened it in `floor_open`). Read-only: this reports what is enforced, it decides
-        nothing."""
-        own = set(self.floor_configured)
-        lan = {str(n) for n in self.grants.never}
-        floor = set(self.hard_deny_floor)
+        """What no rule, grant or API call can open: the locked ranges (the stack's own networks and the
+        gateway's own listeners). Everything else that is blocked is a rule in the list. Read-only."""
+        return destinations.locked_rows(self)
 
-        def row(cidr: str, source: str) -> dict:
-            return {"range": cidr, "source": source, "scope": "all+lan" if cidr in lan else "all"}
-
-        out = [row(c, "config" if c in own else "builtin") for c in self.hard_deny_floor]
-        configured_lan = {str(n) for n in self.grants.never_configured}
-        out += [  # closed for grants although not in the floor (only with the test-only floor switch)
-            {"range": str(n), "source": "config" if str(n) in configured_lan else "builtin", "scope": "all+lan"}
-            for n in self.grants.never
-            if str(n) not in floor
-        ]
-        out += [{"range": c, "source": "policy", "scope": "all"} for c in self.policy.hard_deny]
-        out += [{"range": str(n), "source": "stack", "scope": "all+lan"} for n in self.grants.internal]
-        out += [
-            {"range": f"{ip}:{port}", "source": "listener", "scope": "all+lan"}
-            for ip, port in sorted(self.grants.own, key=lambda s: (str(s[0]), s[1]))
-        ]
-        # The scope-all floor the admin may edit (ADR-0017): hard_deny_floor + policy hard_deny, never the
-        # stack's own networks (locked). `open` reflects the admin's explicit opt-out in floor_open.
-        floor_strs = set(self.hard_deny_floor) | set(self.policy.hard_deny)
-        locked_strs = {str(n) for n in self.grants.internal}
-        open_set = set(self.policy.floor_open)
-        for r in out:
-            r["removable"] = r["range"] in floor_strs and r["range"] not in locked_strs
-            r["open"] = r["range"] in open_set
+    def shadow_stats(self) -> dict[str, dict]:
+        """Per name rule: how often an address deny rule below it blocked what the name resolved to, with the
+        latest case (stored and not yet flushed). Only for rules that still exist."""
+        ids = {r.id for r in self.policy.rules}
+        out = {rid: dict(s) for rid, s in self.events.shadow_stats().items() if rid in ids}
+        for rid, s in self.shadows.items():
+            if rid in ids:
+                out[rid] = {**s, "count": s["count"] + out.get(rid, {}).get("count", 0)}
         return out
+
+    async def check_grant(self, name: str, defn: dict, policy: Policy | None = None):
+        """Validate a UI grant definition before it is stored (ADR-0019). A target that is only a name is a
+        name rule and cannot open a blocked range: if the name resolves into an address `deny` rule now, the
+        definition is refused with the address to pin. A name that does not resolve now is accepted - every
+        connection is checked again when it is made."""
+        g = self.grants.check_ui(name, defn)
+        policy = policy or self.policy
+        for t in g.targets:
+            if t.fixed() or t.host.startswith("*."):
+                continue
+            try:
+                ips = await self.resolve(t.host, t.port)
+            except OSError:
+                continue
+            for ip in ips:
+                if why := policy.locked(ip, t.port):
+                    raise ValueError(f"grant {name}: {t.host} resolves to {ip}; {why}")
+                if block := policy.blocked_by(ip, t.port):
+                    raise ValueError(
+                        f"grant {name}: {t.host} resolves to {ip}, inside blocked range {block.cidr} (rule {block.id}). "
+                        f"A target that is only a name cannot open a blocked range: set the fixed address {ip} on "
+                        "this target (or use the IP as its host)"
+                    )
+        return g
 
     def _apply_service_exceptions(self) -> None:
         self.policy.exceptions = []
@@ -350,11 +401,11 @@ class Gateway:
         if STATIC_HOSTS:
             log.warning("GW_TEST_STATIC_HOSTS is set - test-only name resolution is ACTIVE: %s", STATIC_HOSTS)
         if FLOOR_REPLACE:
-            log.warning("GW_TEST_FLOOR_REPLACE is set - the built-in hard-deny floor is NOT active (test only)")
+            log.warning("GW_TEST_FLOOR_REPLACE is set - the built-in blocks are NOT seeded (test only)")
         if self.old_never_keys:
             log.warning(
-                "gateway config: %s still work, but are read as `never` now; see docs/configuration.md "
-                "(python -m egressgw.convert prints the file in the new form)",
+                "gateway config: %s still work, but are read as plain `never` entries now; see "
+                "docs/configuration.md (python -m egressgw.convert prints the file in the new form)",
                 " and ".join(self.old_never_keys),
             )
         if len(self.api_token) < 24:
@@ -502,18 +553,32 @@ class Gateway:
         self.publish({"type": "event", "event": self.events.add(rep)})
 
     def _hit(self, dec: Decision) -> None:
-        """Count a match of a rule (hot path: one dict update, flushed to the event log by housekeeping)."""
-        if dec.rule_id and dec.rule_id != "hard_deny":
+        """Count a match of a rule (hot path: one dict update, flushed to the event log by housekeeping), and
+        remember when a name rule was blocked by an address deny rule below it (ADR-0019)."""
+        now = time.time()
+        if dec.rule_id and dec.rule_id != LOCKED:
             h = self.hits.get(dec.rule_id)
             if h is None:
-                self.hits[dec.rule_id] = [1, time.time()]
+                self.hits[dec.rule_id] = [1, now]
             else:
                 h[0] += 1
-                h[1] = time.time()
+                h[1] = now
+        if sh := dec.shadow:
+            n = self.shadows.get(sh["rule"], {}).get("count", 0)
+            self.shadows[sh["rule"]] = {
+                "count": n + 1,
+                "last": now,
+                "address": sh["address"],
+                "by": sh["by"],
+                "range": sh["range"],
+            }
 
     def flush_hits(self) -> None:
+        ids = [r.id for r in self.policy.rules]
         hits, self.hits = self.hits, {}
-        self.events.flush_hits(hits, [r.id for r in self.policy.rules])
+        self.events.flush_hits(hits, ids)
+        shadows, self.shadows = self.shadows, {}
+        self.events.flush_shadows(shadows, ids)
 
     def start_learning(self, minutes, ports, by: str) -> dict:
         s = self.learning.start(minutes, ports, by)
@@ -574,11 +639,19 @@ class Gateway:
     async def decide(
         self, host: str, port: int, ips: list[str], proto: str, client: str, learning: bool = False
     ) -> Decision:
-        """Full decision with known IPs (the model), asking you if it says `ask`."""
+        """Full decision with known IPs (the model), asking you if it says `ask`. Your approval adds a rule
+        at the top; what it means for THESE addresses is decided by the list again, so that an approved name
+        still cannot open a blocked range (ADR-0019)."""
         dec = self.access.on_addresses(host, port, ips, proto, learning)
         if dec.action != "ask":
             return dec
-        return await self.ask(host, port, ips, proto, client)
+        answer = await self.ask(host, port, ips, proto, client)
+        if answer.action != "allow":
+            return answer
+        dec = self.access.on_addresses(host, port, ips, proto, learning)
+        if dec.action == "allow":
+            return answer
+        return dec if dec.action == "deny" else Decision("deny", f"{dec.reason} (still not allowed after approval)")
 
     async def ask(self, host: str, port: int, ips: list[str], proto: str, client: str) -> Decision:
         key = (host.lower(), port)
@@ -798,25 +871,33 @@ class Gateway:
             host = name
             if await self._grant_connect(data, host, port, proto, client, block):
                 return
-            # 1) decide on the name alone: denied / not-yet-approved names are never resolved
+            # 1) decide on the name alone, where no address can change the result (`early`): denied and
+            #    not-yet-approved names are then never resolved
             pre = self.access.on_name(host, port)
             hint = self.access.grant_hint(host, port)
-            if hint and pre.action != "allow":
-                self._hit(pre)
-                return block(f"{pre.reason}; {hint}")
-            if pre.action == "ask":
-                pre = await self.ask(host, port, [], proto, client)
-            if pre.action != "allow":
-                self._hit(pre)
-                return block(f"{pre.reason} (not resolved)")
-            # 2) resolve and re-check with IPs (hard deny, CIDR rules); pin to the checked IP
+            if pre.early:
+                if hint:
+                    self._hit(pre)
+                    return block(f"{pre.reason}; {hint}")
+                if pre.action == "ask":
+                    pre = await self.ask(host, port, [], proto, client)
+                if pre.action != "allow":
+                    self._hit(pre)
+                    return block(f"{pre.reason} (not resolved)")
+            # 2) resolve and decide with the addresses (the whole rule list); pin to the checked IP
             try:
                 ips = await self.resolve(host, port)
             except OSError as e:
                 return block(f"dns failure: {e}")
             if not ips:
                 return block("no address")
-            dec = await self.decide(host, port, ips, proto, client, learning=pre.reason == LEARNING)
+            learning = pre.reason == LEARNING
+            if hint:
+                dec = self.access.on_addresses(host, port, ips, proto, learning)
+                if dec.action != "allow":
+                    self._hit(dec)
+                    return block(f"{dec.reason}; {hint}", ips)
+            dec = await self.decide(host, port, ips, proto, client, learning=learning)
         reason = dec.reason
         self._hit(dec)
         if dec.action != "allow":

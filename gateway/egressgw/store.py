@@ -50,6 +50,11 @@ class EventLog:
             " host TEXT NOT NULL, port INTEGER NOT NULL, scope TEXT NOT NULL, by TEXT)"
         )
         self.db.execute("CREATE TABLE IF NOT EXISTS dismissed(key TEXT PRIMARY KEY, ts REAL NOT NULL)")
+        # per name rule: how often an address deny rule below it blocked what the name resolved to (ADR-0019)
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS rule_shadows(rule_id TEXT PRIMARY KEY, count INTEGER NOT NULL,"
+            " last REAL NOT NULL, address TEXT, by_rule TEXT, range TEXT)"
+        )
         self.keep_days = keep_days
         self.max_events = max_events
         self._last_prune = 0.0
@@ -100,6 +105,27 @@ class EventLog:
         )
         self.db.execute("DELETE FROM approvals WHERE ts < ?", (old,))
         self.db.execute("DELETE FROM dismissed WHERE ts < ?", (old,))
+
+    def flush_shadows(self, shadows: dict[str, dict], rule_ids: list[str], now: float | None = None) -> None:
+        """Add in-memory shadow records ({name rule id: {count, last, address, by, range}}): the count adds up,
+        the rest is the latest case. Records of rules that are gone, or older than log_keep_days, are forgotten."""
+        now = now or time.time()
+        self.db.executemany(
+            "INSERT INTO rule_shadows(rule_id, count, last, address, by_rule, range) VALUES(?,?,?,?,?,?)"
+            " ON CONFLICT(rule_id) DO UPDATE SET count = count + excluded.count, last = excluded.last,"
+            " address = excluded.address, by_rule = excluded.by_rule, range = excluded.range",
+            [(rid, s["count"], s["last"], s["address"], s["by"], s["range"]) for rid, s in shadows.items()],
+        )
+        ids = list(rule_ids)
+        marks = ",".join("?" * len(ids))
+        self.db.execute(
+            f"DELETE FROM rule_shadows WHERE rule_id NOT IN ({marks}) OR last < ?",  # noqa: S608
+            [*ids, now - self.keep_days * 86400],
+        )
+
+    def shadow_stats(self) -> dict[str, dict]:
+        rows = self.db.execute("SELECT rule_id, count, last, address, by_rule, range FROM rule_shadows")
+        return {r[0]: {"count": r[1], "last": r[2], "address": r[3], "by": r[4], "range": r[5]} for r in rows}
 
     def hit_stats(self) -> dict[str, dict]:
         rows = self.db.execute("SELECT rule_id, hits, last, since FROM rule_hits")

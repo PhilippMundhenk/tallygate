@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+from egressgw.destinations import is_local
 from egressgw.policy import host_matches, is_ip, port_matches
 
 if TYPE_CHECKING:
@@ -90,7 +91,7 @@ def overview(gw: Gateway) -> dict:
             entry = {
                 "name": g.name,
                 "levels": g.levels,
-                "lan": t.lan,
+                "local": is_local(t.fixed()),  # the target names an address that is not public
                 "scheme": t.scheme,
                 "paths": None if t.scheme == "tcp" or t.paths == ["/*"] else t.paths,
                 "credentials": any(i["host"] == t.host for i in g.inject),
