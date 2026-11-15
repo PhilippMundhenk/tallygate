@@ -1,5 +1,5 @@
 "use strict";
-/* Workspace files (#76): browse /workspace, upload into the open folder, download files. Control checks every
+/* Workspace files (#76): browse /workspace, upload into the open folder, download and delete (#199). Control checks every
    path and relays to the agent's status server; downloads are attachments (application/octet-stream), so
    nothing from the workspace is rendered on this origin. Names come from the agent: always escaped. */
 const fileState = { path: "", maxUpload: 0 };
@@ -22,10 +22,18 @@ async function loadFiles(path = fileState.path) {
       : e.type === "link" ? `${esc(e.name)} <span class="muted">(link)</span>` : esc(e.name);
     const action = e.type === "file" ? (e.size > r.max_download ? '<span class="muted">too large</span>'
       : `<a class="dl" href="${esc(fileUrl("/api/files/download", p))}" download="${esc(e.name)}" aria-label="Download ${esc(e.name)}">Download</a>`) : "";
-    rows.push(`<tr><td>${name}</td><td>${e.type === "file" ? esc(fmtBytes(e.size)) : ""}</td><td>${esc(fmtDate(e.mtime))}</td><td>${action}</td></tr>`);
+    const del = `<button class="small danger" data-del="${esc(p)}" data-name="${esc(e.name)}" data-kind="${e.type}" aria-label="Delete ${esc(e.name)}">Delete</button>`;
+    rows.push(`<tr><td>${name}</td><td>${e.type === "file" ? esc(fmtBytes(e.size)) : ""}</td><td>${esc(fmtDate(e.mtime))}</td><td class="file-actions">${action} ${del}</td></tr>`);
   }
   if (!r.entries.length) rows.push('<tr><td colspan="4" class="muted">This folder is empty.</td></tr>');
   $("#fileBody").innerHTML = rows.join("");
+  for (const b of $$("#fileBody [data-del]")) {
+    const { del: p, name, kind } = b.dataset;
+    b.onclick = confirmClick(b, kind === "dir" ? `Delete folder ${name} and everything in it?` : `Delete ${name}?`, async () => {
+      try { await api("DELETE", fileUrl("/api/files", p)); } finally { await loadFiles().catch(() => {}); }
+      toast(`Deleted ${name}`);
+    });
+  }
   $("#fileTruncated").classList.toggle("hidden", !r.truncated);
 }
 tabHooks.files = () => loadFiles();

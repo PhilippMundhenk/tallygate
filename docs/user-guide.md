@@ -327,6 +327,8 @@ a patch) and download results, without `docker cp` or a shell.
   large* instead). A folder shows at most its first 2000 entries. Files are always sent as
   downloads (`application/octet-stream`, `Content-Disposition: attachment`), never shown in the UI, so a
   file the agent wrote (HTML, SVG, a script) cannot run on the UI's address.
+- **Delete** removes a file, or a folder with everything in it, after a second click to confirm. There is no
+  undo. A link is removed itself, never what it points to; the workspace folder itself cannot be deleted.
 - Everything stays inside `/workspace`: no `..`, no absolute paths, and links that point outside are refused
   (they are listed as *link*, but cannot be opened or written through).
 - Uploads are logged by control (`workspace upload: <path> (<bytes>) by <user>`).

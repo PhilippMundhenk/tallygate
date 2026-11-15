@@ -509,6 +509,7 @@ def selftest() -> list[dict]:
 # ---------------------------------------------------------------- workspace files (#76)
 # Strictly inside WORKSPACE: relative paths only, no "." / ".." components, and the resolved path (symlinks
 # followed) must stay inside the resolved workspace. Files are opened with O_NOFOLLOW and must be regular files.
+# Deleting (#199) resolves the parent folder the same way and never follows the entry itself.
 # This server runs as the agent user, so it can never reach more than the agent itself.
 FILES_MAX_ENTRIES = 2000
 FILES_HARD_MAX = 1024**3  # absolute upper bound for one upload; control enforces the configured limit
@@ -604,6 +605,28 @@ def write_upload(rel: str, length: int, read, overwrite: bool) -> dict:
         with contextlib.suppress(FileNotFoundError):
             tmp.unlink()
     return {"path": rel, "size": done}
+
+
+def delete_path(query: dict) -> dict:
+    """Delete one file, link or folder (with everything in it) inside the workspace (#199). The parent folder
+    must resolve inside the workspace; the entry itself is never followed: a link is removed, not its target,
+    and rmtree does not descend into links either."""
+    rel = rel_path(query.get("path"))
+    if not rel:
+        raise SetupError(400, "the workspace itself cannot be deleted")
+    parent_rel, _, name = rel.rpartition("/")
+    target = inside(parent_rel) / name
+    try:
+        is_dir = stat.S_ISDIR(os.lstat(target).st_mode)
+        if is_dir:
+            shutil.rmtree(target)
+        else:
+            os.unlink(target)
+    except (FileNotFoundError, NotADirectoryError):
+        raise SetupError(404, "no such file or folder") from None
+    except OSError:
+        raise SetupError(403, "cannot delete this") from None
+    return {"path": rel, "type": "dir" if is_dir else "file"}
 
 
 # ---------------------------------------------------------------- HTTP
@@ -710,6 +733,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(e.status, {"error": str(e)})
             return
         self._send(200, result)
+
+    def do_DELETE(self):
+        url = urllib.parse.urlsplit(self.path)
+        if url.path != "/files":
+            self._send(404, {"error": "not found"})
+            return
+        self._dispatch(delete_path, dict(urllib.parse.parse_qsl(url.query)))
 
     def log_message(self, *args):
         pass

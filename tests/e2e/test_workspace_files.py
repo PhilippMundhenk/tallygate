@@ -3,6 +3,7 @@ workspace."""
 
 from __future__ import annotations
 
+import json
 import urllib.request
 
 from .test_setup_wizard import login
@@ -65,6 +66,46 @@ def test_no_way_out_of_the_workspace(agent_control, fake_agent, tmp_path):
     assert secret.read_text() == "outside" and not (tmp_path / "new.txt").exists()
     entries = {e["name"]: e["type"] for e in ui.call("GET", "/api/files")[1]["entries"]}
     assert entries["escape"] == "link" and entries["escape-dir"] == "link"
+
+
+def delete(ui, path: str, csrf: bool = True):
+    req = urllib.request.Request(
+        f"{ui.base}/api/files?path={urllib.parse.quote(path)}",
+        method="DELETE",
+        headers={"X-Tallygate": "1"} if csrf else {},
+    )
+    try:
+        with ui.opener.open(req, timeout=20) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+def test_delete_files_and_folders(agent_control, fake_agent, tmp_path):
+    """#199: a file, a folder with everything in it, a link (never its target); nothing outside, never the root."""
+    ui = login(agent_control["base"])
+    ws = fake_agent["workspace"]
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("outside")
+    (ws / "trash" / "deep").mkdir(parents=True)
+    (ws / "trash" / "deep" / "a.txt").write_text("a")
+    (ws / "trash" / "link-out").symlink_to(outside)
+    (ws / "old.txt").write_text("old")
+    (ws / "del-escape").symlink_to(outside)
+    assert delete(ui, "old.txt", csrf=False)[0] == 403 and (ws / "old.txt").exists()
+    assert delete(ui, "old.txt") == (200, {"path": "old.txt", "type": "file"})
+    assert not (ws / "old.txt").exists()
+    assert delete(ui, "old.txt") == (404, {"error": "no such file or folder"})
+    for path in ("", "../outside", "/etc/passwd", "trash/../.."):
+        assert delete(ui, path) == (400, {"error": "invalid path"}), path
+    assert delete(ui, "del-escape/secret.txt") == (403, {"error": "outside the workspace"})
+    assert delete(ui, "del-escape") == (200, {"path": "del-escape", "type": "file"})  # the link, not its target
+    assert delete(ui, "trash") == (200, {"path": "trash", "type": "dir"})
+    assert not (ws / "trash").exists() and not (ws / "del-escape").is_symlink() and ws.is_dir()
+    assert (outside / "secret.txt").read_text() == "outside"
+    names = {e["name"] for e in ui.call("GET", "/api/files")[1]["entries"]}
+    assert not names & {"old.txt", "trash", "del-escape"}
 
 
 def test_files_tab_is_served(agent_control):
