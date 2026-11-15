@@ -82,7 +82,9 @@ def test_a_lan_grant_never_reaches_the_stack_itself(make_gateway, upstream):
         assert proxy_request(gw["ports"]["http"], f"{host}:{port}", "/")[0] in (403, 502)
         _, events, _ = gw["api"].call("GET", "/events?limit=20")
         denied = next(e for e in events if e.get("host") == host and e["action"] == "deny")
-        assert denied["reason"] == f"grant {name}: locked: 127.0.0.2 belongs to the tallygate stack itself (127.0.0.2/32)"
+        assert (
+            denied["reason"] == f"grant {name}: locked: 127.0.0.2 belongs to the tallygate stack itself (127.0.0.2/32)"
+        )
 
 
 def _send(sock, host, path) -> int:

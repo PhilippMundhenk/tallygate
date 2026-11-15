@@ -59,7 +59,11 @@ def test_names_are_decided_before_they_are_resolved_where_no_address_can_change_
     # a name that resolves to the approved address is allowed by that rule (nothing listens there: no tunnel)
     connect_tunnel(proxy, f"probe.test:{port}", 10)
     ev = events_for(gw, "probe.test")[0]
-    assert (ev["action"], ev["reason"], ev["ips"]) == ("allow", f"rule {rule['id']} (approved via always)", ["127.0.0.1"])
+    assert (ev["action"], ev["reason"], ev["ips"]) == (
+        "allow",
+        f"rule {rule['id']} (approved via always)",
+        ["127.0.0.1"],
+    )
     # another name on that port is resolved first and then asked about, with its addresses shown
     threading.Thread(target=connect_tunnel, args=(proxy, f"probe3.test:{port}", 8), daemon=True).start()
     p = wait_pending(gw, port)

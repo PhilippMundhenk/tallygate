@@ -9,7 +9,13 @@ from .conftest import CONTROL_PASSWORD, start_control
 from .helpers import Api
 
 CONFIG = {"hard_deny_floor": ["10.0.0.0/8"]}
-BLOCK = {"id": "block-10.0.0.0_8", "action": "deny", "cidr": "10.0.0.0/8", "note": "never (gateway config)", "source": "config"}
+BLOCK = {
+    "id": "block-10.0.0.0_8",
+    "action": "deny",
+    "cidr": "10.0.0.0/8",
+    "note": "never (gateway config)",
+    "source": "config",
+}
 POLICY = {"default": "ask", "ask_timeout": 30, "rules": [{"id": "keep", "action": "allow", "host": "keep.test"}]}
 
 
@@ -67,7 +73,9 @@ def test_export_and_import_move_policy_and_ui_grants_without_secrets(stack):
     )
     assert status == 400 and "172.31.99.9 belongs to the tallygate stack itself" in err["error"]
     assert [r["id"] for r in gw["api"].call("GET", "/policy")[1]["rules"]] == ["keep", BLOCK["id"]]
-    doc["grants"]["nas"] = {"targets": [{"scheme": "http", "host": "nas.test", "port": 80, "lan": True, "address": "192.168.9.9"}]}
+    doc["grants"]["nas"] = {
+        "targets": [{"scheme": "http", "host": "nas.test", "port": 80, "lan": True, "address": "192.168.9.9"}]
+    }
     status, prev, _ = ui.call("POST", "/api/gw/policy/import", {"yaml": yaml.safe_dump(doc)})
     assert status == 200 and [r["id"] for r in prev["diff"]["rules"]["added"]] == ["pypi"] and not prev["applied"]
     assert prev["warnings"] == ["grant nas: `lan` is ignored; a local target needs an IP or a fixed address"]
@@ -76,7 +84,9 @@ def test_export_and_import_move_policy_and_ui_grants_without_secrets(stack):
     _, pol, _ = gw["api"].call("GET", "/policy")
     assert [r["id"] for r in pol["rules"]] == ["pypi", "keep", BLOCK["id"]]
     nas = next(d for d in gw["api"].call("GET", "/grants")[1]["defs"] if d["name"] == "nas")
-    assert nas["targets"][0]["address"] == "192.168.9.9" and nas["targets"][0]["local"] and "lan" not in nas["targets"][0]
+    assert (
+        nas["targets"][0]["address"] == "192.168.9.9" and nas["targets"][0]["local"] and "lan" not in nas["targets"][0]
+    )
     # an export from before ADR-0019 is migrated on import: its hard_deny is a deny rule, the config block comes back
     old = {"default": "ask", "hard_deny": ["203.0.113.9/32"], "floor_open": [], "rules": POLICY["rules"]}
     text = yaml.safe_dump({"tallygate_export": 1, "policy": old})

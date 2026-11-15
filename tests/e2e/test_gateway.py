@@ -49,9 +49,14 @@ def test_a_name_resolving_to_a_blocked_private_ip_is_denied_at_once(gateway):
     status, _ = http_via_proxy(gateway["ports"]["http"], "http://lan.test/")
     assert status == 502 and time.time() - t0 < 2  # never asked
     ev = last_events(gateway, 1)[0]
-    assert ev["host"] == "lan.test" and ev["action"] == "deny" and ev["reason"] == (
-        "name allowed by rule lan, but it resolves to 192.168.99.99, inside blocked range 192.168.0.0/16 "
-        "(rule block-192.168.0.0_16): add an allow for the address above that rule"
+    assert (
+        ev["host"] == "lan.test"
+        and ev["action"] == "deny"
+        and ev["reason"]
+        == (
+            "name allowed by rule lan, but it resolves to 192.168.99.99, inside blocked range 192.168.0.0/16 "
+            "(rule block-192.168.0.0_16): add an allow for the address above that rule"
+        )
     )
 
 

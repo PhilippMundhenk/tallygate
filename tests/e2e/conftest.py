@@ -157,7 +157,6 @@ def gateway(tmp_path_factory, upstream):
     pytest.importorskip("aiohttp", reason="the gateway API needs aiohttp (pip install -r gateway/requirements.txt)")
     data = tmp_path_factory.mktemp("gw-data")
     ports = {k: free_port() for k in ("http", "socks", "dns", "api", "svc", "grants")}
-    http_t = {"scheme": "http", "port": upstream["http"]}
     https_t = {"scheme": "https", "port": upstream["https"]}
     (data / "config.yaml").write_text(
         yaml.safe_dump(
@@ -180,7 +179,9 @@ def gateway(tmp_path_factory, upstream):
                 "grants": {
                     "svc": {
                         "description": "echo API",
-                        "targets": [{"host": "svc.test", "paths": ["/api/*"], "scheme": "http", "port": upstream["svc"]}],
+                        "targets": [
+                            {"host": "svc.test", "paths": ["/api/*"], "scheme": "http", "port": upstream["svc"]}
+                        ],
                         "levels": ["read", "write"],
                         "approval": {"read": "auto", "write": "ask"},
                     },

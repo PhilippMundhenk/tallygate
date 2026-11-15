@@ -190,7 +190,9 @@ def test_grant_editor_has_the_simple_form_and_keeps_every_setting_under_advanced
     assert page.index("</details>", advanced) < end  # Save stays outside the folded part
     app = ui.call("GET", "/static/app.js")[1]
     assert b"function grantSimpleToAdvanced()" in app and b"function grantAdvancedToSimple()" in app
-    assert 'id="geLan"' not in page and b"t-lan" not in app and b"lan_allow" not in app and "grants_lan_allow" not in page
+    assert (
+        'id="geLan"' not in page and b"t-lan" not in app and b"lan_allow" not in app and "grants_lan_allow" not in page
+    )
     # Quick settings: the local-network form is always there, and has a place for the gateway's explanation
     assert '<form id="qaLanForm" class="lan-form">' in page and 'id="qaLanError" class="alert bad hidden"' in page
 

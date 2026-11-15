@@ -494,7 +494,9 @@ def test_selftest_all_blocked_passes(st, monkeypatch):
     assert ("connect", "169.254.169.254", 80) in calls
     # ADR-0019: the management endpoints are probed through the proxy too (locked) - by address only, a name
     # would be a destination the policy may ask about
-    assert "Management endpoint 172.31.0.1:8081 via proxy (locked)" in names and ("connect", "172.31.0.1", 8081) in calls
+    assert (
+        "Management endpoint 172.31.0.1:8081 via proxy (locked)" in names and ("connect", "172.31.0.1", 8081) in calls
+    )
     assert ("connect", "egress-gw", 8081) not in calls
     assert next(r for r in res if "DNS resolution" in r["name"])["detail"].startswith("blocked (gaierror")
 

@@ -40,7 +40,10 @@ def test_one_address_is_opened_by_an_allow_above_the_block_and_the_stack_never(m
     # a NAME rule does not open it
     assert api.call("POST", "/destinations", {"match": {"host": "nas.test"}, "access": "allow", "id": "n"})[0] == 201
     status, body = http_via_proxy(proxy, f"http://nas.test:{port}/x")
-    assert status == 502 and b"name allowed by rule n, but it resolves to 127.0.0.2, inside blocked range 127.0.0.2/31" in body
+    assert (
+        status == 502
+        and b"name allowed by rule n, but it resolves to 127.0.0.2, inside blocked range 127.0.0.2/31" in body
+    )
     model = api.call("GET", "/model")[1]
     shadowed = next(d for d in model["destinations"] if d.get("id") == "n")["shadowed"]
     assert shadowed["count"] == 1 and shadowed["address"] == lan and shadowed["by"] == "block-127.0.0.2_31"
@@ -74,7 +77,10 @@ def test_one_address_is_opened_by_an_allow_above_the_block_and_the_stack_never(m
         {
             "default": "allow",
             "seeded": ["127.0.0.2/31"],  # the block "deleted"
-            "rules": [{"id": "all", "action": "allow", "cidr": "0.0.0.0/0"}, {"id": "n", "action": "allow", "host": "*"}],
+            "rules": [
+                {"id": "all", "action": "allow", "cidr": "0.0.0.0/0"},
+                {"id": "n", "action": "allow", "host": "*"},
+            ],
         },
         GW_TEST_FLOOR_REPLACE="1",
         GW_INTERNAL_NETS="127.0.0.2/32",
@@ -94,7 +100,11 @@ def test_the_gateway_api_is_not_reachable_through_the_proxy(make_gateway, upstre
     """The gateway's own listeners are locked by address and port, with every block deleted and all allowed."""
     gw = make_gateway(
         {"never": ["203.0.113.7/32"]},
-        {"default": "allow", "seeded": ["203.0.113.7/32"], "rules": [{"id": "all", "action": "allow", "cidr": "0.0.0.0/0"}]},
+        {
+            "default": "allow",
+            "seeded": ["203.0.113.7/32"],
+            "rules": [{"id": "all", "action": "allow", "cidr": "0.0.0.0/0"}],
+        },
         GW_TEST_FLOOR_REPLACE="1",
     )
     proxy = gw["ports"]["http"]
