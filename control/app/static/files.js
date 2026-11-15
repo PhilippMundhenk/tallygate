@@ -11,27 +11,27 @@ async function loadFiles(path = fileState.path) {
   fileState.path = r.path; fileState.maxUpload = r.max_upload;
   $("#fileHint").textContent = `Up to ${fmtBytes(r.max_upload)} per file (FILES_MAX_UPLOAD); downloads up to ${fmtBytes(r.max_download)}.`;
   const parts = r.path ? r.path.split("/") : [];
-  $("#fileCrumbs").innerHTML = [`<button class="small secondary" data-dir="">workspace</button>`]
-    .concat(parts.map((p, i) => `<span aria-hidden="true">/</span><button class="small secondary" data-dir="${esc(parts.slice(0, i + 1).join("/"))}"${i === parts.length - 1 ? ' aria-current="page"' : ""}>${esc(p)}</button>`))
+  $("#fileCrumbs").innerHTML = [`<button class="small ghost" data-dir="">workspace</button>`]
+    .concat(parts.map((p, i) => `<span aria-hidden="true">/</span><button class="small ghost" data-dir="${esc(parts.slice(0, i + 1).join("/"))}"${i === parts.length - 1 ? ' aria-current="page"' : ""}>${esc(p)}</button>`))
     .join("");
   const rows = [];
-  if (r.path) rows.push(`<tr><td colspan="4"><button class="link" data-dir="${esc(parts.slice(0, -1).join("/"))}">⬑ up</button></td></tr>`);
+  if (r.path) rows.push(`<tr><td colspan="4"><button class="link" data-dir="${esc(parts.slice(0, -1).join("/"))}">Parent folder</button></td></tr>`);
   for (const e of r.entries) {
     const p = joinPath(r.path, e.name);
-    const name = e.type === "dir" ? `<button class="link" data-dir="${esc(p)}">📁 ${esc(e.name)}/</button>`
-      : e.type === "link" ? `${esc(e.name)} <span class="muted">(link)</span>` : esc(e.name);
+    const name = e.type === "dir" ? `<button class="link" data-dir="${esc(p)}" aria-label="Open folder ${esc(e.name)}">${esc(e.name)}/</button>`
+      : e.type === "link" ? `${esc(e.name)} <span class="tag">link</span>` : esc(e.name);
     const action = e.type === "file" ? (e.size > r.max_download ? '<span class="muted">too large</span>'
       : `<a class="dl" href="${esc(fileUrl("/api/files/download", p))}" download="${esc(e.name)}" aria-label="Download ${esc(e.name)}">Download</a>`) : "";
-    const del = `<button class="small danger" data-del="${esc(p)}" data-name="${esc(e.name)}" data-kind="${e.type}" aria-label="Delete ${esc(e.name)}">Delete</button>`;
+    const del = `<button class="small ghost danger" data-del="${esc(p)}" data-name="${esc(e.name)}" data-kind="${e.type}" aria-label="Delete ${esc(e.name)}">Delete</button>`;
     rows.push(`<tr><td>${name}</td><td>${e.type === "file" ? esc(fmtBytes(e.size)) : ""}</td><td>${esc(fmtDate(e.mtime))}</td><td class="file-actions">${action} ${del}</td></tr>`);
   }
-  if (!r.entries.length) rows.push('<tr><td colspan="4" class="muted">This folder is empty.</td></tr>');
+  if (!r.entries.length) rows.push('<tr><td colspan="4" class="muted">This folder is empty. Upload files with the form above.</td></tr>');
   $("#fileBody").innerHTML = rows.join("");
   for (const b of $$("#fileBody [data-del]")) {
     const { del: p, name, kind } = b.dataset;
     b.onclick = confirmClick(b, kind === "dir" ? `Delete folder ${name} and everything in it?` : `Delete ${name}?`, async () => {
       try { await api("DELETE", fileUrl("/api/files", p)); } finally { await loadFiles().catch(() => {}); }
-      toast(`Deleted ${name}`);
+      toast(`${name} deleted`);
     });
   }
   $("#fileTruncated").classList.toggle("hidden", !r.truncated);
@@ -66,7 +66,7 @@ $("#fileForm").addEventListener("submit", guard(async (e) => {
     }
   } finally { btn.disabled = false; }
   status.className = "step-msg " + (failed.length ? "bad" : "ok");
-  status.textContent = (done.length ? `✔ Uploaded ${done.length}: ${done.join(", ")}. ` : "") + (failed.length ? `✖ ${failed.join("; ")}` : "");
+  status.textContent = (done.length ? `✓ Uploaded ${done.length}: ${done.join(", ")}. ` : "") + (failed.length ? `✕ ${failed.join("; ")}` : "");
   $("#fileInput").value = "";
   await loadFiles();
 }));

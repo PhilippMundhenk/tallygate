@@ -4,25 +4,27 @@
 (() => {
   const box = $("#historyBox");
   if (!box) return;
-  box.innerHTML = `<p class="hint">Every change to the policy is kept as a version: from this UI, the API, approvals,
-      shortcuts and the emergency stop. Compare two versions or go back to one. The hard-deny floor and secrets
-      are never part of a version.</p>
+  box.innerHTML = `<p class="hint">Every change to the policy is kept as a version: compare two, or go back to one.</p>
+    <details class="help"><summary>What is in a version?</summary>
+      <p>Changes from this UI, the API, approvals, shortcuts and the emergency stop each make a version. The
+        hard-deny floor and secrets are never part of a version.</p></details>
     <div class="row wrap">
       <label class="inline">From <select id="hiFrom"></select></label>
       <label class="inline">To <select id="hiTo"></select></label>
-      <button id="hiDiff" class="secondary">Show changes</button>
+      <button id="hiDiff" class="secondary">Compare versions</button>
     </div>
     <div id="hiDiffOut" class="diff hidden" role="region" aria-label="Changes between the versions" tabindex="-1"></div>
     <div class="table-wrap"><table class="history"><thead><tr><th>Version</th><th>When</th><th>By</th><th>What</th>
       <th>Mode</th><th>Rules</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="hiBody"></tbody></table></div>
     <button id="hiMore" class="small secondary">Load older</button>
     <h4>Export and import</h4>
-    <p class="hint">One YAML file with the policy and the grants defined in the UI, to move a setup to another host
-      or share it as a starting point. Secrets are not included. An import is checked like a normal policy change and
-      shown before anything is replaced; the hard-deny floor stays as configured.</p>
+    <p class="hint">One YAML file with the policy and the grants defined in the UI; secrets are not included.</p>
+    <details class="help"><summary>What happens on an import?</summary>
+      <p>The file moves a setup to another host or shares it as a starting point. An import is checked like a
+        normal policy change and shown before anything is replaced; the hard-deny floor stays as configured.</p></details>
     <div class="row wrap">
-      <button id="hiExport" class="secondary">Export (YAML)</button>
-      <label class="filebtn">Import from file&hellip;<input id="hiImport" type="file" accept=".yaml,.yml,text/yaml"></label>
+      <button id="hiExport" class="secondary">Export policy</button>
+      <label class="filebtn">Import policy&hellip;<input id="hiImport" type="file" accept=".yaml,.yml,text/yaml"></label>
     </div>
     <div id="hiImportOut" class="diff hidden" role="region" aria-label="Import preview"></div>`;
 
@@ -54,7 +56,7 @@
   function fillSelects() {
     const opts = versions.map((v) => `<option value="${v.id}">${esc(label(v))}</option>`).join("");
     const from = $("#hiFrom"), to = $("#hiTo"), f = from.value, t = to.value;
-    from.innerHTML = opts; to.innerHTML = `<option value="current">current policy</option>${opts}`;
+    from.innerHTML = opts; to.innerHTML = `<option value="current">Current policy</option>${opts}`;
     if (f && versions.some((v) => String(v.id) === f)) from.value = f; else if (versions[1]) from.value = versions[1].id;
     if (t) to.value = t;
   }
@@ -63,12 +65,12 @@
     tr.innerHTML = `<td>#${esc(v.id)}${i === 0 ? ' <span class="tag">current</span>' : ""}</td><td>${esc(fmtDate(v.ts))}</td>
       <td>${esc(v.by)}</td><td>${esc(v.what)}</td><td>${esc(v.default)}</td><td>${esc(v.rules)}</td><td><div class="cellbtns"></div></td>`;
     const cell = $(".cellbtns", tr);
-    const d = document.createElement("button"); d.className = "small secondary"; d.textContent = "Changes";
+    const d = document.createElement("button"); d.className = "small ghost"; d.textContent = "Show changes";
     d.setAttribute("aria-label", `Changes from version ${v.id} to the current policy`);
     d.onclick = guard(() => showDiff(v.id, "current"));
     cell.appendChild(d);
     if (i > 0) {
-      const r = document.createElement("button"); r.className = "small"; r.textContent = "Restore";
+      const r = document.createElement("button"); r.className = "small ghost danger"; r.textContent = "Restore version";
       r.setAttribute("aria-label", `Restore version ${v.id}`);
       r.onclick = confirmClick(r, `Replace the current policy with version ${v.id} (${fmtDate(v.ts)})?`, async () => {
         await gw("POST", `/policy/history/${v.id}/restore`); toast(`Version ${v.id} restored`);
@@ -84,7 +86,7 @@
     versions = older ? versions.concat(r.versions) : r.versions;
     const body = $("#hiBody"); body.innerHTML = "";
     versions.forEach((v, i) => body.appendChild(row(v, i)));
-    if (!versions.length) body.innerHTML = '<tr><td colspan="7" class="muted">No versions yet.</td></tr>';
+    if (!versions.length) body.innerHTML = '<tr><td colspan="7" class="muted">No versions yet. The first policy change creates one.</td></tr>';
     $("#hiMore").classList.toggle("hidden", r.versions.length < 50);
     fillSelects(); loaded = true;
     if (older && !r.versions.length) toast("No older versions");
@@ -102,7 +104,7 @@
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([r.yaml], { type: "text/yaml" })); a.download = r.filename;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    toast(`Exported ${r.filename}`);
+    toast(`Policy exported: ${r.filename}`);
   });
   $("#hiImport").onchange = guard(async (e) => {
     const file = e.target.files[0]; e.target.value = "";
@@ -112,18 +114,18 @@
     const out = $("#hiImportOut"); out.classList.remove("hidden");
     let r;
     try { r = await gw("POST", "/policy/import", { yaml: text }); } catch (err) {
-      out.innerHTML = `<p class="bad">Not imported: ${esc(err.message)}</p>`; throw err;
+      out.innerHTML = `<p class="alert bad">Not imported: ${esc(err.message)}</p>`; throw err;
     }
     const g = r.grants;
     out.innerHTML = `<h4>Import ${esc(file.name)}: what would change</h4>${renderDiff(r.diff)}
       ${g.added.length ? `<p>New UI grants: <code>${esc(g.added.join(", "))}</code></p>` : ""}
       ${g.changed.length ? `<p>Replaced UI grants: <code>${esc(g.changed.join(", "))}</code></p>` : ""}
-      ${r.warnings.map((w) => `<p class="warn">${esc(w)}</p>`).join("")}
-      <div class="btns"><button id="hiApply">Import</button><button id="hiCancel" class="secondary">Cancel</button></div>`;
+      ${r.warnings.map((w) => `<p class="alert warn">${esc(w)}</p>`).join("")}
+      <div class="btns"><button id="hiApply">Import policy</button><button id="hiCancel" class="secondary">Cancel</button></div>`;
     $("#hiCancel").onclick = () => { out.classList.add("hidden"); out.innerHTML = ""; $("#hiExport").focus(); };
     $("#hiApply").onclick = confirmClick($("#hiApply"), "Replace the current policy with this file?", async () => {
       await gw("POST", "/policy/import", { yaml: text, apply: true });
-      out.classList.add("hidden"); out.innerHTML = ""; toast(`Imported ${file.name}`);
+      out.classList.add("hidden"); out.innerHTML = ""; toast(`Policy imported: ${file.name}`);
       await loadPolicy(true); await load(); $("#hiExport").focus();
     });
     $("#hiApply").focus();

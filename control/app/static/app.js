@@ -752,7 +752,7 @@ function connectStream() {
   const meta = await api("GET", "/api/meta");
   const terms = meta.terminals || [];
   $("#termButtons").innerHTML = terms.length
-    ? `<label class="inline">Console <select id="termSelect"><option value="">Choose a console…</option>${terms.map((n) =>
+    ? `<label class="inline">Connect to <select id="termSelect"><option value="">Choose a console…</option>${terms.map((n) =>
       `<option value="${esc(n)}">${esc(TERM_TEXT[n] || n)}</option>`).join("")}</select></label>`
     : '<p class="empty">No console is available: the agent reported none.</p>';
   if (terms.length) $("#termSelect").onchange = (e) => { if (e.target.value) openTerm(e.target.value); };

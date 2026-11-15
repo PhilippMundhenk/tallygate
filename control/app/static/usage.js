@@ -8,10 +8,10 @@
   box.innerHTML = `<div id="sgList" aria-live="polite"></div>
     <div id="usStale" class="hidden"></div>
     <div class="toolbar">
-      <input id="usFilter" type="search" aria-label="Filter rules by host, note or source" placeholder="filter host / note / source">
-      <select id="usShow" aria-label="Show"><option value="all">all rules</option><option value="unused">unused only</option>
-        <option value="used">matched only</option></select>
-      <button id="usRefresh" class="small secondary">Refresh</button>
+      <input id="usFilter" type="search" aria-label="Filter rules by host, note or source" placeholder="Filter by host, note or source">
+      <select id="usShow" aria-label="Show"><option value="all">All rules</option><option value="unused">Unused only</option>
+        <option value="used">Matched only</option></select>
+      <button id="usRefresh" class="small secondary">Refresh usage</button>
     </div>
     <div class="table-wrap"><table class="usage"><thead><tr>
       <th aria-sort="ascending"><button class="sort" data-key="pos">#</button></th>
@@ -33,49 +33,48 @@
     rows.sort((a, b) => { const x = val(a, sort.key), y = val(b, sort.key); return (x > y ? 1 : x < y ? -1 : 0) * sort.dir; });
     $("#usBody").innerHTML = rows.map((r) => `<tr><td>${esc(r.pos)}</td>
       <td><code class="a-${esc(r.action)}">${esc(match(r))}</code>${r.note ? ` <span class="muted">${esc(r.note)}</span>` : ""}
-        ${r.stale ? ' <span class="tag warn">unused</span>' : ""}</td>
+        ${r.stale ? ' <span class="status warn">unused</span>' : ""}</td>
       <td>${esc(r.source || "user")}</td><td>${esc(r.hits)}</td>
       <td>${r.last ? esc(fmtDate(r.last)) : '<span class="muted">never</span>'}</td></tr>`).join("") ||
-      '<tr><td colspan="5" class="muted">No rules match the filter.</td></tr>';
+      `<tr><td colspan="5" class="muted">${rules.length ? "No rules match the filter." : "No rules yet. Add one on Destinations."}</td></tr>`;
     $$("#usageBox th").forEach((th) => {
       const k = $("button", th).dataset.key;
       th.setAttribute("aria-sort", k === sort.key ? (sort.dir > 0 ? "ascending" : "descending") : "none");
     });
-    $("#usHint").textContent = `Hits count connections decided by the rule since it was first seen (updated every 15 s). ` +
-      `A permanent rule is "unused" when it has not matched for ${staleDays} days.`;
+    $("#usHint").textContent = `Hits count connections decided by the rule since it was first seen (updated every 15 s); ` +
+      `a permanent rule is unused after ${staleDays} days without a match.`;
   }
   function renderStale() {
     const stale = rules.filter((r) => r.stale), el = $("#usStale");
     el.classList.toggle("hidden", !stale.length);
     if (!stale.length) { el.innerHTML = ""; return; }
     el.innerHTML = `<h4>Unused rules</h4><p class="hint">${stale.length} permanent rule${stale.length > 1 ? "s" : ""} did not
-      match anything in ${staleDays} days. Removing them keeps the policy small and easy to review; the history
-      keeps them if you need one back.</p>
+      match anything in ${staleDays} days; the policy history keeps a deleted rule if you need it back.</p>
       <ul class="checklist">${stale.map((r) => `<li><label><input type="checkbox" value="${esc(r.id)}" checked>
         <code>${esc(match(r))}</code> <span class="muted">${r.last ? "last " + esc(fmtDate(r.last)) : "never matched"}${r.note ? " · " + esc(r.note) : ""}</span></label></li>`).join("")}</ul>
-      <button id="usRemove" class="small danger">Remove selected</button>`;
+      <button id="usRemove" class="small danger">Delete selected rules</button>`;
     const btn = $("#usRemove");
-    btn.onclick = confirmClick(btn, "Remove the selected unused rules?", async () => {
+    btn.onclick = confirmClick(btn, "Delete the selected unused rules?", async () => {
       const ids = $$("#usStale input:checked").map((i) => i.value);
       if (!ids.length) throw new Error("Nothing selected");
       const r = await gw("POST", "/rules/cleanup", { ids });
-      toast(`${r.removed.length} unused rule${r.removed.length === 1 ? "" : "s"} removed`);
+      toast(`${r.removed.length} unused rule${r.removed.length === 1 ? "" : "s"} deleted`);
       await loadPolicy(true); await load();
       $("#usFilter").focus();
     });
   }
   function renderSuggestions(list) {
     const el = $("#sgList");
-    el.innerHTML = list.length ? "<h4>Make it permanent?</h4>" : "";
+    el.innerHTML = list.length ? "<h4>Suggested permanent rules</h4>" : "";
     for (const s of list) {
       const card = document.createElement("div"); card.className = "suggest";
       const what = s.hosts.length > 1 ? `${s.hosts.length} hosts of <b>${esc(s.rule.host.slice(2))}</b> (${esc(s.hosts.join(", "))})` : `<b>${esc(s.hosts[0])}</b>`;
       card.innerHTML = `<p>You allowed ${what} on port ${esc(s.rule.port)} for a limited time ${esc(s.count)} times recently
         (last ${esc(fmtDate(s.last))}).</p><div class="btns"></div>`;
-      const ok = document.createElement("button"); ok.className = "small";
+      const ok = document.createElement("button"); ok.className = "small secondary";
       ok.textContent = `Allow ${s.rule.host}:${s.rule.port} permanently`;
       ok.onclick = guard(async () => { await gw("POST", "/suggestions/accept", { key: s.key }); toast(`Rule added: allow ${s.rule.host}:${s.rule.port}`); await loadPolicy(true); await load(); });
-      const no = document.createElement("button"); no.className = "small secondary"; no.textContent = "Dismiss";
+      const no = document.createElement("button"); no.className = "small ghost"; no.textContent = "Dismiss suggestion";
       no.setAttribute("aria-label", `Dismiss the suggestion for ${s.rule.host}:${s.rule.port}`);
       no.onclick = guard(async () => { await gw("POST", "/suggestions/dismiss", { key: s.key }); await load(); });
       $(".btns", card).append(ok, no); el.appendChild(card);

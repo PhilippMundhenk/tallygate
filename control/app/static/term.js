@@ -58,9 +58,9 @@
       }, reconnect);
     };
   }
-  const expired = () => setStatus("session expired – log in again and reload the page", true);
+  const expired = () => setStatus("Session expired: log in again and reload the page.", true);
   const reconnect = () => {
-    retry = Math.min(retry + 1, 6); setStatus(`disconnected – reconnecting in ${retry * 2}s`, true);
+    retry = Math.min(retry + 1, 6); setStatus(`Disconnected: reconnecting in ${retry * 2} s`, true);
     setTimeout(connect, retry * 2000);
   };
   term.onData((d) => sendBytes("0", enc.encode(d)));
