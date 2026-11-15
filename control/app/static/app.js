@@ -103,7 +103,10 @@ for (const [box, tab] of [["#navShowSetup", "setup"], ["#navShowQuick", "quickst
   let show = true;
   try { show = localStorage.getItem(key) !== "0"; } catch { /* private mode: not kept */ }
   apply(show);
-  cb.onchange = () => { apply(cb.checked); try { localStorage.setItem(key, cb.checked ? "1" : "0"); } catch { /* not kept */ } };
+  cb.onchange = () => {
+    apply(cb.checked); try { localStorage.setItem(key, cb.checked ? "1" : "0"); } catch { /* not kept */ }
+    toast(`${btn.firstChild.textContent.trim()} ${cb.checked ? "shown in" : "hidden from"} the menu`);  // instant-apply checkbox: confirm with a toast
+  };
 }
 $("#tabs").addEventListener("keydown", (e) => {  // arrow keys move between tabs (WAI-ARIA tabs pattern; vertical sidebar)
   const tabs = $$("#tabs button"), i = tabs.indexOf(document.activeElement);
@@ -162,7 +165,7 @@ function pendingCard(p) {
   // github.com.evil.example) and warn about punycode names.
   el.innerHTML = `<div class="dest">${esc(p.host)}:${esc(p.port)}</div>
     ${p.domain && p.domain !== p.host ? `<div class="meta domain">domain <b>${esc(p.domain)}</b></div>` : ""}
-    ${p.idn ? `<div class="meta warn">⚠ internationalised (punycode) name – check for look-alikes</div>` : ""}
+    ${p.idn ? `<div class="meta warn">Internationalised (punycode) name: check for look-alikes</div>` : ""}
     <div class="meta">${esc(p.proto)} · IPs ${esc((p.ips || []).join(", ") || "not resolved yet")} · attempts ${esc(p.attempts)} ·
     <span class="countdown" data-exp="${Number(p.expires)}"></span></div><div class="btns"></div>`;
   const btns = $(".btns", el);
@@ -173,11 +176,12 @@ function pendingCard(p) {
     b.dataset.scope = body.scope; if (body.ttl) b.dataset.ttl = body.ttl; if (key) b.dataset.key = key;
     b.textContent = label; b.onclick = send(body); btns.appendChild(b); return b;
   };
-  // "… min" button: the first click reveals an inline minutes field; Enter or Go sends a custom-duration decision
+  // "… min" button: opens an inline minutes field (hence the "…"); Enter or the Allow/Deny button next to it sends
+  // a custom-duration decision
   const mkDur = (label, cls, scope) => {
     const wrap = document.createElement("span"); wrap.className = "dur extra";
     wrap.innerHTML = `<button type="button" class="${cls}">${esc(label)}</button>`
-      + `<span class="dur-in hidden"><input type="number" min="1" max="43200" value="30" aria-label="for how many minutes"> min <button type="button" class="small">Go</button></span>`;
+      + `<span class="dur-in hidden"><input type="number" min="1" max="43200" value="30" aria-label="for how many minutes"> min <button type="button" class="small secondary">${scope === "allow" ? "Allow" : "Deny"}</button></span>`;
     const open = wrap.firstChild, form = wrap.querySelector(".dur-in"), input = form.querySelector("input"), go = form.querySelector("button");
     open.onclick = () => { form.classList.remove("hidden"); open.classList.add("hidden"); input.focus(); input.select(); };
     const submit = () => send({ scope, ttl: Math.max(1, Math.min(43200, parseInt(input.value, 10) || 0)) * 60 })();
@@ -189,19 +193,20 @@ function pendingCard(p) {
   more.type = "button"; more.className = "secondary more"; more.textContent = "More"; more.setAttribute("aria-expanded", "false");
   more.onclick = () => { const open = el.classList.toggle("more-open"); more.setAttribute("aria-expanded", String(open)); more.textContent = open ? "Less" : "More"; };
 
-  mk("Allow (5 min)", "", { scope: "allow", ttl: 300 }, "a");
-  mkDur("Allow (x min…)", "", "allow");
-  if (p.domain) mk(`Always (*.${p.domain})`, "", { scope: "domain" });
-  else mk("Always (host)", "", { scope: "always" });
-  mkDur("Deny (x min…)", "secondary", "deny");
-  mk("Deny (forever)", "danger", { scope: "deny_always" }, "d");
+  // One primary per card: the quick allow. A deny lowers nothing, so it is not a (confirmed) danger button.
+  mk("Allow for 5 min", "", { scope: "allow", ttl: 300 }, "a");
+  mkDur("Allow for … min", "secondary", "allow");
+  if (p.domain) mk(`Allow *.${p.domain} permanently`, "secondary", { scope: "domain" });
+  else mk("Allow host permanently", "secondary", { scope: "always" });
+  mkDur("Deny for … min", "secondary", "deny");
+  mk("Deny permanently", "secondary", { scope: "deny_always" }, "d");
   btns.appendChild(more);  // CSS hides it on desktop; only narrow screens collapse the "… min" buttons under it
   document.dispatchEvent(new CustomEvent("tg:card", { detail: { el, item: p, kind: "ask" } }));  // feature scripts
   return el;
 }
 function tickCountdowns() {
   const now = Date.now() / 1000;
-  $$(".countdown").forEach((c) => { const s = Math.max(0, Math.round(c.dataset.exp - now)); c.textContent = `auto-deny in ${s}s`; });
+  $$(".countdown").forEach((c) => { const s = Math.max(0, Math.round(c.dataset.exp - now)); c.textContent = `denied in ${s} s`; });
 }
 setInterval(tickCountdowns, 1000);
 
@@ -230,10 +235,11 @@ function logRow(e) {
   const reason = String(e.reason);
   if (e.kind === "conn" && e.host && !reason.startsWith("hard-deny") && reason !== "invalid hostname") {
     const cell = tr.lastElementChild;
-    for (const [action, label, cls] of [["allow", "allow", "small"], ["deny", "deny", "small secondary"]]) {
-      const b = document.createElement("button"); b.textContent = label; b.className = cls;
+    for (const [action, label] of [["allow", "Allow"], ["deny", "Deny"]]) {
+      const b = document.createElement("button"); b.textContent = label; b.className = "small ghost";
+      b.setAttribute("aria-label", `${label} ${dest}`);
       b.onclick = guard(async () => {
-        await gw("POST", "/destinations", { access: action, match: { host: e.host, port: e.port }, note: "from log" }); toast(`${action} rule added for ${dest}`);
+        await gw("POST", "/destinations", { access: action, match: { host: e.host, port: e.port }, note: "from log" }); toast(`Rule added: ${action} ${dest}`);
       });
       cell.appendChild(b);
     }
@@ -241,6 +247,7 @@ function logRow(e) {
   applyLogFilter(tr);
   return tr;
 }
+const LOG_EMPTY = "No events yet. They appear as soon as the agent connects somewhere.";
 function applyLogFilter(tr) {
   const f = $("#logFilter").value.toLowerCase();
   const hide = (f && !tr.dataset.text.includes(f)) || ($("#logHideDns").checked && tr.dataset.kind === "dns") ||
@@ -254,7 +261,7 @@ async function loadLog(older = false) {
   logLoaded = true;
   if (older && !rows.length) toast("No older events");
   const empty = !$("#logBody").children.length;
-  $("#logEmpty").textContent = anyLogFilter() ? "No events match the filter." : "No events yet.";
+  $("#logEmpty").textContent = anyLogFilter() ? "No events match the filter. Clear it to see all events." : LOG_EMPTY;
   $("#logEmpty").classList.toggle("hidden", !empty);
 }
 function anyLogFilter() {
@@ -264,7 +271,7 @@ function anyLogFilter() {
   $(s).addEventListener("input", () => {
     $$("#logBody tr").forEach(applyLogFilter);
     const visible = $$("#logBody tr").some((r) => !r.classList.contains("hidden"));
-    $("#logEmpty").textContent = anyLogFilter() ? "No events match the filter." : "No events yet.";
+    $("#logEmpty").textContent = anyLogFilter() ? "No events match the filter. Clear it to see all events." : LOG_EMPTY;
     $("#logEmpty").classList.toggle("hidden", visible || !logLoaded);
   }),
 );
@@ -321,7 +328,7 @@ $("#saveRaw").onclick = guard(async () => {
     // a second click replaces the policy on purpose.
     rawBase = JSON.stringify(fresh);
     const el = $("#rawPolicy"); el.classList.add("stale"); el.title = "Changed elsewhere since you started editing";
-    throw new Error("The policy was changed elsewhere since this text was loaded. Reload it, or click Replace policy again to overwrite.");
+    throw new Error("The policy was changed elsewhere since this text was loaded. Reload it, or click Save policy again to overwrite.");
   }
   return putPolicy(p);
 });
@@ -356,7 +363,7 @@ function checkMatch(kind, v) {
 /* ---------------- shortcuts (preset files: internet and tool ecosystems) ---------------- */
 let presetInfo = null;
 const presetRules = (name) => (policy ? policy.rules.filter((r) => r.source === `preset:${name}`) : []);
-const TTL_CHOICES = [["", "until undone"], ["3600", "for 1 h"], ["86400", "for 1 day"]];
+const TTL_CHOICES = [["", "Until undone"], ["3600", "For 1 h"], ["86400", "For 1 day"]];
 function presetExpiry(rules) {
   const exp = rules.map((r) => r.expires).filter(Boolean);
   return exp.length === rules.length && exp.length ? Math.max(...exp) : null;
@@ -366,7 +373,11 @@ async function applyPreset(name, ttl) {
   const p = presetInfo.find((x) => x.name === name);
   toast(`${p ? p.title : name} allowed ${r && r.expires ? `for ${fmtLeft(r.expires)}` : "until undone"}`); await loadPolicy();
 }
-async function undoPreset(name) { await gw("DELETE", `/presets/${name}`); toast("Undone"); await loadPolicy(); }
+async function undoPreset(name) {
+  await gw("DELETE", `/presets/${name}`);
+  const p = presetInfo && presetInfo.find((x) => x.name === name);
+  toast(`${p ? p.title : name} undone`); await loadPolicy();
+}
 // The panel is updated in place on every policy event: cards and buttons are built once per preset, so a
 // chosen duration, the keyboard focus and an armed button survive changes made elsewhere.
 function hideKeepingFocus(el, fallback) {
@@ -379,14 +390,14 @@ async function renderQuick() {
   if (!presetInfo) presetInfo = await gw("GET", "/presets?details=1");
   // active shortcuts (internet) with their remaining time
   const box = $("#qaActive");
-  if (!box.firstElementChild) box.innerHTML = '<h4 class="hidden">Active</h4>';
+  if (!box.firstElementChild) box.innerHTML = '<h4 class="hidden">Active shortcuts</h4>';
   let anyActive = false;
   for (const p of presetInfo.filter((x) => x.category === "internet")) {
     let row = $(`:scope > .row[data-preset="${CSS.escape(p.name)}"]`, box);
     if (!row) {
       row = document.createElement("div"); row.className = "row hidden"; row.dataset.preset = p.name;
-      row.innerHTML = `<span class="tag warn">${esc(p.title)}</span><span class="muted left-text"></span>`;
-      const b = document.createElement("button"); b.className = "small secondary"; b.textContent = "Undo";
+      row.innerHTML = `<b>${esc(p.title)}</b><span class="status warn">active</span><span class="muted left-text"></span>`;
+      const b = document.createElement("button"); b.className = "small ghost"; b.textContent = "Undo";
       b.setAttribute("aria-label", `Undo ${p.title}`);
       b.onclick = guard(() => undoPreset(p.name)); row.appendChild(b); box.appendChild(row);
     }
@@ -403,25 +414,24 @@ async function renderQuick() {
     let el = $(`:scope > .tpl[data-preset="${CSS.escape(p.name)}"]`, tpls);
     if (!el) {
       el = document.createElement("div"); el.className = "tpl"; el.dataset.preset = p.name;
-      el.innerHTML = `<div class="row-between"><b>${esc(p.title)}</b><span class="tag state hidden"></span></div>
+      el.innerHTML = `<div class="row-between"><b>${esc(p.title)}</b><span class="status ok state hidden"></span></div>
         <p class="meta">${esc(p.description)}</p>
         <p class="meta"><code>${p.rules.map((r) => esc(r.host || r.cidr) + (r.port && r.port !== "*" ? ":" + esc(portText(r.port)) : "")).join("</code> <code>")}</code></p>
         <div class="btns"><select aria-label="Duration for ${esc(p.title)}">${TTL_CHOICES.map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}</select></div>`;
-      const apply = document.createElement("button"); apply.className = "small apply";
+      const apply = document.createElement("button"); apply.className = "small secondary apply";
       apply.onclick = guard(() => applyPreset(p.name, $("select", el).value));
-      const undo = document.createElement("button"); undo.className = "small secondary undo hidden"; undo.textContent = "Undo";
+      const undo = document.createElement("button"); undo.className = "small ghost undo hidden"; undo.textContent = "Undo";
       undo.setAttribute("aria-label", `Undo ${p.title}`);
       undo.onclick = guard(() => undoPreset(p.name));
       $(".btns", el).append(apply, undo); tpls.appendChild(el);
     }
     const on = presetRules(p.name), exp = presetExpiry(on);
     const apply = $(".apply", el), state = $(".state", el);
-    apply.textContent = on.length ? "Apply again" : "Apply";
-    apply.setAttribute("aria-label", on.length ? `Apply ${p.title} again` : `Apply ${p.title}`);
-    state.textContent = on.length ? `active${exp ? `, ends in ${fmtLeft(exp)}` : ""}` : "";
+    apply.textContent = on.length ? `Allow ${p.title} again` : `Allow ${p.title}`;
+    state.textContent = on.length ? `active${exp ? ` · ends in ${fmtLeft(exp)}` : ""}` : "";
     state.classList.toggle("hidden", !on.length);
     if (on.length) $(".undo", el).classList.remove("hidden");
-    else hideKeepingFocus($(".undo", el), apply);  // Undo done: focus goes to Apply on the same card
+    else hideKeepingFocus($(".undo", el), apply);  // Undo done: focus goes to Allow on the same card
   }
 }
 $$("#quick [data-preset]").forEach((b) => (b.onclick = guard(() => applyPreset(b.dataset.preset, b.dataset.ttl))));
@@ -434,7 +444,7 @@ function showStopResult(r) {
   const box = $("#qaStopResult"); box.classList.remove("hidden");
   box.innerHTML = `<b>${r.ok ? "Emergency stop complete" : "Emergency stop incomplete: check the failed steps"}</b><ul>${r.steps.map((s) => {
     const n = ["revoked", "denied", "removed"].map((k) => s[k]).find(Array.isArray);
-    return `<li class="${s.ok ? "ok" : "bad"}">${s.ok ? "✔" : "✖"} ${esc(STOP_STEPS[s.step] || s.step)}${n ? ` (${n.length})` : ""}` +
+    return `<li><span class="status ${s.ok ? "ok" : "bad"}">${s.ok ? "done" : "failed"}</span> ${esc(STOP_STEPS[s.step] || s.step)}${n ? ` (${n.length})` : ""}` +
       `${(s.errors || []).length ? `: ${esc(s.errors.join("; "))}` : ""}</li>`;
   }).join("")}</ul>`;
 }
@@ -451,9 +461,8 @@ function renderLan() {
   $("#qaLanForm").classList.toggle("hidden", !allow.length);
   help.classList.toggle("hidden", false);
   help.innerHTML = allow.length ? `Devices inside <code>${esc(allow.join(", "))}</code>.`
-    : `Not available yet: set <code>grants_lan_allow</code> (e.g. <code>[192.168.1.0/24]</code>) in the gateway config
-       and restart the gateway, or unblock a whole range on <i>Destinations</i>.
-       <a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/grants.md" target="_blank" rel="noopener">Grants guide</a>`;
+    : `Not available yet: set <code>grants_lan_allow</code> in the gateway config and restart the gateway, or unblock
+       a whole range on <i>Destinations</i>.`;  // the example and the docs link are in the help disclosure below
 }
 $("#qlKind").onchange = () => {
   const tcp = $("#qlKind").value === "tcp";  // raw TCP cannot be limited to reading
@@ -470,7 +479,7 @@ $("#qaLanForm").onsubmit = guard(async (e) => {
   await gw("PUT", `/destinations/grant/${encodeURIComponent(name)}`, {
     description: "Device on the local network", levels, approval: Object.fromEntries(levels.map((l) => [l, "ask"])),
     default_ttl: $("#qlDur").value, max_ttl: $("#qlDur").value, targets: [target] });
-  toast(`Grant ${name} created: the agent can request it`); e.target.reset(); await loadGrants();
+  toast(`Grant ${name} created`); e.target.reset(); await loadGrants();
 });
 
 /* ---------------- grants ---------------- */
@@ -481,7 +490,7 @@ async function loadGrants() {
   renderGrantRequests(); renderGrants(); renderLan();
 }
 function grantTargets(d) {
-  return d.targets.map((t) => `<code>${esc(t.scheme)}://${esc(t.host)}:${esc(t.port)}${t.paths && t.paths.join(",") !== "/*" ? esc(" " + t.paths.join(",")) : ""}</code>${t.lan ? ' <span class="tag warn">LAN</span>' : ""}`).join("<br>");
+  return d.targets.map((t) => `<code>${esc(t.scheme)}://${esc(t.host)}:${esc(t.port)}${t.paths && t.paths.join(",") !== "/*" ? esc(" " + t.paths.join(",")) : ""}</code>${t.lan ? ' <span class="tag">LAN</span>' : ""}`).join("<br>");
 }
 function renderGrantRequests() {
   syncCards($("#grantReqList"), grants.requests, grantRequestCard);
@@ -491,9 +500,9 @@ function renderGrantRequests() {
 function grantRequestCard(r) {
   const d = grants.defs.find((x) => x.name === r.name) || { targets: [], levels: [], description: "" };
   const el = document.createElement("div"); el.className = "pending grantreq";
-  el.innerHTML = `<div class="dest">🔑 ${esc(r.name)} <span class="tag ${r.level === "write" ? "warn" : ""}">${esc(r.level)}</span> for ${esc(r.ttl_label)}</div>
+  el.innerHTML = `<div class="dest"><span class="tag">grant</span> ${esc(r.name)} <span class="tag">${esc(r.level)}</span> for ${esc(r.ttl_label)}</div>
     <div class="meta">${esc(d.description)}</div><div class="meta">${grantTargets(d)}</div>
-    <div class="meta claim"><span class="claim-badge">⚠ claimed by the agent — unverified</span>
+    <div class="meta claim"><span class="claim-badge">claimed by the agent — unverified</span>
       <span class="claim-reason">${esc(r.reason || "(no reason given)")}</span></div>
     <div class="meta"><span class="countdown" data-exp="${Number(r.expires)}"></span></div><div class="btns"></div>`;
   const btn = (label, decision, cls = "") => {
@@ -501,9 +510,9 @@ function grantRequestCard(r) {
     b.onclick = decide(el, async () => { await gw("POST", `/grant-requests/${r.id}/decide`, { decision }); await loadGrants(); });
     $(".btns", el).appendChild(b);
   };
-  btn(`Approve ${r.level} (${r.ttl_label})`, "approve");
-  if (r.level === "write" && d.levels.includes("read")) btn("Approve read-only", "read", "secondary");
-  btn("Deny", "deny", "danger");
+  btn(`Allow ${r.level} for ${r.ttl_label}`, "approve");
+  if (r.level === "write" && d.levels.includes("read")) btn("Allow read-only", "read", "secondary");
+  btn("Deny", "deny", "secondary");
   return el;
 }
 function renderGrants() {
@@ -514,10 +523,13 @@ function renderGrants() {
   $("#activeEmpty").classList.toggle("hidden", grants.active.length > 0);
   for (const a of grants.active) {
     const el = document.createElement("div"); el.className = "card row-between";
-    el.innerHTML = `<div><b>${esc(a.name)}</b> <span class="tag ${a.level === "write" ? "warn" : ""}">${esc(a.level)}</span>
-      <span class="muted">· expires in <span class="left" data-exp="${Number(a.expires)}">${fmtLeft(a.expires)}</span> · by ${esc(a.approved_by)}${a.reason ? ` · “${esc(a.reason)}”` : ""}</span></div>`;
-    const b = document.createElement("button"); b.textContent = "Revoke"; b.className = "danger small";
-    b.onclick = guard(async () => { await gw("DELETE", `/active-grants/${a.id}`); await loadGrants(); });
+    el.innerHTML = `<div><b>${esc(a.name)}</b> <span class="tag">${esc(a.level)}</span> <span class="status ok">active</span>
+      <span class="muted">· ends in <span class="left" data-exp="${Number(a.expires)}">${fmtLeft(a.expires)}</span> · by ${esc(a.approved_by)}${a.reason ? ` · “${esc(a.reason)}”` : ""}</span></div>`;
+    const b = document.createElement("button"); b.textContent = "Revoke"; b.className = "small ghost danger";
+    b.setAttribute("aria-label", `Revoke grant ${a.name}`);
+    b.onclick = confirmClick(b, `Revoke grant ${a.name}? The agent loses this access at once.`, async () => {
+      await gw("DELETE", `/active-grants/${a.id}`); toast(`Grant ${a.name} revoked`); await loadGrants();
+    });
     el.appendChild(b); act.appendChild(el);
   }
   const defs = $("#grantDefs"); defs.innerHTML = "";
@@ -529,22 +541,24 @@ function renderGrants() {
       <span class="muted">${esc(d.description)}</span></div><div class="btns"></div></div>
       <div class="meta">${grantTargets(d)}</div>
       <div class="meta muted">levels ${esc(appr)} · default ${esc(d.default_ttl)}, max ${esc(d.max_ttl)}${d.inject.length ? ` · injects ${esc(d.inject.map((i) => i.header + "@" + i.host).join(", "))}` : ""}</div>
-      ${missing.length ? `<div class="meta warn">⚠ missing secret(s): ${esc(missing.join(", "))}</div>` : ""}`;
+      ${missing.length ? `<div class="alert warn">Missing secret(s): ${esc(missing.join(", "))}. Save them under Secrets below.</div>` : ""}`;
     const btns = $(".btns", el);
     for (const lvl of d.levels) {
-      const b = document.createElement("button"); b.className = "small"; b.textContent = `Activate ${lvl}`;
-      b.onclick = guard(async () => { await gw("POST", `/grants/${d.name}/activate`, { level: lvl }); toast(`${d.name} (${lvl}) active for ${d.default_ttl}`); await loadGrants(); });
+      const b = document.createElement("button"); b.className = "small ghost"; b.textContent = `Activate ${lvl}`;
+      b.setAttribute("aria-label", `Activate ${lvl} for grant ${d.name}`);
+      b.onclick = guard(async () => { await gw("POST", `/grants/${d.name}/activate`, { level: lvl }); toast(`Grant ${d.name} activated: ${lvl} for ${d.default_ttl}`); await loadGrants(); });
       btns.appendChild(b);
     }
     if (d.source === "ui") {
-      const e = document.createElement("button"); e.className = "small secondary"; e.textContent = "Edit"; e.onclick = () => openGrantEditor(d); btns.appendChild(e);
-      const x = document.createElement("button"); x.className = "small danger"; x.textContent = "Delete";
+      const e = document.createElement("button"); e.className = "small ghost"; e.textContent = "Edit"; e.setAttribute("aria-label", `Edit grant ${d.name}`); e.onclick = () => openGrantEditor(d); btns.appendChild(e);
+      const x = document.createElement("button"); x.className = "small ghost danger"; x.textContent = "Delete";
       x.setAttribute("aria-label", `Delete grant ${d.name}`);
-      x.onclick = confirmClick(x, `Delete grant ${d.name}?`, async () => { await gw("DELETE", `/destinations/grant/${d.name}`); await loadGrants(); });
+      x.onclick = confirmClick(x, `Delete grant ${d.name}?`, async () => { await gw("DELETE", `/destinations/grant/${d.name}`); toast(`Grant ${d.name} deleted`); await loadGrants(); });
       btns.appendChild(x);
     }
     defs.appendChild(el);
   }
+  if (!grants.defs.length) defs.innerHTML = '<p class="empty">No grants defined yet. Create the first one below.</p>';
   $("#geLanAllow").textContent = grants.lan_allow_ui.join(", ") || "nothing (set grants_lan_allow in the config file)";
   updateBadges();
 }
@@ -560,9 +574,9 @@ function targetRow(t = { scheme: "https", host: "", port: 443, paths: ["/*"] }) 
   const row = document.createElement("div"); row.className = "target-row";
   row.innerHTML = `<select class="t-scheme" aria-label="Scheme"><option>https</option><option>http</option><option>tcp</option></select>
     <input class="t-host" aria-label="Host" placeholder="ha.lan or 192.168.1.5"><input class="t-port" type="number" min="1" max="65535" aria-label="Port">
-    <input class="t-paths" aria-label="Paths" placeholder="paths, e.g. /api/*"><label><input type="checkbox" class="t-lan"> LAN</label>
-    <input class="t-address" aria-label="Fixed IP (optional)" placeholder="fixed IP (optional)"><input class="t-fp" aria-label="SHA-256 certificate fingerprint (optional)" placeholder="SHA-256 cert fingerprint (optional)">
-    <button class="small secondary t-del" aria-label="Remove target">✕</button>`;
+    <input class="t-paths" aria-label="Paths" placeholder="Paths, e.g. /api/*"><label><input type="checkbox" class="t-lan"> LAN</label>
+    <input class="t-address" aria-label="Fixed IP (optional)" placeholder="Fixed IP (optional)"><input class="t-fp" aria-label="SHA-256 certificate fingerprint (optional)" placeholder="SHA-256 cert fingerprint (optional)">
+    <button class="small ghost t-del" aria-label="Remove target">Remove</button>`;
   $(".t-scheme", row).value = t.scheme; $(".t-host", row).value = t.host; $(".t-port", row).value = t.port;
   $(".t-paths", row).value = (t.paths || ["/*"]).join(", "); $(".t-lan", row).checked = !!t.lan;
   $(".t-address", row).value = t.address || ""; $(".t-fp", row).value = t.tls_fingerprint || "";
@@ -632,7 +646,7 @@ $("#geAdvanced").addEventListener("click", (e) => { if (e.target.closest(".t-del
 
 function openGrantEditor(d) {
   const ed = $("#grantEditor"); ed.classList.remove("hidden");
-  $("#geTitle").textContent = d ? `Edit grant ${d.name}` : "New grant";
+  $("#geTitle").textContent = d ? `Edit grant ${d.name}` : "Create grant";
   $("#geName").value = d ? d.name : ""; $("#geName").disabled = !!d;
   $("#geDesc").value = d ? d.description : "";
   $("#geRead").checked = d ? d.levels.includes("read") : true; $("#geWrite").checked = d ? d.levels.includes("write") : false;
@@ -669,24 +683,31 @@ async function loadSecrets() {
   for (const n of sec.names) {
     const row = document.createElement("div"); row.className = "row-between";
     row.innerHTML = `<code>${esc(n)}</code>`;
-    const b = document.createElement("button"); b.className = "small danger"; b.textContent = "Remove";
-    b.setAttribute("aria-label", `Remove secret ${n}`);
-    b.onclick = confirmClick(b, `Remove secret ${n}?`, async () => { await gw("PUT", `/secrets/${n}`, { value: "" }); await loadSecrets(); });
+    const b = document.createElement("button"); b.className = "small ghost danger"; b.textContent = "Delete";
+    b.setAttribute("aria-label", `Delete secret ${n}`);
+    b.onclick = confirmClick(b, `Delete secret ${n}? Grants that inject it stop working until it is saved again.`, async () => {
+      await gw("PUT", `/secrets/${n}`, { value: "" }); toast(`Secret ${n} deleted`); await loadSecrets();
+    });
     row.appendChild(b); list.appendChild(row);
   }
-  if (!sec.names.length) list.innerHTML = '<p class="muted">No secrets stored.</p>';
+  if (!sec.names.length) list.innerHTML = '<p class="empty">No secrets saved yet. Add one with the form below.</p>';
 }
 $("#secSave").onclick = guard(async () => {
   const name = $("#secName").value.trim(), value = $("#secValue").value;
   if (!name || !value) return;
   await gw("PUT", `/secrets/${encodeURIComponent(name)}`, { value });
-  $("#secName").value = ""; $("#secValue").value = ""; toast(`Secret ${name} stored`); await loadSecrets(); await loadGrants();
+  $("#secName").value = ""; $("#secValue").value = ""; toast(`Secret ${name} saved`); await loadSecrets(); await loadGrants();
 });
 
 /* ---------------- console ---------------- */
+// Which console is open is a state, so it is a select, not a row of buttons with a "selected" look.
+const TERM_TEXT = {
+  rc: "rc: the Remote Control server (answer its prompts here)", bash: "bash: a shell in the agent",
+  claude: "claude: interactive Claude Code",
+};
 function openTerm(name) {
   showTab("console"); $("#termFrame").src = `/term/${encodeURIComponent(name)}/`;
-  $$("#termButtons button").forEach((b) => b.classList.toggle("secondary", b.dataset.name !== name));
+  const sel = $("#termSelect"); if (sel) sel.value = name;
 }
 
 /* ---------------- live stream ---------------- */
@@ -729,10 +750,12 @@ function connectStream() {
 /* ---------------- init ---------------- */
 (async () => {
   const meta = await api("GET", "/api/meta");
-  for (const name of meta.terminals) {
-    const b = document.createElement("button"); b.textContent = name; b.dataset.name = name; b.className = "secondary";
-    b.onclick = () => openTerm(name); $("#termButtons").appendChild(b);
-  }
+  const terms = meta.terminals || [];
+  $("#termButtons").innerHTML = terms.length
+    ? `<label class="inline">Console <select id="termSelect"><option value="">Choose a console…</option>${terms.map((n) =>
+      `<option value="${esc(n)}">${esc(TERM_TEXT[n] || n)}</option>`).join("")}</select></label>`
+    : '<p class="empty">No console is available: the agent reported none.</p>';
+  if (terms.length) $("#termSelect").onchange = (e) => { if (e.target.value) openTerm(e.target.value); };
   await loadPending().catch((e) => toast(e.message, true));
   await loadGrants().catch((e) => toast(e.message, true));
   connectStream();

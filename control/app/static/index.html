@@ -3,7 +3,7 @@
 <title>tallygate</title><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/wizard.css"><link rel="stylesheet" href="/static/overview.css"><link rel="stylesheet" href="/static/keys.css"><link rel="stylesheet" href="/static/update.css"><link rel="stylesheet" href="/static/files.css"><link rel="stylesheet" href="/static/availability.css"><link rel="stylesheet" href="/static/push.css"><link rel="stylesheet" href="/static/context.css"><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#181b22"></head>
 <body>
 <header>
-  <button id="navToggle" class="nav-toggle" type="button" aria-label="Menu" aria-controls="tabs" aria-expanded="false">☰</button>
+  <button id="navToggle" class="nav-toggle" type="button" aria-label="Menu" aria-controls="tabs" aria-expanded="false"><span class="burger" aria-hidden="true"></span></button>
   <a class="brand" href="/" aria-label="tallygate home"><img src="/static/logo.svg" alt="tallygate" height="26"></a>
   <button id="learnBadge" type="button" class="learnbadge hidden" aria-live="polite"></button>
   <span class="conn" role="status"><span id="conn" class="dot" aria-hidden="true"></span><span id="connText">connecting</span></span>
@@ -11,9 +11,10 @@
   <form method="post" action="/logout" class="logout"><button>Log out</button></form>
 </header>
 
-<p id="insecureBanner" class="banner warn" role="note" hidden>Not encrypted: this session travels in plain text over
-  the network. For more than a quick test on a trusted LAN, put a TLS reverse proxy in front
-  (<a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/operations.md#reverse-proxy" target="_blank" rel="noopener">how</a>).</p>
+<div id="insecureBanner" class="banner warn" role="note" hidden>Not encrypted: this session travels in plain text over the network.
+  <details class="help"><summary>How do I encrypt it?</summary>
+    <p>For more than a quick test on a trusted LAN, put a TLS reverse proxy in front of the UI.</p>
+    <p><a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/operations.md#reverse-proxy" target="_blank" rel="noopener">Operations guide: reverse proxy</a></p></details></div>
 <div id="navScrim" class="nav-scrim"></div>
 <div class="shell">
   <nav id="tabs" role="tablist" aria-label="Sections" aria-orientation="vertical">
@@ -29,13 +30,15 @@
     <button data-tab="settings" id="tabbtn-settings" role="tab" aria-selected="false" aria-controls="tab-settings">Settings</button>
   </nav>
 <main>
-  <!-- OVERVIEW (overview.js) -->
+  <!-- Every tab: one h2 title, at most one line of purpose, then content (docs/ux-concept.md). -->
+  <!-- OVERVIEW (overview.js): read-only, so no primary button -->
   <section id="tab-overview" role="tabpanel" aria-labelledby="tabbtn-overview" class="hidden">
+    <h2>Overview</h2>
     <div class="ov-grid">
       <div class="card"><h3>Status</h3><dl id="ovStatus" class="ov-dl"><dt>…</dt><dd></dd></dl></div>
       <div class="card"><h3>Needs attention</h3><ul id="ovAttention" class="ov-list"><li class="muted">…</li></ul></div>
     </div>
-    <div class="card"><div class="row-between"><h3>Last hour</h3><button id="ovLog" class="small secondary">Open the log</button></div>
+    <div class="card"><div class="row-between"><h3>Last hour</h3><button id="ovLog" class="small ghost">Open log</button></div>
       <p id="ovCounts" class="ov-counts"></p>
       <div class="ov-grid">
         <div><h4>Top destinations</h4><div class="table-wrap"><table class="ov-table"><thead><tr><th scope="col">Destination</th><th scope="col">Connections</th><th scope="col">Allowed / denied</th></tr></thead><tbody id="ovTop"></tbody></table></div></div>
@@ -45,62 +48,66 @@
     <div class="card" id="ovVersionsCard"><h3>Versions</h3><div id="ovVersions" class="muted">…</div></div>
     <div class="card"><h3>Shortcuts</h3><div class="row wrap">
       <button id="ovStop" class="danger">Emergency stop</button>
-      <button id="ovWeb">Allow web for 15 min</button>
-      <button id="ovConsole" class="secondary">Open the console</button></div></div>
+      <button id="ovWeb" class="secondary">Allow web for 15 min</button>
+      <button id="ovConsole" class="secondary">Open rc console</button></div></div>
   </section>
 
-  <!-- APPROVALS -->
+  <!-- APPROVALS: act (requests) first, availability last -->
   <section id="tab-approvals" role="tabpanel" aria-labelledby="tabbtn-approvals">
-    <div id="availability" class="card"></div>
-    <div id="approvalOpts" class="toolbar" role="group" aria-label="Approval options"></div>
-    <div id="grantReqBox" class="hidden">
-      <h2>Grant requests</h2>
-      <p class="hint">The agent asks for a predefined bundle of access. The reason it gives is its own <b>unverified claim</b> (flagged on each request), not a checked fact.</p>
-      <div id="grantReqList"></div>
-    </div>
-    <h2>Pending connection requests</h2>
-    <p class="hint">Connections are held until you decide or the timeout passes (then denied). Hard-denied targets (LAN etc.) never appear here.</p>
+    <h2>Approvals</h2>
+    <p class="hint">Requests wait here until you decide or the timeout passes (then they are denied).</p>
     <details class="help"><summary>Which button should I use?</summary>
       <ul>
-        <li><b>Allow (5 min)</b>: one operation (an install, a clone). The host is open briefly, so follow-up
+        <li><b>Allow for 5 min</b>: one operation (an install, a clone). The host is open briefly, so follow-up
           connections are covered.</li>
-        <li><b>Allow (x min…)</b>: a working session with this host — type how many minutes.</li>
-        <li><b>Always (host)</b> (bare IPs) or <b>Always (*.domain)</b> (named hosts): a permanent allow — exactly this
-          host, or the domain and every subdomain, e.g. all of <code>*.githubusercontent.com</code>. Check the domain
-          line first: <code>github.com.evil.example</code> belongs to <code>evil.example</code>.</li>
-        <li><b>Deny (x min…)</b>: refuse and stop asking about this host for a while.</li>
-        <li><b>Deny (forever)</b>: a permanent deny rule, no more prompts.</li>
+        <li><b>Allow for … min</b>: a working session with this host — type how many minutes.</li>
+        <li><b>Allow host permanently</b> (bare IPs) or <b>Allow *.domain permanently</b> (named hosts): a permanent
+          allow rule — exactly this host, or the domain and every subdomain, e.g. all of
+          <code>*.githubusercontent.com</code>. Check the domain line first: <code>github.com.evil.example</code>
+          belongs to <code>evil.example</code>.</li>
+        <li><b>Deny for … min</b>: refuse and stop asking about this host for a while.</li>
+        <li><b>Deny permanently</b>: a permanent deny rule, no more prompts.</li>
       </ul>
       <p>All buttons show at once on a wide screen; on a narrow one the <b>… min</b> buttons fold under <b>More</b>.
-        Every decision becomes a normal rule you can review or delete under <i>Destinations</i>.
-        <a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#approvals" target="_blank" rel="noopener">More</a></p>
+        Every decision becomes a normal rule you can review or delete under <i>Destinations</i>. Hard-denied
+        destinations (the local network etc.) never appear here.</p>
+      <p><a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#approvals" target="_blank" rel="noopener">User guide: approvals</a></p>
     </details>
+    <div id="approvalOpts" class="toolbar" role="group" aria-label="Approval options"></div>
+    <div id="grantReqBox" class="hidden">
+      <h3>Grant requests</h3>
+      <p class="hint">The reason the agent gives is its own <b>unverified claim</b> (flagged on each request), not a checked fact.</p>
+      <div id="grantReqList"></div>
+    </div>
+    <h3>Connection requests</h3>
     <div id="pendingList"></div>
-    <p id="pendingEmpty" class="muted">Nothing waiting. 🎉</p>
+    <p id="pendingEmpty" class="empty">No connection is waiting. New requests appear here and as a count in the menu.</p>
+    <div id="availability" class="card"></div>
   </section>
 
-  <!-- LOG -->
+  <!-- LOG: read-only, so no primary button -->
   <section id="tab-log" role="tabpanel" aria-labelledby="tabbtn-log" class="hidden">
-    <details class="card" id="historyCard"><summary>History, export and import</summary><div id="historyBox"></div></details>
-    <details class="card" id="searchCard"><summary>Search, time ranges and export</summary><div id="searchBox"></div></details>
+    <h2>Log</h2>
+    <details class="card" id="searchCard"><summary>Search and export</summary><div id="searchBox"></div></details>
+    <details class="card" id="historyCard"><summary>Policy history, export and import</summary><div id="historyBox"></div></details>
     <div class="toolbar">
-      <input id="logFilter" type="search" aria-label="Filter log" placeholder="filter host / action / reason">
-      <label><input type="checkbox" id="logHideDns"> hide DNS</label>
-      <label><input type="checkbox" id="logOnlyBlocked"> only blocked</label>
-      <button id="logMore">Load older</button>
+      <input id="logFilter" type="search" aria-label="Filter log" placeholder="Filter by host, action or reason">
+      <label><input type="checkbox" id="logHideDns"> Hide DNS</label>
+      <label><input type="checkbox" id="logOnlyBlocked"> Only blocked</label>
+      <button id="logMore" class="secondary">Load older</button>
     </div>
     <div class="table-wrap"><table class="log"><thead><tr><th scope="col">Time</th><th scope="col">Kind</th><th scope="col">Proto</th><th scope="col">Destination</th><th scope="col">Action</th><th scope="col">Reason</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody id="logBody"></tbody></table></div>
-    <p id="logEmpty" class="muted hidden">No events yet.</p>
+    <p id="logEmpty" class="empty hidden">No events yet. They appear as soon as the agent connects somewhere.</p>
   </section>
 
-  <!-- RULES -->
+  <!-- DESTINATIONS (destinations.js) -->
   <section id="tab-destinations" role="tabpanel" aria-labelledby="tabbtn-destinations" class="hidden">
     <h2>Destinations</h2>
     <div class="card">
       <h3>Test a destination</h3>
-      <p class="hint">Dry run: what would happen if the agent connected now? Shows the decision and what made it.</p>
-      <div class="row"><input id="testHost" aria-label="Host or IP to test" placeholder="host or IP"><input id="testPort" type="number" value="443" class="port" aria-label="Port"><button id="testBtn">Test</button></div>
+      <p class="hint">Dry run: what the gateway would decide if the agent connected now, and what decided it.</p>
+      <div class="row"><input id="testHost" aria-label="Host or IP to test" placeholder="Host or IP"><input id="testPort" type="number" value="443" class="port" aria-label="Port"><button id="testBtn">Test destination</button></div>
       <pre id="testOut" class="muted"></pre>
     </div>
     <div id="destBox"></div>
@@ -113,14 +120,14 @@
     <div id="quick">
       <div class="card">
         <div class="row-between"><h3>Internet</h3><button id="qaStop" class="danger">Emergency stop</button></div>
-        <p class="hint">A shortcut adds normal rules, tagged with its name; undo it here or on <i>Destinations</i>.</p>
+        <p class="hint">A shortcut adds normal rules tagged with its name; undo it here or on <i>Destinations</i>.</p>
         <div class="row wrap">
           <button data-preset="open" data-ttl="900" class="secondary">Allow web for 15 min</button>
           <button data-preset="open" data-ttl="3600" class="secondary">Allow web for 1 h</button>
           <button data-preset="open" class="secondary">Allow web permanently</button>
           <button data-preset="internet" data-ttl="900" class="secondary">Allow all ports for 15 min</button>
         </div>
-        <details class="help"><summary>What Emergency stop does</summary>
+        <details class="help"><summary>What does Emergency stop do?</summary>
           <p>Revokes all active grants, denies everything still waiting for approval, undoes the internet shortcuts,
             blocks everything unknown and suspends automatic grant approval until you change the mode under
             <i>Settings</i>. Claude itself stays reachable through your allow rules.</p></details>
@@ -129,21 +136,23 @@
       </div>
       <div class="card">
         <h3>Local network</h3>
-        <p class="hint">Blocked by default. Give the agent one device, for a limited time, each use approved by you.</p>
+        <p class="hint">Blocked by default: give the agent one device, for a limited time, each use approved by you.</p>
         <form id="qaLanForm" class="lan-form hidden">
           <label>Name <input id="qlName" placeholder="homeassistant" pattern="[a-z0-9][a-z0-9_-]{0,47}" required></label>
           <label>Host or IP <input id="qlHost" placeholder="192.168.1.20" required></label>
           <label>Port <input id="qlPort" type="number" min="1" max="65535" value="80" class="port" required></label>
-          <label>Type <select id="qlKind"><option value="http">Web / API (HTTP)</option><option value="https">Web / API (HTTPS)</option><option value="tcp">Other (TCP, e.g. SSH)</option></select></label>
+          <label>Type <select id="qlKind"><option value="http">Web or API (HTTP)</option><option value="https">Web or API (HTTPS)</option><option value="tcp">Something else (TCP, e.g. SSH)</option></select></label>
           <label>Access <select id="qlAccess"><option value="read">Read-only</option><option value="full">Full access</option></select></label>
-          <label>For how long <select id="qlDur"><option value="30m">30 minutes</option><option value="1h" selected>1 hour</option><option value="4h">4 hours</option><option value="1d">1 day</option></select></label>
+          <label>For how long <select id="qlDur"><option value="30m">30 min</option><option value="1h" selected>1 h</option><option value="4h">4 h</option><option value="1d">1 day</option></select></label>
           <button>Create grant</button>
         </form>
         <p id="qaLanHelp" class="hint hidden"></p>
-        <details class="help"><summary>How local access works</summary>
+        <details class="help"><summary>How does local access work?</summary>
           <p>The form creates a <b>grant</b> for exactly this host and port. The agent requests it with
-            <code>tallygate request &lt;name&gt;</code> and you approve each use; edit or remove it on the
-            <i>Grants</i> tab. To open a whole range instead, unblock it on <i>Destinations</i>.</p></details>
+            <code>tallygate request &lt;name&gt;</code> and you approve each use; edit or delete it on the
+            <i>Grants</i> tab. To open a whole range instead, unblock it on <i>Destinations</i>. The form needs
+            <code>grants_lan_allow</code> (e.g. <code>[192.168.1.0/24]</code>) in the gateway config.</p>
+          <p><a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/grants.md" target="_blank" rel="noopener">Grants guide</a></p></details>
       </div>
       <div class="card">
         <h3>Tool ecosystems</h3>
@@ -155,62 +164,64 @@
 
   <!-- GRANTS -->
   <section id="tab-grants" role="tabpanel" aria-labelledby="tabbtn-grants" class="hidden">
-    <h2>Defined grants</h2>
-    <p class="hint">On-request access the agent asks for by name. Grants from the config file are read-only here.</p>
-    <details class="help"><summary>What a grant is</summary>
+    <h2>Grants</h2>
+    <p class="hint">On-request access the agent asks for by name; grants from the config file are read-only here.</p>
+    <details class="help"><summary>What is a grant?</summary>
       <p>A grant is on-request access the agent asks for by name (<code>tallygate request &lt;name&gt;</code>): one or more
         targets (host:port, optionally paths), an access level (<b>read</b> = GET/HEAD/OPTIONS, <b>write</b> = everything)
-        and how each use is approved. Grants from the config file are read-only here.</p></details>
+        and how each use is approved.</p>
+      <p><a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/grants.md" target="_blank" rel="noopener">Grants guide</a></p></details>
+    <h3>Defined grants</h3>
     <div id="grantDefs"></div>
-    <button id="grantNew">New grant</button>
+    <button id="grantNew">Create grant…</button>
 
     <div id="grantEditor" class="card hidden">
-      <h3 id="geTitle">New grant</h3>
+      <h3 id="geTitle">Create grant</h3>
       <div class="grid2">
         <label>Name <input id="geName" placeholder="homeassistant" pattern="[a-z0-9][a-z0-9_-]{0,47}">
-          <small>Lower case, digits, <code>-</code> and <code>_</code>. The agent requests it by this name:
-          <code>tallygate request homeassistant</code>.</small></label>
+          <small>Lower case, digits, <code>-</code> and <code>_</code>; the agent requests the grant by this name.</small></label>
         <label>Description <input id="geDesc" placeholder="Home Assistant REST API">
           <small>Shown to you in every request.</small></label>
       </div>
       <div class="grid2" id="geSimple">
         <label>Address <input id="geAddr" placeholder="ha.lan:8123 or https://api.example.com/v1/">
-          <small>Host and port, or a URL. A path in a URL limits the grant to that path.</small></label>
+          <small>Host and port, or a URL; a path in a URL limits the grant to that path.</small></label>
         <label>Type <select id="geKind">
             <option value="https">Web or API (HTTPS)</option>
             <option value="http">Web or API without TLS (HTTP)</option>
             <option value="tcp">Something else: SSH, a database (TCP)</option></select>
-          <small>For web and API targets every request is checked. Other protocols are passed through as they are.</small></label>
+          <small>Web and API requests are checked one by one; other protocols pass through as they are.</small></label>
         <label>Access <select id="geAccess">
             <option value="read">Read-only</option>
             <option value="full">Full access</option></select>
           <small id="geAccessHint">Read-only: the agent can look but not change anything.</small></label>
         <label>For how long <select id="geDur">
-            <option value="30m">30 minutes</option><option value="1h" selected>1 hour</option>
-            <option value="4h">4 hours</option><option value="1d">1 day</option></select>
-          <small>Every approval ends by itself after this time. You approve each request.</small></label>
+            <option value="30m">30 min</option><option value="1h" selected>1 h</option>
+            <option value="4h">4 h</option><option value="1d">1 day</option></select>
+          <small>Every approval ends by itself after this time; you approve each request.</small></label>
       </div>
       <label class="check ge-lan"><input type="checkbox" id="geLan"> Local-network device
-        <small>Local addresses are blocked by default. Tick this to let <b>this grant only</b> reach the address above; it is ticked for you when the address is a private IP or a <code>.lan</code>/<code>.local</code> name.</small></label>
-      <p id="geSimpleNote" class="hint hidden" role="status">This grant uses settings that only <b>Advanced</b> shows
-        (several targets, paths, automatic approval, a fixed IP or a pinned certificate). They are kept as they are.</p>
+        <small>Lets <b>this grant only</b> reach a local address, which is blocked by default; ticked for you for a private IP or a <code>.lan</code>/<code>.local</code> name.</small></label>
+      <p id="geSimpleNote" class="hint hidden" role="status">This grant uses settings that only <b>Advanced options</b> shows
+        (several targets, paths, automatic approval, a fixed IP or a pinned certificate); they are kept as they are.</p>
       <details id="geAdvanced" class="more"><summary>Advanced options</summary>
       <div class="grid4">
-        <label class="check"><input type="checkbox" id="geRead" checked> read level</label>
-        <label>approval <select id="geApprRead"><option>ask</option><option>auto</option></select></label>
-        <label class="check"><input type="checkbox" id="geWrite"> write level</label>
-        <label>approval <select id="geApprWrite"><option>ask</option><option>auto</option></select></label>
-        <label>default duration <input id="geTtl" value="1h"></label>
-        <label>max duration <input id="geMaxTtl" value="4h"></label>
+        <label class="check"><input type="checkbox" id="geRead" checked> Read level</label>
+        <label>Read approval <select id="geApprRead"><option>ask</option><option>auto</option></select></label>
+        <label class="check"><input type="checkbox" id="geWrite"> Write level</label>
+        <label>Write approval <select id="geApprWrite"><option>ask</option><option>auto</option></select></label>
+        <label>Default duration <input id="geTtl" value="1h"></label>
+        <label>Maximum duration <input id="geMaxTtl" value="4h"></label>
       </div>
-      <p class="hint"><b>read</b> allows only GET, HEAD and OPTIONS (no uploads, no WebSockets); <b>write</b> allows
-        everything. <b>ask</b> means you approve each request; <b>auto</b> grants it without asking (sensible for read
-        on harmless APIs). Durations: <code>30m</code>, <code>2h</code>, <code>1d</code>; the agent may ask for less, never more than the maximum.</p>
+      <details class="help"><summary>What do levels, approval and durations mean?</summary>
+        <p><b>read</b> allows only GET, HEAD and OPTIONS (no uploads, no WebSockets); <b>write</b> allows
+          everything. <b>ask</b> means you approve each request; <b>auto</b> grants it without asking (sensible for read
+          on harmless APIs). Durations: <code>30m</code>, <code>2h</code>, <code>1d</code>; the agent may ask for less, never more than the maximum.</p></details>
       <h4>Targets</h4>
-      <p class="hint">https/http targets are inspected per request (method, path, Host). tcp passes raw traffic (write level only).
-        <b>LAN</b> exempts exactly this target from the hard deny (UI grants only within <code id="geLanAllow">–</code>).
-        Self-signed certificate? Pin its SHA-256 fingerprint instead of disabling verification.</p>
-      <details class="help"><summary>Target examples</summary>
+      <details class="help"><summary>How do targets work?</summary>
+        <p>https/http targets are inspected per request (method, path, Host). tcp passes raw traffic (write level only).
+          <b>LAN</b> exempts exactly this target from the hard deny (UI grants only within <code id="geLanAllow">–</code>).
+          Self-signed certificate? Pin its SHA-256 fingerprint instead of disabling verification.</p>
         <ul>
           <li>Home Assistant API, read-only: <code>http</code> &middot; <code>ha.lan</code> &middot; <code>8123</code> &middot; paths <code>/api/*</code> &middot; LAN</li>
           <li>Proxmox with a self-signed cert: <code>https</code> &middot; <code>pve.lan</code> &middot; <code>8006</code> &middot; paths <code>/api2/json/*</code> &middot; LAN &middot; fingerprint from
@@ -220,11 +231,11 @@
         </ul>
         <p>Paths are globs: <code>*</code> matches any characters including <code>/</code>, so <code>/api/*</code> covers
           <code>/api/states</code> and <code>/api/states/light.kitchen</code>; the query string is not part of the path. Several patterns are comma-separated.
-          <i>fixed IP</i> pins the address instead of resolving the name.
-          <a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/grants.md" target="_blank" rel="noopener">Grants guide</a></p>
+          <i>Fixed IP</i> pins the address instead of resolving the name.</p>
+        <p><a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/grants.md" target="_blank" rel="noopener">Grants guide</a></p>
       </details>
       <div id="geTargets"></div>
-      <button id="geAddTarget" class="small secondary">+ target</button>
+      <button id="geAddTarget" class="small secondary">Add target</button>
       <p class="hint">Credential injection and disabling TLS verification are only available for grants in the
         gateway config file: a UI session must not be able to send stored secrets to a host of its choosing.</p>
       </details>
@@ -233,78 +244,76 @@
       </div>
     </div>
 
-    <h2>Active grants</h2>
-    <p id="autoSuspended" class="meta warn hidden" role="status"></p>
+    <h3>Active grants</h3>
+    <p id="autoSuspended" class="alert warn hidden" role="status"></p>
     <div id="activeGrants"></div>
-    <p id="activeEmpty" class="muted">No grant is active.</p>
-
+    <p id="activeEmpty" class="empty">No grant is active. Activate one above, or wait for the agent to request one.</p>
 
     <details class="card"><summary>Secrets for credential injection</summary>
-      <p class="hint">Write-only: values are stored in the gateway and can never be read back. Reference them in a
-        header template as <code>${name}</code>, e.g. <code>Bearer ${ha_token}</code>.</p>
+      <p class="hint">Write-only: a saved value can never be read back; use it in a header template as
+        <code>${name}</code>, e.g. <code>Bearer ${ha_token}</code>.</p>
       <div id="secretList"></div>
       <div class="row"><label class="inline">Name <input id="secName" placeholder="a-z0-9_" autocomplete="off"></label>
         <label class="inline">Value <input id="secValue" type="password" autocomplete="new-password"></label>
-        <button id="secSave">Store</button></div>
+        <button id="secSave">Save secret</button></div>
     </details>
   </section>
 
+  <!-- CONSOLE -->
   <section id="tab-console" role="tabpanel" aria-labelledby="tabbtn-console" class="hidden">
+    <h2>Console</h2>
     <div class="toolbar" id="termButtons" role="group" aria-label="Consoles"></div>
-    <p class="hint"><b>rc</b> = the Remote Control server (tmux; answer prompts here, detach is automatic). <b>bash</b> = shell in the agent. <b>claude</b> = interactive Claude Code.</p>
     <iframe id="termFrame" title="terminal"></iframe>
   </section>
 
   <!-- FILES (files.js) -->
   <section id="tab-files" role="tabpanel" aria-labelledby="tabbtn-files" class="hidden">
-    <h2>Workspace files</h2>
-    <p class="hint">Files in the agent's <code>/workspace</code>: upload a spec, a dataset or a patch, download results.
-      Downloads are saved, never opened here.</p>
+    <h2>Files</h2>
+    <p class="hint">The agent's <code>/workspace</code>: upload a spec or a dataset, download results (saved, never opened here).</p>
     <nav id="fileCrumbs" class="crumbs" aria-label="Folder"></nav>
     <div class="card"><h3>Upload to this folder</h3>
       <form id="fileForm" class="upload-form"><input type="file" id="fileInput" multiple aria-describedby="fileHint" aria-label="Files to upload">
-        <div class="upload-actions"><label class="check-inline"><input type="checkbox" id="fileOverwrite"> replace existing files</label><button id="fileUpload">Upload</button></div></form>
+        <div class="upload-actions"><label class="check-inline"><input type="checkbox" id="fileOverwrite"> Replace existing files</label><button id="fileUpload">Upload files</button></div></form>
       <p class="hint" id="fileHint"></p><div id="fileStatus" class="step-msg" role="status" aria-live="polite"></div></div>
     <div class="table-wrap"><table class="files"><thead><tr><th scope="col">Name</th><th scope="col">Size</th><th scope="col">Modified</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody id="fileBody"></tbody></table></div>
     <p id="fileTruncated" class="hint hidden">Only the first 2000 entries are shown.</p>
   </section>
 
-
   <!-- SETTINGS -->
   <section id="tab-settings" role="tabpanel" aria-labelledby="tabbtn-settings" class="hidden">
     <h2>Settings</h2>
-    <p class="hint">How unmatched destinations are handled, the gateway behaviour tunables, and the raw policy.</p>
-    <details class="help"><summary>What stays in the gateway config</summary>
+    <p class="hint">The mode for unmatched destinations, the menu, gateway behaviour and the raw policy.</p>
+    <details class="help"><summary>What stays in the gateway config?</summary>
       <p>Trust-critical settings (credential injection and LAN grant access) stay in the read-only gateway config by
-        design; the never-reachable deny floor is shown and edited on the <i>Destinations</i> tab.</p></details>
+        design; the never-reachable deny floor is shown and edited on the <i>Destinations</i> tab.</p>
+      <p><a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/configuration.md" target="_blank" rel="noopener">Configuration reference</a></p></details>
     <div class="card">
       <h3>Mode</h3>
       <label>Default action for unmatched destinations
-        <select id="defaultAction"><option value="ask">ask (human-in-the-loop)</option><option value="deny">deny (allowlist)</option><option value="allow">allow (blocklist)</option></select></label>
+        <select id="defaultAction"><option value="ask">ask (you decide each time)</option><option value="deny">deny (allowlist)</option><option value="allow">allow (blocklist)</option></select></label>
       <label>Approval timeout (s) <input type="number" id="askTimeout" min="5" max="3600"></label>
-      <button id="saveMode">Save</button>
+      <button id="saveMode">Save mode</button>
     </div>
     <div class="card">
       <h3>Menu</h3>
       <label class="check"><input type="checkbox" id="navShowSetup" checked> Show <b>Setup</b> in the menu</label>
       <label class="check"><input type="checkbox" id="navShowQuick" checked> Show <b>Quick settings</b> in the menu</label>
-      <p class="hint">Kept in this browser. Hidden pages stay reachable from Overview links.</p>
+      <p class="hint">Kept in this browser; hidden pages stay reachable from Overview links.</p>
     </div>
     <details class="card" id="settingsCard"><summary>Behaviour settings</summary>
-      <p class="hint">Tunables the gateway owns — log retention, learning mode, rule suggestions and grant-request
-        limits. Saved here without editing a file or restarting; a few take effect only after a restart (marked).</p>
+      <p class="hint">Log retention, learning mode, rule suggestions and request limits: saved without a restart, except where marked.</p>
       <div id="settingsBox"></div>
     </details>
-    <details class="card"><summary>Advanced: raw policy JSON</summary>
-      <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><div class="row"><button id="saveRaw">Replace policy</button>
-        <button id="reloadRaw" class="secondary">Reload from the gateway</button></div></details>
+    <details class="card"><summary>Raw policy (JSON)</summary>
+      <textarea id="rawPolicy" rows="16" spellcheck="false" aria-label="Policy as JSON"></textarea><div class="row"><button id="saveRaw">Save policy</button>
+        <button id="reloadRaw" class="secondary">Reload policy</button></div></details>
   </section>
 
-  <!-- SETUP (wizard.js) -->
+  <!-- SETUP (wizard.js): each step is a section with at most one primary button -->
   <section id="tab-setup" role="tabpanel" aria-labelledby="tabbtn-setup" class="hidden">
-    <h2>First start</h2>
-    <p class="hint">One step after the other: each step says whether it is done. Nothing here needs a console.</p>
+    <h2>Setup</h2>
+    <p class="hint">One step after the other: each step says whether it is done, and none needs a console.</p>
     <div id="wzSummary" class="card" role="status" aria-live="polite">…</div>
     <ol class="wizard">
       <li id="st-access" data-required="1"><h3 tabindex="-1">Access to this UI <span class="step-state"></span></h3>
@@ -312,49 +321,57 @@
       <li id="st-password" data-required="1"><h3 tabindex="-1">UI password <span class="step-state"></span></h3>
         <div class="step-msg"></div></li>
       <li id="st-gw" data-required="1"><h3 tabindex="-1">Gateway <span class="step-state"></span></h3><div class="step-msg">…</div></li>
-      <li id="st-gh" data-required="1"><h3 tabindex="-1">GitHub token (stored in the gateway only) <span class="step-state"></span></h3>
-        <p class="hint">Use a <b>fine-grained PAT</b> limited to the repos the agent may touch (Contents, Pull requests, Issues: read/write). The agent only ever sees a placeholder; the gateway injects the real token for github.com / api.github.com.</p>
-        <div class="row"><input id="ghToken" type="password" aria-label="GitHub token" placeholder="github_pat_…" autocomplete="off"><button id="ghSave">Validate &amp; store</button><button id="ghRemove" class="secondary">Remove</button></div>
+      <li id="st-gh" data-required="1"><h3 tabindex="-1">GitHub token <span class="step-state"></span></h3>
+        <p class="hint">A <b>fine-grained PAT</b> limited to the repos the agent may touch; it is stored in the gateway only.</p>
+        <details class="help"><summary>What does the token need?</summary>
+          <p>Limit it to the repos the agent may touch, with Contents, Pull requests and Issues: read/write. The agent
+            only ever sees a placeholder; the gateway injects the real token for github.com / api.github.com.
+            <i>Save token</i> checks it against GitHub first.</p></details>
+        <div class="row"><input id="ghToken" type="password" aria-label="GitHub token" placeholder="github_pat_…" autocomplete="off"><button id="ghSave">Save token</button><button id="ghRemove" class="ghost danger">Delete token</button></div>
         <div class="step-msg"></div></li>
       <li id="st-claude" data-required="1"><h3 tabindex="-1">Log in to Claude <span class="step-state"></span></h3>
-        <p class="hint">Needs a claude.ai subscription (Remote Control does not work with API keys). The login runs in the
-          agent; you sign in on Anthropic's page and paste the code it shows here.</p>
+        <p class="hint">Needs a claude.ai subscription: you sign in on Anthropic's page and paste the code it shows.</p>
+        <details class="help"><summary>How does the login work?</summary>
+          <p>The login runs in the agent. Remote Control does not work with API keys, so a claude.ai subscription is
+            needed.</p></details>
         <button id="clStart">Start login</button>
         <form id="clFlow" class="hidden">
           <p>1. Open the <a id="clUrl" href="#" target="_blank" rel="noopener noreferrer">Claude login page</a> and sign in.</p>
           <p>2. Paste the code the page shows:</p>
-          <div class="row"><input id="clCode" aria-label="Code from the login page" autocomplete="off" spellcheck="false"><button id="clSend">Log in</button></div>
+          <div class="row"><input id="clCode" aria-label="Code from the login page" autocomplete="off" spellcheck="false"><button id="clSend">Send code</button></div>
         </form>
         <div class="step-msg"></div></li>
       <li id="st-git" data-required="1"><h3 tabindex="-1">Git identity <span class="step-state"></span></h3>
-        <p class="hint">The name and address on the agent's commits. Taken from the GitHub account of the token, with
-          its private <code>noreply</code> address.</p>
+        <p class="hint">The name and address on the agent's commits, taken from the token's GitHub account with its private <code>noreply</code> address.</p>
         <button id="gitPreview">Use my GitHub identity</button>
         <div id="gitBox" class="hidden preview"><dl class="fieldhelp"><dt>Name</dt><dd id="gitName"></dd><dt>Email</dt><dd id="gitEmail"></dd></dl>
-          <button id="gitApply">Apply</button></div>
+          <button id="gitApply">Save identity</button></div>
         <details class="more"><summary>Enter it yourself</summary>
           <form id="gitManual" class="row"><input id="gitManName" aria-label="Name" placeholder="Your Name" autocomplete="off">
-            <input id="gitManEmail" aria-label="Email" placeholder="id+user@users.noreply.github.com" autocomplete="off"><button>Save</button></form></details>
+            <input id="gitManEmail" aria-label="Email" placeholder="id+user@users.noreply.github.com" autocomplete="off"><button class="secondary">Save identity</button></form></details>
         <div class="step-msg"></div></li>
       <li id="st-rc" data-required="1"><h3 tabindex="-1">Remote Control <span class="step-state"></span></h3>
-        <p class="hint">Makes the agent's sessions reachable in the Claude app (<i>Code</i>) and on claude.ai/code with your
-          account. <i>Enable</i> answers Claude Code's one-time question <code>Enable Remote Control? (y/n)</code> with yes,
-          trusts <code>/workspace</code>, and restarts Remote Control.</p>
-        <div class="row"><button id="rcEnable">Enable Remote Control</button><button data-term="rc" class="secondary">Watch the rc console</button></div>
+        <p class="hint">Makes the agent's sessions reachable in the Claude app (<i>Code</i>) and on claude.ai/code with your account.</p>
+        <details class="help"><summary>What does Enable Remote Control do?</summary>
+          <p>It answers Claude Code's one-time question <code>Enable Remote Control? (y/n)</code> with yes,
+            trusts <code>/workspace</code>, and restarts Remote Control.</p></details>
+        <div class="row"><button id="rcEnable">Enable Remote Control</button><button data-term="rc" class="secondary">Open rc console</button></div>
         <div class="step-msg"></div></li>
       <li id="st-notify"><h3 tabindex="-1">Notifications <span class="step-state"></span></h3>
         <div id="notifyStatus" class="muted notify-status"></div>
-        <p class="hint">Approval prompts are delivered through the channels below. Set up the bot channels (Telegram,
-          Matrix, ntfy, Gotify, Pushover) with <b>Configure</b> (<a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#notification-channels-in-the-web-ui" target="_blank" rel="noopener">how</a>):
-          a token you save is stored by the control plane and never shown again. Values from the environment keep
-          working; what you save here wins. Web Push is set up on this device below. Use <b>Test</b> to send a sample
-          through a channel.</p>
-        <p id="notifyReadonly" class="meta warn hidden" role="note"></p>
+        <p class="hint">Approval prompts are delivered through the channels below.</p>
+        <details class="help"><summary>How are channels set up?</summary>
+          <p>Set up the bot channels (Telegram, Matrix, ntfy, Gotify, Pushover) with <b>Configure</b>: a token you
+            save is stored by the control plane and never shown again. Values from the environment keep working;
+            what you save here wins. Web Push is set up on this device below. <b>Test</b> sends a sample through a
+            channel. Browser notifications also appear for new requests while this tab is in the background.</p>
+          <p><a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#notification-channels-in-the-web-ui" target="_blank" rel="noopener">User guide: notification channels</a></p></details>
+        <p id="notifyReadonly" class="alert warn hidden" role="note"></p>
         <div id="notifyChannels"></div>
-        <p class="hint">Browser notifications also appear for new requests while this tab is in the background.</p>
+        <h4>Browser notifications</h4>
         <div class="row notify-browser">
           <button id="notifyBtn" class="secondary notify-btn">Request notification permission</button>
-          <button id="notifyLocalTest" class="secondary notify-local-test hidden">Send a test notification</button>
+          <button id="notifyLocalTest" class="secondary notify-local-test hidden">Send test notification</button>
         </div>
         <p id="notifyPerm" class="muted notify-perm" role="status"></p>
         <div id="pushSetup"></div>
