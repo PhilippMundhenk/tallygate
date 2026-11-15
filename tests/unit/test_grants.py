@@ -6,6 +6,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gateway"))
 
+import ipaddress
+import logging
+
+import yaml
+
 from egressgw.grants import (
     GrantDef,
     Grants,
@@ -16,10 +21,6 @@ from egressgw.grants import (
     parse_ttl,
     path_ok,
 )
-import ipaddress
-import logging
-
-import yaml
 
 HA = {
     "description": "Home Assistant",

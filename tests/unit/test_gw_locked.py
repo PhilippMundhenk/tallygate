@@ -24,10 +24,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gateway"))
 pytest.importorskip("mitmproxy")
 pytest.importorskip("aiohttp")
 
-from egressgw import core  # noqa: E402
-from egressgw.policy import LOCKED, Rule  # noqa: E402
+from egressgw import core
+from egressgw.policy import LOCKED, Rule
 
-from .test_gw_api import admin  # noqa: E402
+from .test_gw_api import admin
 
 TOKEN = "t" * 32
 PRESETS = Path(__file__).resolve().parents[2] / "gateway" / "presets"
@@ -237,7 +237,7 @@ def test_the_own_listener_is_locked_by_its_port_only(make, monkeypatch):
     )
     for host in ("127.0.0.1", "127.9.9.9", "[::1]", "0.0.0.0"):
         err, _, _ = connect(g, host, 9081)
-        assert err is not None and f":9081 is the gateway itself" in err, host
+        assert err is not None and ":9081 is the gateway itself" in err, host
     assert connect(g, "localhost.example", 9081, ips=("127.0.0.1",))[0].endswith(
         "127.0.0.1:9081 is the gateway itself)"
     )
@@ -489,7 +489,7 @@ def test_saving_a_name_only_target_that_resolves_into_a_block_is_refused_with_th
     assert admin(g, "PUT", "/destinations/grant/ha3", ha)[0] == 200
     # import: the grants are checked against the policy that is being imported, not the one in force
     g.grants.delete_ui("ha3")
-    status, prev = admin(g, "POST", "/policy/import", {"yaml": doc, "apply": True})  # that export has the block
+    status, _ = admin(g, "POST", "/policy/import", {"yaml": doc, "apply": True})  # that export has the block
     assert status == 400 and "ha" in g.grants.defs and "ha3" not in g.grants.defs
 
 

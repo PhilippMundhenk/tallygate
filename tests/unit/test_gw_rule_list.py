@@ -362,7 +362,7 @@ def test_the_name_first_short_cut_is_proven_against_the_full_evaluation():
         answer the addresses are checked by the full evaluation anyway.
 
     And an `allow` is never acted on early. 1500 random rule lists, each with every name/port/address mix."""
-    rng = random.Random(208)
+    rng = random.Random(208)  # noqa: S311 - a reproducible test sequence
     addresses = ["8.8.8.8", "8.8.8.9", "9.9.9.9", "1.1.1.1", "192.168.1.10", "192.168.1.20", "10.0.0.1",
                  "172.31.11.5", "2001:4860::1", "::1"]  # fmt: skip
     sets = [[a] for a in addresses] + [[a, b] for a in addresses[:5] for b in addresses[3:8]]
@@ -389,7 +389,7 @@ def test_the_name_first_short_cut_is_proven_against_the_full_evaluation():
 def test_the_short_cut_is_not_needlessly_strict():
     """The other direction, so that the proof above is not satisfied by never short-cutting: without an
     address allow/ask rule for the port, a name the list denies or asks about is ALWAYS decided early."""
-    rng = random.Random(19)
+    rng = random.Random(19)  # noqa: S311
     for _ in range(1500):
         p = _random_policy(rng)
         now = time.time()
