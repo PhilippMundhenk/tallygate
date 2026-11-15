@@ -11,7 +11,7 @@ async function loadFiles(path = fileState.path) {
   fileState.path = r.path; fileState.maxUpload = r.max_upload;
   $("#fileHint").textContent = `Up to ${fmtBytes(r.max_upload)} per file (FILES_MAX_UPLOAD); downloads up to ${fmtBytes(r.max_download)}.`;
   const parts = r.path ? r.path.split("/") : [];
-  $("#fileCrumbs").innerHTML = [`<button class="small ghost" data-dir="">workspace</button>`]
+  $("#fileCrumbs").innerHTML = [`<button class="small ghost" data-dir="">Workspace</button>`]
     .concat(parts.map((p, i) => `<span aria-hidden="true">/</span><button class="small ghost" data-dir="${esc(parts.slice(0, i + 1).join("/"))}"${i === parts.length - 1 ? ' aria-current="page"' : ""}>${esc(p)}</button>`))
     .join("");
   const rows = [];
