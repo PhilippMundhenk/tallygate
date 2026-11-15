@@ -7,7 +7,7 @@ document.addEventListener("tg:card", (e) => {
   if (!el || !ctx.length || el.querySelector(".agent-ctx")) return;
   const ago = (ts) => { const s = Math.max(0, Math.round(Number(item.created) - Number(ts))); return s < 2 ? "just before" : `${s} s before`; };
   const box = document.createElement("div"); box.className = "agent-ctx";
-  box.innerHTML = `<div class="meta claim"><span class="claim-badge">⚠ claimed by the agent — unverified</span> Agent's recent activity</div><ul>${ctx.map((c) => {
+  box.innerHTML = `<div class="meta claim"><span class="claim-badge">claimed by the agent — unverified</span> Agent's recent activity</div><ul>${ctx.map((c) => {
     const what = c.kind === "note" ? `<i>note:</i> ${esc(c.note || c.text)}`
       : `${c.tool ? `<b>${esc(c.tool)}</b> ` : ""}<code>${esc(c.text || "")}</code>${c.note ? ` <span class="muted">– ${esc(c.note)}</span>` : ""}`;
     return `<li>${what} <span class="muted">(${esc(ago(c.ts))})</span></li>`;

@@ -3,34 +3,36 @@
    Uses the helpers of app.js ($, esc, api, gw, guard, toast, showTab, openTerm, tabHooks).
    Everything the agent reports is untrusted: it is escaped, and links are only set from URLs control checked. */
 const wz = { secrets: null, selftest: null, preview: null };
+// Step and check states use the status vocabulary (docs/ux-concept.md): a word with a dot, never an icon.
 const STEP_TEXT = { done: "done", missing: "to do", warn: "check", info: "optional" };
-const CHECK_ICON = { ok: "✔", warn: "⚠", bad: "✖", info: "•" };
+const STEP_CLASS = { done: "ok", missing: "warn", warn: "warn", info: "off" };
+const CHECK_TEXT = { ok: ["ok", "done"], warn: ["warn", "check"], bad: ["bad", "failed"], info: ["off", "info"] };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function stepStatus(id, html, cls = "") {
-  const s = $(`#${id} > .status`); s.className = "status " + cls; s.innerHTML = html;
+  const s = $(`#${id} > .step-msg`); s.className = "step-msg " + cls; s.innerHTML = html;
 }
 function step(id, state, html, cls) {
   const li = $("#" + id); li.dataset.state = state;
-  const b = $(".step-state", li); b.textContent = STEP_TEXT[state]; b.className = "step-state " + state;
+  const b = $(".step-state", li); b.textContent = STEP_TEXT[state]; b.className = `step-state status ${STEP_CLASS[state]} ${state}`;
   if (html !== undefined) stepStatus(id, html, cls ?? { done: "ok", missing: "warn", warn: "warn", info: "muted" }[state]);
 }
 const title = (li) => $("h3", li).firstChild.textContent.trim();
-const gotoBtn = (id, label) => ` <button class="small secondary" data-goto="${id}">${esc(label)}</button>`;
+const gotoBtn = (id, label) => ` <button class="small ghost" data-goto="${id}">${esc(label)}</button>`;
 function gotoStep(id) {
   const li = $("#" + id); li.scrollIntoView({ behavior: "smooth", block: "start" }); $("h3", li).focus({ preventScroll: true });
 }
 
 async function loadWizard() {
   const q = (p) => p.then((v) => ({ ok: true, v }), (e) => ({ ok: false, e }));
-  const [checks, info, sec, st, meta, pol, ncfg] = await Promise.all([
+  const [checks, info, sec, st, meta, ncfg] = await Promise.all([
     q(api("GET", "/api/setup/checks?origin=" + encodeURIComponent(location.origin))),
     q(gw("GET", "/info")), q(gw("GET", "/secrets")), q(api("GET", "/api/agent/status")),
-    q(api("GET", "/api/meta")), q(gw("GET", "/policy")), q(api("GET", "/api/notify/config")),
+    q(api("GET", "/api/meta")), q(api("GET", "/api/notify/config")),
   ]);
   wz.secrets = sec.ok ? sec.v.names : null;
   renderAccess(checks); renderGateway(info, sec); renderToken(sec);
-  renderClaude(st); renderGit(st); renderRc(st); renderPolicy(pol); renderNotify(meta, ncfg); renderSelftest();
+  renderClaude(st); renderGit(st); renderRc(st); renderNotify(meta, ncfg); renderSelftest();
   renderSummary();
   if (st.ok && !st.v.claude_logged_in && $("#clFlow").classList.contains("hidden")) {
     const l = await api("GET", "/api/agent/setup/claude-login").catch(() => null);  // resume a waiting login
@@ -42,8 +44,11 @@ tabHooks.setup = loadWizard;
 function renderAccess(r) {
   if (!r.ok) { step("st-access", "missing", esc(r.e.message), "bad"); step("st-password", "missing", ""); return; }
   const c = r.v.checks;
-  $("#accessChecks").innerHTML = c.map((x) => `<li class="chk ${esc(x.state)}"><b>${CHECK_ICON[x.state] || ""} ${esc(x.title)}</b>
-    <span class="muted">${esc(x.detail)}</span></li>`).join("");
+  $("#accessChecks").innerHTML = c.map((x) => {
+    const [cls, word] = CHECK_TEXT[x.state] || ["off", "info"];
+    return `<li class="chk"><span class="status ${cls}">${word}</span> <b>${esc(x.title)}</b>
+    <span class="muted">${esc(x.detail)}</span></li>`;
+  }).join("");
   step("st-access", c.some((x) => x.state === "bad") ? "missing" : c.some((x) => x.state === "warn") ? "warn" : "done", "");
   const change = "Change it on the Docker host: <code>docker compose exec control python -m app.passwd</code>";
   const pw = {
@@ -52,21 +57,21 @@ function renderAccess(r) {
     "env-hash": ["done", "Set by <code>CONTROL_PASSWORD_HASH</code>."],
     proxy: ["done", "Your reverse proxy logs you in (<code>TRUST_PROXY_AUTH_HEADER</code>)."],
     changed: ["done", `Your own password. ${change}`],
-  }[r.v.password] || ["warn", "unknown"];
+  }[r.v.password] || ["warn", "Unknown."];
   step("st-password", pw[0], pw[1]);
 }
 
 function renderGateway(info, sec) {
   if (!info.ok) return step("st-gw", "missing", esc(info.e.message), "bad");
   const i = info.v, needed = sec.ok ? i.inject_secrets_needed.filter((n) => n !== "github_token" && !sec.v.names.includes(n)) : [];
-  step("st-gw", i.ca_pem ? "done" : "missing", `${i.ca_pem ? "✔ CA exported" : "✖ CA missing"} · injection for
-    <code>${esc(i.inject_hosts.join(", ") || "none")}</code> · pending ${esc(i.pending)}${needed.length ? ` · ⚠ missing secrets: ${esc(needed.join(", "))}` : ""}`);
+  step("st-gw", i.ca_pem ? "done" : "missing", `${i.ca_pem ? "✓ CA exported" : "✕ CA missing"} · injection for
+    <code>${esc(i.inject_hosts.join(", ") || "none")}</code> · ${esc(i.pending)} waiting${needed.length ? ` · missing secrets: ${esc(needed.join(", "))}` : ""}`);
 }
 
 function renderToken(sec) {
   if (!sec.ok) return step("st-gh", "missing", esc(sec.e.message), "bad");
   const has = sec.v.names.includes("github_token");
-  if (!$("#st-gh > .status").dataset.keep) step("st-gh", has ? "done" : "missing", has ? "✔ github_token stored in the gateway" : "No token stored yet.");
+  if (!$("#st-gh > .step-msg").dataset.keep) step("st-gh", has ? "done" : "missing", has ? "✓ github_token saved in the gateway" : "No token saved yet.");
   else step("st-gh", has ? "done" : "missing");
 }
 
@@ -74,17 +79,18 @@ function renderClaude(st) {
   if (!st.ok) return step("st-claude", "missing", esc(st.e.message), "bad");
   const ok = st.v.claude_logged_in;
   $("#clStart").textContent = ok ? "Log in again" : "Start login";
-  $("#clStart").classList.toggle("secondary", ok);
   if (ok) $("#clFlow").classList.add("hidden");
-  step("st-claude", ok ? "done" : "missing", ok ? `✔ Logged in${st.v.claude_version ? ` · Claude Code ${esc(st.v.claude_version.replace(/\s*\(Claude Code\)$/, ""))}` : ""}` : "Not logged in yet.");
+  // one primary per step: Start login, until the code form (with its own primary) is open or the login is done
+  $("#clStart").classList.toggle("secondary", ok || !$("#clFlow").classList.contains("hidden"));
+  step("st-claude", ok ? "done" : "missing", ok ? `✓ Logged in${st.v.claude_version ? ` · Claude Code ${esc(st.v.claude_version.replace(/\s*\(Claude Code\)$/, ""))}` : ""}` : "Not logged in yet.");
 }
 
 function renderGit(st) {
   if (!st.ok) return step("st-git", "missing", esc(st.e.message), "bad");
   const s = st.v, state = s.git_identity || (s.git_name && s.git_email ? "ok" : "missing");
-  if (state === "ok") return step("st-git", "done", `✔ ${esc(s.git_name)} &lt;${esc(s.git_email)}&gt;`);
+  if (state === "ok") return step("st-git", "done", `✓ ${esc(s.git_name)} &lt;${esc(s.git_email)}&gt;`);
   step("st-git", "missing", state === "empty"
-    ? "Set, but empty: an earlier <code>git config</code> stored nothing (for example because the <code>$(gh api user …)</code> inside it failed). Use the button above."
+    ? "Set, but empty: an earlier <code>git config</code> stored nothing (for example because the <code>$(gh api user …)</code> inside it failed). Use <i>Use my GitHub identity</i> above."
     : "Not set yet.");
 }
 
@@ -94,20 +100,12 @@ function renderRc(st) {
   const s = st.v, name = esc(s.remote_control_name || "");
   btn.disabled = !s.remote_control_enabled || !s.claude_logged_in;
   if (s.remote_control_enabled === false) return step("st-rc", "info", "Switched off (<code>RC_ENABLE=0</code>).");
-  if (s.remote_control_prompt) return step("st-rc", "missing", `Waiting for an answer in the rc console: <code>${esc(s.remote_control_prompt)}</code>. <i>Enable</i> answers it.`);
+  if (s.remote_control_prompt) return step("st-rc", "missing", `Waiting for an answer in the rc console: <code>${esc(s.remote_control_prompt)}</code>. <i>Enable Remote Control</i> answers it.`);
   if (s.remote_control_running) {
     btn.disabled = true;
-    return step("st-rc", "done", `✔ Running${name ? ` as <b>${name}</b>` : ""}. Open the Claude app → <i>Code</i>, or claude.ai/code.`);
+    return step("st-rc", "done", `✓ Running${name ? ` as <b>${name}</b>` : ""}. Open the Claude app → <i>Code</i>, or claude.ai/code.`);
   }
-  step("st-rc", "missing", s.claude_logged_in ? "Not running yet." : `Log in to Claude first.${gotoBtn("st-claude", "Go to the login")}`);
-}
-
-function renderPolicy(pol) {
-  if (!$("#st-policy")) return;  // the step was removed (#200): "ask" is the default, the mode is under Settings
-  if (!pol.ok) return step("st-policy", "info", esc(pol.e.message), "bad");
-  const mode = pol.v.default;
-  $$("#st-policy [data-policy]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.policy === mode)));
-  step("st-policy", "done", { ask: "New destinations: you are asked each time.", deny: "New destinations are blocked.", allow: "⚠ New destinations are allowed (log only)." }[mode] || esc(mode));
+  step("st-rc", "missing", s.claude_logged_in ? "Not running yet." : `Log in to Claude first.${gotoBtn("st-claude", "Go to Log in to Claude")}`);
 }
 
 // #180: one Notifications section. Each channel shows whether it is active and why, with a Test
@@ -148,22 +146,21 @@ function notifyConfigForm(c, label) {
     lab.append(input, small); form.appendChild(lab);
   }
   const btns = document.createElement("div"); btns.className = "btns";
-  const save = document.createElement("button"); save.type = "submit"; save.className = "small"; save.textContent = "Save";
+  const save = document.createElement("button"); save.type = "submit"; save.className = "small"; save.textContent = "Save settings";
   save.setAttribute("aria-label", `Save the ${label} settings`);
   const remove = document.createElement("button"); remove.type = "button"; remove.className = "small secondary"; remove.textContent = "Remove override";
   remove.setAttribute("aria-label", `Remove the ${label} settings saved in the web UI`);
-  remove.disabled = !c.override;
-  remove.title = c.override ? "" : "Nothing is saved in the web UI for this channel.";
+  remove.disabled = !c.override;  // nothing is saved in the web UI for this channel
   btns.append(save, remove); form.appendChild(btns);
   form.addEventListener("submit", guard(async (e) => {
     e.preventDefault();
     const body = {}; for (const f of c.fields) body[f.name] = form.elements[f.name].value;
     await api("PUT", `/api/notify/config/${encodeURIComponent(c.channel)}`, body);
-    toast(`${label} settings saved and applied`); await loadWizard();
+    toast(`${label} settings saved`); await loadWizard();
   }));
   remove.onclick = confirmClick(remove, `Delete what the web UI saved for ${label}? The channel falls back to the environment, or switches off.`, async () => {
     await api("DELETE", `/api/notify/config/${encodeURIComponent(c.channel)}`);
-    toast(`${label}: web UI settings removed`); await loadWizard();
+    toast(`${label} override removed`); await loadWizard();
   });
   det.append(sum, form);
   return det;
@@ -195,12 +192,12 @@ function renderNotify(meta, ncfg) {
       const item = document.createElement("div"); item.className = "notify-channel";
       const row = document.createElement("div"); row.className = "row-between";
       const info = document.createElement("div");
-      info.innerHTML = `<b>${esc(c.label)}</b> <span class="tag ${c.configured ? "ok" : "warn"}">${c.configured ? "active" : "off"}</span>`
+      info.innerHTML = `<b>${esc(c.label)}</b> <span class="status ${c.configured ? "ok" : "off"}">${c.configured ? "active" : "off"}</span>`
         + (NOTIFY_SOURCE[c.source] ? ` <span class="muted notify-source">· ${NOTIFY_SOURCE[c.source]}</span>` : "")
         + `<div class="muted notify-why">${esc(c.reason)}</div>`;
-      const btn = document.createElement("button"); btn.className = "small secondary notify-test"; btn.textContent = "Test";
+      const btn = document.createElement("button"); btn.className = "small ghost notify-test"; btn.textContent = "Test";
       btn.setAttribute("aria-label", `Send a test notification through ${c.label}`);
-      if (!c.configured) { btn.disabled = true; btn.title = c.reason; }
+      if (!c.configured) btn.disabled = true;  // the reason is the line under the channel name
       else btn.onclick = guard(() => notifyTest(c));
       row.append(info, btn); item.appendChild(row);
       const conf = cfg && cfg.writable && cfg.channels.find((x) => x.channel === c.channel);
@@ -209,13 +206,13 @@ function renderNotify(meta, ncfg) {
     }
   }
   const active = detail.filter((c) => c.configured).length;
-  $$(".notify-status").forEach((e) => (e.textContent = active ? `${active} of ${detail.length} channels active` : "No notification channel is active yet."));
+  $$(".notify-status").forEach((e) => (e.textContent = active ? `${active} of ${detail.length} channels active` : "No notification channel is active yet. Configure one below."));
   step("st-notify", active ? "done" : "info", "");
   showNotifyPerm();
 }
 
 function renderSelftest() {
-  if (!wz.selftest) return step("st-test", "missing", $("#st-test > .status").innerHTML ? undefined : "Not run yet.");
+  if (!wz.selftest) return step("st-test", "missing", $("#st-test > .step-msg").innerHTML ? undefined : "Not run yet.");
   step("st-test", wz.selftest.every((t) => t.pass) ? "done" : "missing");
 }
 
@@ -225,8 +222,8 @@ function renderSummary() {
   const next = req.find((li) => li.dataset.state === "missing");
   req.forEach((li) => li.classList.toggle("current", li === next));
   $("#wzSummary").innerHTML = next
-    ? `<b>${done.length} of ${req.length} steps done.</b> Next: ${gotoBtn(next.id, title(next))}`
-    : `<b class="ok">✔ All ${req.length} steps done.</b> The agent is ready: open the Claude app → <i>Code</i>.`;
+    ? `<b>${done.length} of ${req.length} steps done.</b> Next: ${gotoBtn(next.id, `Go to ${title(next)}`)}`
+    : `<span class="status ok">done</span> <b>All ${req.length} steps done.</b> The agent is ready: open the Claude app → <i>Code</i>.`;
 }
 
 /* ---- actions ---- */
@@ -238,13 +235,13 @@ $("#ghSave").onclick = guard(async () => {
   const token = $("#ghToken").value.trim(); if (!token) throw new Error("Paste the token first");
   const r = await api("POST", "/api/github/check", { token, store: true });
   $("#ghToken").value = "";
-  const s = $("#st-gh > .status"); s.dataset.keep = "1";
-  if (!r.ok) { stepStatus("st-gh", `✖ GitHub says ${esc(r.status)}: ${esc(r.message)}`, "bad"); return renderSummary(); }
-  stepStatus("st-gh", `✔ valid for <b>${esc(r.login)}</b>${r.expires ? ` · expires ${esc(r.expires)}` : ""}${r.scopes ? ` · scopes ${esc(r.scopes)}` : " · fine-grained"} · ${r.stored ? "stored in the gateway" : "NOT stored"}`, r.stored ? "ok" : "bad");
+  const s = $("#st-gh > .step-msg"); s.dataset.keep = "1";
+  if (!r.ok) { stepStatus("st-gh", `✕ GitHub says ${esc(r.status)}: ${esc(r.message)}`, "bad"); return renderSummary(); }
+  stepStatus("st-gh", `${r.stored ? "✓" : "✕"} Valid for <b>${esc(r.login)}</b>${r.expires ? ` · expires ${esc(r.expires)}` : ""}${r.scopes ? ` · scopes ${esc(r.scopes)}` : " · fine-grained"} · ${r.stored ? "saved in the gateway" : "not saved"}`, r.stored ? "ok" : "bad");
   await refreshAndNext();
 });
-$("#ghRemove").onclick = confirmClick($("#ghRemove"), "Remove the GitHub token from the gateway?", async () => {
-  await gw("PUT", "/secrets/github_token", { value: "" }); delete $("#st-gh > .status").dataset.keep; await loadWizard();
+$("#ghRemove").onclick = confirmClick($("#ghRemove"), "Delete the GitHub token from the gateway? The agent can no longer use GitHub.", async () => {
+  await gw("PUT", "/secrets/github_token", { value: "" }); toast("Token deleted"); delete $("#st-gh > .step-msg").dataset.keep; await loadWizard();
 });
 
 // Claude login: control only passes on a URL of Anthropic's login page (safe_login_url), never another one.
@@ -252,14 +249,14 @@ function showLogin(r) {
   const flow = $("#clFlow");
   if (r.state === "done" || (r.logged_in && r.state !== "waiting_code")) { flow.classList.add("hidden"); return true; }
   if (r.state === "waiting_code" && r.url) {
-    $("#clUrl").href = r.url; flow.classList.remove("hidden");
+    $("#clUrl").href = r.url; flow.classList.remove("hidden"); $("#clStart").classList.add("secondary");
     stepStatus("st-claude", "Waiting for the code from the login page.", "warn"); $("#clUrl").focus();
     return false;
   }
   flow.classList.add("hidden");
-  if (r.state === "waiting_code") stepStatus("st-claude", "✖ The agent reported a login address that is not Anthropic's. It is not shown.", "bad");
-  else if (r.state === "failed") stepStatus("st-claude", `✖ Login failed${r.message ? `: ${esc(r.message)}` : ""}. Start it again.`, "bad");
-  else stepStatus("st-claude", "✖ Claude Code showed no login address in time. Start it again.", "bad");
+  if (r.state === "waiting_code") stepStatus("st-claude", "✕ The agent reported a login address that is not Anthropic's. It is not shown.", "bad");
+  else if (r.state === "failed") stepStatus("st-claude", `✕ Login failed${r.message ? `: ${esc(r.message)}` : ""}. Start it again.`, "bad");
+  else stepStatus("st-claude", "✕ Claude Code showed no login address in time. Start it again.", "bad");
   return false;
 }
 $("#clStart").onclick = guard(async () => {
@@ -285,24 +282,24 @@ async function applyGit(name, email) {
   if (!name || !email) throw new Error("Name and email must not be empty");
   if (!/^[^\s@<>"]+@[^\s@<>"]+$/.test(email)) throw new Error(`"${email}" is not an email address`);
   const r = await api("POST", "/api/agent/setup/git-identity", { name, email });
-  $("#gitBox").classList.add("hidden"); toast(`Git identity set: ${r.name} <${r.email}>`);
+  $("#gitBox").classList.add("hidden"); $("#gitPreview").classList.remove("secondary"); toast(`Git identity saved: ${r.name} <${r.email}>`);
   await refreshAndNext();
 }
 $("#gitPreview").onclick = guard(async () => {
-  $("#gitBox").classList.add("hidden");
+  $("#gitBox").classList.add("hidden"); $("#gitPreview").classList.remove("secondary");
   if (wz.secrets && !wz.secrets.includes("github_token"))
-    return stepStatus("st-git", `✖ No GitHub token is stored yet, so GitHub cannot say who you are. Store it first.${gotoBtn("st-gh", "Go to the GitHub token")}`, "bad");
+    return stepStatus("st-git", `✕ No GitHub token is saved yet, so GitHub cannot say who you are. Save it first.${gotoBtn("st-gh", "Go to GitHub token")}`, "bad");
   stepStatus("st-git", "Asking GitHub through the gateway…");
   const r = await api("GET", "/api/agent/setup/git-identity");
   if (!r.ok) {
-    const hint = r.reason === "token" ? gotoBtn("st-gh", "Check the GitHub token")
+    const hint = r.reason === "token" ? gotoBtn("st-gh", "Go to GitHub token")
       : r.reason === "network" ? " Is <code>api.github.com</code> allowed? Check it under <i>Destinations → Test a destination</i>." : "";
-    return stepStatus("st-git", `✖ ${esc(r.message)}.${hint} Or enter it yourself below.`, "bad");
+    return stepStatus("st-git", `✕ ${esc(r.message)}.${hint} Or enter it yourself below.`, "bad");
   }
   wz.preview = { name: r.name, email: r.email };
   $("#gitName").textContent = r.name; $("#gitEmail").textContent = r.email;
-  $("#gitBox").classList.remove("hidden");
-  stepStatus("st-git", `GitHub account <b>${esc(r.login)}</b>. Check the values and apply them.`);
+  $("#gitBox").classList.remove("hidden"); $("#gitPreview").classList.add("secondary");  // Save identity is now the one primary
+  stepStatus("st-git", `GitHub account <b>${esc(r.login)}</b>. Check the values and save them.`);
   $("#gitApply").focus();
 });
 $("#gitApply").onclick = guard(() => applyGit(wz.preview?.name, wz.preview?.email));
@@ -323,17 +320,13 @@ $("#rcEnable").onclick = guard(async () => {
 });
 $$(".wizard [data-term]").forEach((b) => (b.onclick = () => openTerm(b.dataset.term)));
 
-$$("#st-policy [data-policy]").forEach((b) => (b.onclick = guard(async () => {
-  await gw("PATCH", "/policy", { default: b.dataset.policy }); toast("Mode saved"); await loadWizard();
-})));
-
 $("#selftestBtn").onclick = guard(async () => {
-  const b = $("#selftestBtn"); b.disabled = true; stepStatus("st-test", "running… (up to a minute)");
+  const b = $("#selftestBtn"); b.disabled = true; stepStatus("st-test", "Running… (up to a minute)");
   try {
     const r = await api("GET", "/api/agent/selftest");
     wz.selftest = r.results;
-    const rows = r.results.map((t) => `<tr><td class="${t.pass ? "ok" : "bad"}">${t.pass ? "PASS" : "FAIL"}</td><td>${esc(t.name)}</td><td class="muted">${esc(t.detail)}</td></tr>`).join("");
-    stepStatus("st-test", `<div class="table-wrap"><table class="results">${rows}</table></div>`, r.results.every((t) => t.pass) ? "ok" : "bad");
+    const rows = r.results.map((t) => `<tr><td><span class="status ${t.pass ? "ok" : "bad"}">${t.pass ? "passed" : "failed"}</span></td><td>${esc(t.name)}</td><td class="muted">${esc(t.detail)}</td></tr>`).join("");
+    stepStatus("st-test", `<div class="table-wrap"><table class="results">${rows}</table></div>`, "");
   } finally { b.disabled = false; }
   renderSelftest(); renderSummary();
 });
@@ -352,7 +345,7 @@ function showNotifyPerm() {
   $$(".notify-local-test").forEach((b) => b.classList.toggle("hidden", !on));
   const text = !secure ? "Browser notifications need HTTPS (or localhost): open the UI through your TLS reverse proxy."
     : !supported ? "This browser does not support notifications."
-    : on ? "Browser notifications are on"
+    : on ? "Browser notifications are on."
     : perm === "denied" ? NOTIFY_BLOCKED : "";
   $$(".notify-perm").forEach((e) => (e.textContent = text));  // one Notifications section since #180
 }

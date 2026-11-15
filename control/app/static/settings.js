@@ -10,13 +10,13 @@
     log_max_events: "Log size cap (events)",
     learning_ports: "Learning ports",
     learning_max_minutes: "Learning session limit (minutes)",
-    rule_stale_days: "Rule unused-for (days)",
-    suggest_min_approvals: "Suggest after N approvals",
+    rule_stale_days: "Rule unused after (days)",
+    suggest_min_approvals: "Suggest a rule after (approvals)",
     suggest_window_days: "Suggestion window (days)",
     grant_request_timeout: "Grant request timeout (s)",
-    grant_max_pending: "Max pending grant requests",
+    grant_max_pending: "Maximum waiting grant requests",
     policy_history_keep: "Policy versions kept",
-    max_pending: "Max pending connection requests",
+    max_pending: "Maximum waiting connection requests",
   };
   let model = null;
 
@@ -25,14 +25,14 @@
     const rows = Object.keys(LABELS).map((k) => {
       const v = model.values[k];
       const val = k === "learning_ports" ? (Array.isArray(v) ? v.join(", ") : v) : v;
-      const note = restart.has(k) ? ' <span class="muted">(restart)</span>' : "";
+      const note = restart.has(k) ? ' <span class="tag">restart</span>' : "";
       const def = model.defaults[k];
       const defTxt = k === "learning_ports" ? [].concat(def).join(", ") : def;
       return `<label>${esc(LABELS[k])}${note}
         <input class="s-field" data-key="${k}" value="${esc(String(val))}" aria-label="${esc(LABELS[k])}">
-        <small class="muted">default ${esc(String(defTxt))}</small></label>`;
+        <small class="muted">Default ${esc(String(defTxt))}</small></label>`;
     }).join("");
-    box.innerHTML = `<div class="grid2">${rows}</div><div class="row"><button id="settingsSave">Save</button>
+    box.innerHTML = `<div class="grid2">${rows}</div><div class="row"><button id="settingsSave">Save settings</button>
       <span id="settingsMsg" class="muted" role="status"></span></div>`;
     $("#settingsSave").onclick = guard(save);
   }
@@ -47,7 +47,7 @@
     const res = await gw("PATCH", "/settings", changes);
     model = res; render();
     const r = res.restart_needed || [];
-    toast(r.length ? `Saved. Restart the gateway for: ${r.join(", ")}` : "Settings saved");
+    toast(r.length ? `Settings saved. Restart the gateway for: ${r.join(", ")}` : "Settings saved");
   }
 
   async function load() {

@@ -23,23 +23,23 @@
     $("#learnState").innerHTML = a
       ? `<p class="learn-on" role="status"><b>Learning mode is on</b> for ports ${esc(a.ports.join(", "))}: ends at
           ${esc(new Date(a.until * 1000).toLocaleTimeString())} (${esc(fmtLeft(a.until))} left), started by ${esc(a.by)}.
-          Destinations no rule covers are allowed and recorded.</p><button id="learnStop" class="danger">Stop learning mode</button>`
+          Destinations no rule covers are allowed and recorded.</p><button id="learnStop" class="secondary">Stop learning mode</button>`
       : `<div class="row wrap">
           <label class="inline">Duration <select id="learnMin">${mins.map((m) => `<option value="${m}"${m === 30 ? " selected" : ""}>${m} min</option>`).join("")}</select></label>
           <label class="inline">Ports <select id="learnPorts">${portsChoices.map((p) => `<option value="${p.join(",")}">${p.join(" and ")}${p.join() === "443" ? " (HTTPS)" : ""}</option>`).join("")}</select></label>
-          <button id="learnStart">Start learning mode</button></div>`;
+          <button id="learnStart" class="danger">Start learning mode</button></div>`;
     if (a) $("#learnStop").onclick = guard(async () => { await gw("DELETE", "/learning"); toast("Learning mode stopped"); await load(); });
     else {
       const b = $("#learnStart");
       b.onclick = confirmClick(b, "Allow every public destination that no rule covers on these ports, for this time?", async () => {
         await gw("POST", "/learning", { minutes: +$("#learnMin").value, ports: $("#learnPorts").value.split(",").map(Number) });
-        toast("Learning mode is on"); await load(); $("#learnStop").focus();
+        toast("Learning mode started"); await load(); $("#learnStop").focus();
       });
     }
     const sessions = state.sessions;
     $("#learnSessions").innerHTML = sessions.length ? `<label class="inline">Session <select id="learnSel">${sessions.map((s) =>
       `<option value="${esc(s.id)}">${esc(fmtDate(s.started))}${s.ended ? "" : " (running)"} · ${esc(s.by)}</option>`).join("")}</select></label>
-      <button id="learnShow" class="secondary small">Show what was used</button>` : "";
+      <button id="learnShow" class="secondary small">Show session</button>` : "";
     if (sessions.length) $("#learnShow").onclick = guard(() => showSummary($("#learnSel").value));
     renderBadge();
     if (keep) ($("#learnStop") || $("#learnStart")).focus();
@@ -49,12 +49,12 @@
     const r = await gw("GET", `/learning/${encodeURIComponent(id)}`);
     const out = $("#learnSummary"), s = r.session, props = r.groups.filter((g) => g.proposal);
     out.innerHTML = `<h4>Used during the session from ${esc(fmtDate(s.started))}${s.ended ? ` to ${esc(fmtDate(s.ended))}` : " (still running)"}</h4>
-      ${r.groups.length ? "" : '<p class="muted">No connections in this session.</p>'}
+      ${r.groups.length ? "" : '<p class="empty">No connections in this session. Start a new one while the agent works.</p>'}
       <ul class="checklist">${r.groups.map((g, i) => `<li><label>${g.proposal ? `<input type="checkbox" data-i="${i}" checked>` : '<input type="checkbox" disabled>'}
         <span><code>${esc(g.proposal ? g.proposal.host : g.domain)}:${esc(g.port)}</code>
         <span class="muted">${esc(g.count)} connection${g.count === 1 ? "" : "s"} · ${g.hosts.map((h) => esc(h.host) + (h.count > 1 ? ` (${esc(h.count)})` : "")).join(", ")}
         ${g.proposal ? "" : g.denied === g.count ? " · denied by your rules" : " · already allowed by your rules"}</span></span></label></li>`).join("")}</ul>
-      ${props.length ? '<button id="learnSave">Save selected as allow rules</button>' : ""}`;
+      ${props.length ? '<button id="learnSave" class="secondary">Add selected rules</button>' : ""}`;
     if (!props.length) return;
     $("#learnSave").onclick = guard(async () => {
       const rules = $$("#learnSummary input[data-i]:checked").map((c) => r.groups[+c.dataset.i].proposal);
@@ -68,11 +68,14 @@
     render();
     if (!state.active && state.sessions.length && shown === null) await showSummary(state.sessions[0].id);
   }
-  box.innerHTML = `<p class="hint">Starting a new kind of task? For a limited time, connections to public destinations that
-      no rule covers are allowed on the chosen ports and recorded. Afterwards you see what was used, grouped by
-      domain, and save the rules you want in one go. The hard deny (local network, Docker host, metadata), your deny
-      and ask rules and grants stay in force, names are still decided before they are resolved, and learning mode
-      ends by itself (also on the emergency stop and when the gateway restarts).</p>
+  box.innerHTML = `<p class="hint">For a new kind of task: for a limited time, public destinations no rule covers are allowed and recorded.</p>
+    <details class="help"><summary>What does learning mode allow?</summary>
+      <p>For a limited time, connections to public destinations that no rule covers are allowed on the chosen
+        ports and recorded. Afterwards you see what was used, grouped by domain, and add the rules you want in
+        one go.</p>
+      <p>The hard deny (local network, Docker host, metadata), your deny and ask rules and grants stay in force,
+        names are still decided before they are resolved, and learning mode ends by itself (also on the emergency
+        stop and when the gateway restarts).</p></details>
     <div id="learnState"></div><div id="learnSessions" class="row wrap"></div><div id="learnSummary"></div>`;
   badge.onclick = () => { focusNext = true; showTab("quickstart"); $("#learnCard").scrollIntoView({ block: "start" }); };  // tg:tab reloads, render() focuses
   setInterval(() => { if (state && state.active) { if (state.active.until <= Date.now() / 1000) load().catch(() => {}); else { renderBadge(); } } }, 15000);

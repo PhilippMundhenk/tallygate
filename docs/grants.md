@@ -8,7 +8,7 @@ it with one tap. When the time runs out, everything falls back to the normal pol
 
 ```text
 agent:  tallygate request homeassistant --write --ttl 30m --reason "turn off the living room lights"
-you:    🔑 homeassistant (write) for 30m   [Approve write]  [Approve read-only]  [Deny]
+you:    grant homeassistant (write) for 30m   [Allow write for 30m]  [Allow read-only]  [Deny]
 agent:  granted: homeassistant (read) for 30 min
         note: you asked for write but were granted read only
 ```
@@ -89,7 +89,7 @@ write-only.
 
 ### In the UI
 
-**Destinations → New grant** asks for five things: a name, the address (`ha.lan:8123`, or a URL such as
+**Grants → Create grant…** asks for five things: a name, the address (`ha.lan:8123`, or a URL such as
 `https://api.example.com/v1/`, whose path then limits the grant), the type (HTTPS, HTTP, or TCP for SSH and
 databases), read-only or full access, and for how long each approval lasts. *This is a device on my local
 network* is ticked for you when the address looks local. Everything else (automatic approval, separate default

@@ -1,3 +1,3 @@
 /* update notice and versions (update.js) */
 .update-notice{background:var(--amber);color:#000;font-weight:600}
-#ovVersions a{color:#93c5fd}#ovVersions pre.copy{margin:6px 0}
+#ovVersions a{color:var(--link)}#ovVersions pre.copy{margin:8px 0}

@@ -36,7 +36,7 @@ while it is open and at once when a request arrives or is decided.
 | Needs attention | Waiting connection and grant requests; rules and grants that end within the hour; a missing GitHub token, one GitHub refuses, or one that expires within 7 days (checked once per page load through the agent, so it appears in the log). |
 | Last hour | Connections allowed, denied and asked; the 10 most frequent destinations; destinations seen for the first time in the kept log (`log_keep_days`). |
 | Versions | tallygate (the release the gateway runs) and Claude Code, and the latest tallygate release. When a newer one exists, the header shows **Update: X.Y.Z**; the card links to the changelog and the release and shows the upgrade command (click to copy). Claude Code has no auto-updater in the agent: new versions come with tallygate releases. Control asks GitHub itself, at most every 6 hours; `UPDATE_CHECK=0` switches it off ([configuration](configuration.md)). |
-| Shortcuts | *Emergency stop* (click twice), *Allow web for 15 min* (the `open` preset), *Open the console* (rc). |
+| Shortcuts | *Emergency stop* (click twice), *Allow web for 15 min* (the `open` preset), *Open rc console*. |
 
 ## Approvals
 
@@ -48,7 +48,12 @@ background (turn these on once with **Request notification permission** in the S
 notification on your phone ([without a chat bot](#phone-approvals-without-a-chat-bot)). The countdown shows
 when it will be denied automatically.
 
-Each request offers three choices. **More** shows three further ones on that card.
+In the web UI each card offers, in the words of the [UX concept](ux-concept.md): **Allow for 5 min** (the
+one filled button), **Allow for … min**, **Allow host permanently** or **Allow \*.domain permanently**,
+**Deny for … min** and **Deny permanently**; a grant request offers **Allow read / write for …**,
+**Allow read-only** and **Deny**. The help under the page title says when to use which.
+
+Notifications (Telegram, Matrix, Web Push) offer three choices; **More** shows three further ones.
 
 | Button | Effect |
 |---|---|
@@ -99,9 +104,9 @@ the background; turn it on with a click, as browsers allow sound only after one.
 ## Away mode and quiet hours
 
 When you cannot answer, the agent should not wait 60 seconds for every new destination, and your phone
-should not buzz at night. The **Availability** card at the top of **Approvals** has two switches:
+should not buzz at night. The **Availability** card at the end of **Approvals** has two controls:
 
-- **I'm away** (until you are back, for 1 h, 4 h or until 08:00): new destinations and grant requests that
+- **Start away mode** (until you end it, for 1 h, 4 h or until 08:00): new destinations and grant requests that
   need your approval are refused at once. The agent gets a clear message (`operator away until 14:00:
   unknown destinations are refused without asking …`) instead of a held connection. Whatever was waiting
   for you when you switch it on is denied too.
@@ -111,7 +116,7 @@ Nothing is ever allowed automatically because you are away: away mode only turns
 that allow a destination keep working, and grants with `approval: auto` are still granted (and logged).
 What was refused is listed under **Refused while you were away**, with *Allow 1 h* per destination, and sent
 as one **digest** to Telegram/Matrix: when quiet hours end, when you are back, and while away every
-`digest_minutes` (30). *Dismiss all* clears the list. The header shows *away* or *quiet hours* on every tab.
+`digest_minutes` (30). *Dismiss list* clears the list. The header shows *away* or *quiet hours* on every tab.
 The agent sees the state in `tallygate grants`.
 
 Quiet hours use the gateway's time zone: set `TZ` (e.g. `TZ=Europe/Berlin` in `.env`) or `tz` in
@@ -180,8 +185,8 @@ One tab for everything about a destination — access rules, on-request grants, 
 - **Deny floor**: the ranges that are closed by default are listed as blocked rows in the *Destinations*
   table, each with its reason: the built-in private/reserved ranges, `never` from the gateway config file,
   your own deny additions, and the tallygate stack's own networks. A removable range (your LAN, the cloud
-  metadata address, your own additions) has an **Allow (unblock)** action behind a confirmation (ADR-0017) —
-  after which normal connections into it are allowed and the row shows a **Re-block** action; the stack's own
+  metadata address, your own additions) has an **Unblock range** action behind a confirmation (ADR-0017) —
+  after which normal connections into it are allowed and the row shows an **Undo unblock** action; the stack's own
   networks are marked locked and cannot be opened here. Grants are unaffected: they still cannot reach the
   metadata/loopback/stack ranges whatever you unblock for normal connections.
 - **Advanced: raw policy JSON**: edit everything at once (validated server-side).
@@ -216,17 +221,17 @@ The panel lists every step with a ✔ or ✖, so you can see what did not work. 
 grants with automatic approval need your approval like any other: the agent cannot switch its access back on
 right after the stop. The Grants tab shows when this is in effect.
 
-The mode buttons and *Save* in the Mode card change only the mode and the approval timeout, never the rules.
-*Save additional hard deny* starts from the policy as it is on the gateway. *Replace policy* (raw JSON) refuses
+*Save mode* in the Mode card change only the mode and the approval timeout, never the rules.
+*Save additional hard deny* starts from the policy as it is on the gateway. *Save policy* (raw JSON) refuses
 to save when the policy was changed elsewhere after the text was loaded (another tab, a Telegram approval): it
-keeps your text and marks it; *Reload from the gateway* fetches the current policy, a second *Replace policy*
+keeps your text and marks it; *Reload policy* fetches the current policy, a second *Save policy*
 overwrites on purpose.
 
 All of them create normal rules at the top of the list, with ids like `python:pypi` and tagged `preset:<name>` in
 the table, so you can see what a shortcut added. *Undo* removes exactly those rules. Rules you added yourself are
 never touched. Because they sit at the top, **shortcut rules win over your own rules while they are
 active, deny rules included**: a shortcut that allows `*.quay.io` opens it even if you deny that name further down. The exception is a `deny` rule on a CIDR: it refuses names that resolve into its range wherever it stands. Undo
-them, or pick a time limit. *Apply again* replaces the shortcut's rules with the new time limit; the message shows
+them, or pick a time limit. *Allow … again* replaces the shortcut's rules with the new time limit; the message shows
 the time the gateway actually set.
 
 **The local network** (private ranges, the Docker host, cloud metadata) is always blocked by the hard deny, and
@@ -249,8 +254,8 @@ lets the task run for a while and shows afterwards what it used:
 3. When the time is up (or you click *Stop learning mode*), the card lists every destination used during the
    session, grouped by registrable domain, with the number of connections. Destinations only learning mode
    allowed are ticked, with a proposed rule: the exact host, or `*.domain` when several hosts of one domain
-   were used. Untick what you do not want and click *Save selected as allow rules*. Earlier sessions stay
-   available: pick one under *Session* and click *Show what was used*.
+   were used. Untick what you do not want and click *Add selected rules*. Earlier sessions stay
+   available: pick one under *Session* and click *Show session*.
 
 What stays in force while learning mode runs:
 
@@ -272,14 +277,14 @@ matched. The counts are kept in the gateway's memory and written to the event lo
 cost nothing noticeable per connection. Click a column header to sort (again to reverse), type to filter, or
 show only unused or only matched rules.
 
-- **Make it permanent?** When you allowed the same destination for 2 minutes or 1 hour at least
+- **Suggested permanent rules.** When you allowed the same destination for 2 minutes or 1 hour at least
   `suggest_min_approvals` (3) times in `suggest_window_days` (7) days, and no permanent rule covers it, the card
   offers a permanent allow rule. Several hosts of one domain on the same port become one `*.domain` rule (the
   domain comes from the Public Suffix List, like *Always (*.domain)*). *Dismiss* hides a suggestion for
   `log_keep_days`.
 - **Unused rules**: permanent rules that did not match anything for `rule_stale_days` (30) days, counted from
   when the gateway first saw the rule. Rules with a time limit are never offered, they end by themselves. Tick
-  the ones to remove and click *Remove selected*; the gateway checks again that each one is still unused, and
+  the ones to remove and click *Delete selected rules*; the gateway checks again that each one is still unused, and
   the policy history keeps them in case you need one back.
 
 ### History and rollback
@@ -295,10 +300,10 @@ author and what changed.
 - **Restore** replaces the current policy with that version (it asks for confirmation). The restore is a new
   version itself, so it can be undone the same way. Rules of an old version whose time limit has passed are
   ignored and removed, as always.
-- **Export (YAML)** downloads the policy and the grants defined in the UI as one file, for a new host or as a
+- **Export policy** downloads the policy and the grants defined in the UI as one file, for a new host or as a
   template to share. Secrets are not in it (they cannot be read back at all), and neither are grants from the
   gateway config file.
-- **Import from file** checks the file like a normal policy change and every grant like the grant editor,
+- **Import policy…** checks the file like a normal policy change and every grant like the grant editor,
   then shows what would change. *Import* replaces the policy and adds or replaces the UI grants in the file;
   grants that are not in the file stay. A `hard_deny_floor` or `never` in the file is ignored: the floor comes only from
   the gateway config file.
@@ -348,9 +353,9 @@ password change runs on the Docker host.
 | Access to this UI | Checks how your browser reaches the UI: HTTPS (or localhost), the session cookie's `Secure` flag, whether a reverse proxy sends forwarded headers and whether they are trusted, whether `PUBLIC_URL` matches the address you use, and how other machines reach the UI. Each line says what to change. Over plain HTTP from another machine, a *Not encrypted* banner is also shown at the top of every tab. |
 | UI password | *To do* while it is still the password generated on first start; change it with `docker compose exec control python -m app.passwd`. |
 | Gateway | The gateway's CA is exported and which hosts get credentials injected. |
-| GitHub token | *Validate & store* checks a token against GitHub (from control) and stores it in the gateway only. *Remove* deletes the stored token (it asks for confirmation). |
+| GitHub token | *Save token* checks a token against GitHub (from control) and stores it in the gateway only. *Delete token* deletes the stored token (it asks for confirmation). |
 | Log in to Claude | *Start login* runs `claude auth login` in the agent (tmux session `tg-login`) and shows the link to Anthropic's login page. Sign in there and paste the code it shows. Only links to Anthropic's login pages are shown. Once logged in, the button reads *Log in again*. |
-| Git identity | *Use my GitHub identity* asks GitHub, through the gateway with the stored token, who you are (`gh api user`) and shows the name and the noreply address `<id>+<login>@users.noreply.github.com`; *Apply* sets them. Without a stored token, or when GitHub refuses it or cannot be reached, it says so and links to the token step. *Enter it yourself* is the fallback. Empty values are never written; a name or address that is set but empty (for example from a `git config` whose `$(…)` failed) is reported as such. |
+| Git identity | *Use my GitHub identity* asks GitHub, through the gateway with the stored token, who you are (`gh api user`) and shows the name and the noreply address `<id>+<login>@users.noreply.github.com`; *Save identity* sets them. Without a stored token, or when GitHub refuses it or cannot be reached, it says so and links to the token step. *Enter it yourself* is the fallback. Empty values are never written; a name or address that is set but empty (for example from a `git config` whose `$(…)` failed) is reported as such. |
 | Remote Control | *Enable Remote Control* answers Claude Code's one-time question `Enable Remote Control? (y/n)` with yes, trusts `/workspace` and restarts Remote Control. The step is done when it runs; it also tells you when Remote Control waits for an answer in the *rc* console. Switched off with `RC_ENABLE=0`. |
 | Starting policy | *Ask me* or *Strict* sets what happens with unknown destinations; *Shortcuts* opens them in the Destinations tab. *Learn from a first task* takes you to [learning mode](#learning-mode), the quickest way to a working set of rules: run one task, then keep what it used. |
 | Notifications | One section for every channel (Telegram, Matrix, ntfy, Gotify, Pushover, Web Push). Each row says whether the channel is active, where its settings come from (*web UI* or *environment*) and, when it is off, why. **Configure** on a bot channel opens its settings ([details](#notification-channels-in-the-web-ui)); a **Test** button on each active channel sends a sample notification through just that channel and reports the result. Web Push devices and the [browser-notification permission](#browser-notifications) are set up in the same section. |
