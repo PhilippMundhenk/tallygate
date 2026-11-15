@@ -126,15 +126,17 @@
         <button data-mode="allow" class="secondary small" aria-pressed="false">allow (log only)</button>
         <button id="qaStop" class="danger small">Emergency stop</button>
       </div>
-      <p class="hint">Emergency stop revokes all active grants, denies everything still waiting for approval, undoes
-        the internet shortcuts above, blocks everything unknown and suspends automatic grant approval until you change
-        the mode again. Claude itself stays reachable through your allow rules.</p>
+      <details class="help"><summary>What Emergency stop does</summary>
+        <p>Revokes all active grants, denies everything still waiting for approval, undoes the internet shortcuts
+          above, blocks everything unknown and suspends automatic grant approval until you change the mode again.
+          Claude itself stays reachable through your allow rules.</p></details>
       <div id="qaStopResult" class="hint hidden" role="status"></div>
       <div id="qaActive"></div>
       <h4>Local network</h4>
-      <p class="hint">The local network, the Docker host and cloud metadata addresses are <b>always blocked</b> (hard deny):
-        no rule can open them. To let the agent reach one device, define a <b>grant</b>: exact host and port, a time
-        limit, and your approval each time it is used.</p>
+      <p class="hint">The local network, the Docker host and cloud metadata addresses are <b>always blocked</b> (hard deny).</p>
+      <details class="help"><summary>Reaching one device on the local network</summary>
+        <p>No rule can open the blocked ranges. To let the agent reach one device, define a <b>grant</b>: exact host
+          and port, a time limit, and your approval each time it is used.</p></details>
       <button id="qaLan" class="secondary">Allow a device on the local network&hellip;</button>
       <div id="qaLanHelp" class="hint hidden"></div>
       <h4>Tool ecosystems</h4>
@@ -148,7 +150,11 @@
   <!-- GRANTS -->
   <section id="tab-grants" role="tabpanel" aria-labelledby="tabbtn-grants" class="hidden">
     <h2>Defined grants</h2>
-    <p class="hint">A grant is on-request access the agent asks for by name (<code>tallygate request &lt;name&gt;</code>): one or more targets (host:port, optionally paths), an access level (<b>read</b> = GET/HEAD/OPTIONS, <b>write</b> = everything) and how each use is approved. Grants from the config file are read-only here.</p>
+    <p class="hint">On-request access the agent asks for by name. Grants from the config file are read-only here.</p>
+    <details class="help"><summary>What a grant is</summary>
+      <p>A grant is on-request access the agent asks for by name (<code>tallygate request &lt;name&gt;</code>): one or more
+        targets (host:port, optionally paths), an access level (<b>read</b> = GET/HEAD/OPTIONS, <b>write</b> = everything)
+        and how each use is approved. Grants from the config file are read-only here.</p></details>
     <div id="grantDefs"></div>
     <button id="grantNew">New grant</button>
 
@@ -261,7 +267,10 @@
   <!-- SETTINGS -->
   <section id="tab-settings" role="tabpanel" aria-labelledby="tabbtn-settings" class="hidden">
     <h2>Settings</h2>
-    <p class="hint">How unmatched destinations are handled, the gateway behaviour tunables, and the raw policy. Trust-critical settings (credential injection and LAN grant access) stay in the read-only gateway config by design; the never-reachable deny floor is shown and edited on the <i>Destinations</i> tab.</p>
+    <p class="hint">How unmatched destinations are handled, the gateway behaviour tunables, and the raw policy.</p>
+    <details class="help"><summary>What stays in the gateway config</summary>
+      <p>Trust-critical settings (credential injection and LAN grant access) stay in the read-only gateway config by
+        design; the never-reachable deny floor is shown and edited on the <i>Destinations</i> tab.</p></details>
     <div class="card">
       <h3>Mode</h3>
       <label>Default action for unmatched destinations
@@ -271,9 +280,7 @@
     </div>
     <details class="card" id="settingsCard"><summary>Behaviour settings</summary>
       <p class="hint">Tunables the gateway owns — log retention, learning mode, rule suggestions and grant-request
-        limits. Saved here without editing a file or restarting; a few take effect only after a restart (marked).
-        Trust-critical settings (credential injection and LAN grant access) stay in the read-only gateway config
-        by design; the never-reachable deny floor is shown and edited on the <i>Destinations</i> tab.</p>
+        limits. Saved here without editing a file or restarting; a few take effect only after a restart (marked).</p>
       <div id="settingsBox"></div>
     </details>
     <details class="card"><summary>Advanced: raw policy JSON</summary>
