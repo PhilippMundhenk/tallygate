@@ -109,5 +109,5 @@ def test_destination_detail_says_what_decides_now_without_resolving(gw, monkeypa
         d["port"] == 443 and d["stats"] is None and d["decision"]["rule"] is None and d["decision"]["action"] == "ask"
     )
     d = admin(gw, "GET", "/destinations/detail?host=10.1.2.3&port=22")[1]
-    assert d["decision"]["action"] == "deny" and d["decision"]["rule_id"] == "hard_deny"
+    assert d["decision"]["action"] == "deny" and d["decision"]["rule_id"] == "block-10.0.0.0_8"
     assert admin(gw, "GET", "/destinations/detail?host=-bad-")[0] == 400

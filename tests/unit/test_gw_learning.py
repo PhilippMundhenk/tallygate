@@ -1,6 +1,7 @@
 """Learning mode (#69): time-limited, only instead of the default decision, never past the hard deny."""
 
 import asyncio
+import ipaddress
 import sqlite3
 import sys
 import time
@@ -158,8 +159,12 @@ def test_learning_replaces_only_the_default_decision(gw):  # noqa: F811
     assert "rule no" in err and resolved == []
     err, _ = connect(gw, "new.example", port=22)  # other ports: the mode decides
     assert "default" in err
-    err, _ = connect(gw, "lan.example", ips=("192.168.1.10",))  # hard deny on the resolved address
-    assert "hard-deny" in err
+    err, _ = connect(gw, "lan.example", ips=("192.168.1.10",))  # a built-in block on the resolved address
+    assert "rule block-192.168.0.0_16" in err
+    gw.policy.locked_nets = [ipaddress.ip_network("203.0.113.0/24")]
+    err, _ = connect(gw, "stack.example", ips=("203.0.113.9",))  # locked: learning mode never opens the stack
+    assert "locked: 203.0.113.9 belongs to the tallygate stack itself" in err
+    gw.policy.locked_nets = []
     err, _ = connect(gw, "1.1.1.1")  # IP literals are not covered
     assert "default" in err
     err, resolved = connect(gw, "nas.example")  # a grant is defined for it: no learning, no resolving
@@ -210,8 +215,9 @@ def test_summary_and_saving_rules(gw):  # noqa: F811
         },
     )
     assert status == 201 and [x["host"] for x in r["added"]] == ["*.pkg.example", "c.example"]
-    assert [x.host for x in gw.policy.rules[-2:]] == ["*.pkg.example", "c.example"]  # below the existing rules
-    assert gw.policy.rules[-1].source == "learning"
+    mine = [x for x in gw.policy.rules if x.source not in ("builtin", "config")]
+    assert [x.host for x in mine[-2:]] == ["*.pkg.example", "c.example"]  # below the existing rules ...
+    assert mine[-1].source == "learning" and gw.policy.rules.index(mine[-1]) == len(mine) - 1  # above the blocks
     assert gw.history.versions()[0]["what"] == "2 rules from learning mode"
     s = admin(gw, "GET", f"/learning/{sid}")[1]
     assert s["groups"][0]["proposal"] is None  # allowed by a permanent rule now

@@ -33,6 +33,7 @@ CONFIG = {
 }
 POLICY = {
     "default": "deny",
+    "seeded": [],  # the current form (ADR-0019): the rules stay in this order, the blocks are seeded below
     "rules": [
         {"id": "gh", "action": "allow", "host": "github.example", "port": 443, "note": "git"},
         {"id": "npm", "action": "allow", "host": "npm.example", "port": [80, 443]},
@@ -92,7 +93,7 @@ def test_each_destination_once_with_everything_that_applies(gw):
         {
             "name": "ha",
             "levels": ["read", "write"],
-            "lan": True,
+            "local": False,  # only a name: it cannot open a blocked range, whatever the old `lan` flag said
             "scheme": "http",
             "paths": ["/api/*"],
             "credentials": False,

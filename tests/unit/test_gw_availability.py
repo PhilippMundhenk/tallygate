@@ -221,7 +221,7 @@ def test_grant_requests_that_need_a_human_are_refused_auto_ones_still_work(gw):
         gw.request_grant("w", "write", None, "deploy", "10.0.0.1")
     assert not gw.grants.pending()
     assert gw.request_grant("nas", "read", None, "check", "10.0.0.1").status == "approved"  # auto, logged
-    assert gw.events.recent(5)[-1]["action"] in ("allow", "deny")
+    assert [e["action"] for e in gw.events.recent(5, kind=["grant"])] == ["allow", "deny"]
 
 
 def test_going_away_denies_what_waits_and_coming_back_sends_the_digest(gw):

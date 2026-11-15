@@ -5,6 +5,7 @@ It does not decide anything yet; the enforcement path stays in model.Access.
 """
 
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,7 @@ CONFIG = {
 }
 POLICY = {
     "default": "deny",
+    "seeded": [],  # the current form (ADR-0019): the rules stay in this order, the blocks are seeded below
     "rules": [
         {"id": "ok", "action": "allow", "host": "ok.example", "note": "fine"},
         {"id": "net", "action": "deny", "cidr": "10.0.0.0/8", "port": [80, 443]},
@@ -103,24 +105,46 @@ def test_a_destinations_config_loads_like_the_old_keys(tmp_path, monkeypatch):
         assert b.access.host_limits(host) == a.access.host_limits(host), host
 
 
-def test_policy_file_round_trips_and_reads_the_old_form():
+def test_policy_file_round_trips_and_reads_the_old_forms():
     from egressgw.destinations import policy_from_file, policy_to_file
-    from egressgw.policy import Policy, Rule
+    from egressgw.policy import Policy, Rule, is_pre_0019, policy_from_any
 
     p = Policy()
-    p.default, p.ask_timeout, p.hard_deny = "deny", 90, ["203.0.113.0/24"]
-    p.floor_open = ["192.168.0.0/16"]  # ADR-0017: the admin's opened floor range survives the round-trip
+    p.default, p.ask_timeout, p.seeded = "deny", 90, ["192.168.0.0/16", "10.0.0.0/8"]
     p.add_rule(Rule(action="allow", host="a.example", port=443, note="n", group="g", id="r1"), top=False)
-    p.add_rule(Rule(action="deny", cidr="10.0.0.0/8", id="r2"), top=False)
+    p.add_rule(Rule(action="deny", cidr="10.0.0.0/8", id="block-10.0.0.0_8", source="builtin"), top=False)
     f = policy_to_file(p)
-    assert "destinations" in f and "rules" not in f and f["default"] == "deny" and f["ask_timeout"] == 90
-    assert f["floor_open"] == ["192.168.0.0/16"]
-    q = Policy.from_dict(policy_from_file(f))
-    assert (q.default, q.ask_timeout, q.hard_deny, q.floor_open) == ("deny", 90, ["203.0.113.0/24"], ["192.168.0.0/16"])
-    key = lambda pol: [(r.id, r.action, r.host or r.cidr, r.port, r.note, r.group) for r in pol.rules]  # noqa: E731
+    assert set(f) == {"default", "ask_timeout", "seeded", "destinations"} and f["default"] == "deny"
+    assert f["seeded"] == ["192.168.0.0/16", "10.0.0.0/8"]  # which blocks were seeded: the deleted one stays deleted
+    doc = policy_from_file(f)
+    assert not is_pre_0019(doc)
+    q = Policy.from_dict(doc)
+    assert (q.default, q.ask_timeout, q.seeded) == ("deny", 90, p.seeded)
+    key = lambda pol: [(r.id, r.action, r.host or r.cidr, r.port, r.note, r.group, r.source) for r in pol.rules]  # noqa: E731
     assert key(q) == key(p)
+    assert policy_to_file(Policy())["seeded"] == []  # always written: its absence marks a pre-0019 file
     # a pre-0014 file (with `rules`) is passed through so it keeps loading
     assert policy_from_file({"default": "ask", "rules": [{"action": "allow", "host": "x"}]})["rules"]
+    # a destinations-form file from before ADR-0019: `never` was the hard_deny extras, floor_open what was opened
+    old = {
+        "default": "ask",
+        "never": [{"range": "203.0.113.0/24", "scope": "all"}, "198.51.100.7/32"],
+        "floor_open": ["192.168.0.0/16"],
+        "destinations": [{"match": {"host": "a.example"}, "access": "allow", "id": "r1"}],
+    }
+    doc = policy_from_file(old)
+    assert is_pre_0019(doc) and doc["hard_deny"] == ["203.0.113.0/24", "198.51.100.7/32"]
+    assert doc["floor_open"] == ["192.168.0.0/16"]
+    m, _ = policy_from_any(doc, ["192.168.0.0/16", "203.0.113.0/24"], [])
+    assert [(r.id, r.cidr) for r in m.rules] == [("r1", None), ("block-198.51.100.7_32", "198.51.100.7/32")]
+    assert m.seeded == ["192.168.0.0/16"]
+    for bad, error in (
+        ({"destinations": [], "hard_deny": []}, "unknown policy keys"),
+        ({"destinations": [], "never": "10.0.0.0/8"}, "never: expected a list"),
+        ([1], "expected a mapping"),
+    ):
+        with pytest.raises(ValueError, match=error):
+            policy_from_file(bad)
     # a crafted policy.yaml cannot smuggle a grant or a credential destination into the policy (#137)
     with pytest.raises(ValueError, match="must be an access rule"):
         policy_from_file({"destinations": [{"match": {"host": "x"}, "access": "request", "request": {"name": "g"}}]})
@@ -174,14 +198,21 @@ def test_old_state_files_are_migrated_on_load(tmp_path, monkeypatch):
     pol = yaml.safe_load((d / "policy.yaml").read_text())
     assert "destinations" in pol and "rules" not in pol
     assert (d / "policy.yaml.pre-0014").exists() and "rules:" in (d / "policy.yaml.pre-0014").read_text()
-    assert [r.id for r in g.policy.rules] == ["r1"] and g.policy.default == "deny"
+    assert [r.id for r in g.policy.rules if r.source == "user"] == ["r1"] and g.policy.default == "deny"
+    # ... and in the same start to one ordered rule list (ADR-0019): the blocks are rules at the bottom
+    assert pol["seeded"] == g.blocks_builtin and len(g.policy.rules) == 1 + len(g.blocks_builtin)
+    assert (d / "policy.yaml.pre-0019").read_text() == (d / "policy.yaml.pre-0014").read_text()
     # grants.yaml migrated too
     gr = yaml.safe_load((d / "grants.yaml").read_text())
     assert "destinations" in gr and (d / "grants.yaml.pre-0014").exists()
     assert "ha" in g.grants.defs and g.grants.defs["ha"].source == "ui"
     # loading the already-migrated (new-form) files again changes nothing and makes no second backup
+    before = (d / "policy.yaml").read_text()
+    (d / "policy.yaml.pre-0019").write_text("kept")
     g2 = core.Gateway()
-    assert [r.id for r in g2.policy.rules] == ["r1"] and "ha" in g2.grants.defs
+    assert [r.to_dict() for r in g2.policy.rules] == [r.to_dict() for r in g.policy.rules] and "ha" in g2.grants.defs
+    assert (d / "policy.yaml").read_text() == before and (d / "policy.yaml.pre-0019").read_text() == "kept"
+    assert not (d / "grants.yaml.pre-0019").exists()  # no `lan` in it: nothing to migrate for ADR-0019
 
 
 def test_destinations_cannot_be_mixed_with_old_keys(tmp_path, monkeypatch):
@@ -240,37 +271,67 @@ def test_translate_lists_rules_then_grants_then_properties(gw):
     assert inj and inj[0].credentials == (("X-Token", "Bearer ${tok}"),) and inj[0].access is None
 
 
-def test_translate_never_list_has_the_whole_floor_and_marks_it_removable(gw):
-    # ADR-0017: the Destinations floor list now includes the whole scope-all floor (hard_deny_floor + the
-    # policy hard_deny), each marked `removable`/`open`, not just the policy additions.
-    m = translate(gw)
-    assert all(set(e) == {"range", "scope", "reason", "removable", "open"} for e in m.never)
-    assert {e["scope"] for e in m.never} <= {"all", "all+lan"}
-    ranges = {e["range"] for e in m.never}
-    assert set(gw.policy.hard_deny_floor) <= ranges  # the built-in floor is listed now (it was missing)
-    lan = {e["range"] for e in m.never if e["scope"] == "all+lan"}
-    assert lan == {str(n) for n in gw.grants.never} | {str(n) for n in gw.grants.internal}
-    # this fixture has no stack networks, so every row is an editable floor range and nothing is open
-    assert all(e["removable"] for e in m.never) and not any(e["open"] for e in m.never)
+def test_translate_lists_the_rules_in_evaluation_order_then_the_locked_ranges_and_the_default(tmp_path, monkeypatch):
+    """ADR-0019: the model is the list as it is evaluated - the operator's rules, the seeded blocks (ordinary
+    rules, deletable), and separately what is locked. There is no `never` list any more."""
+    monkeypatch.setenv("GW_INTERNAL_NETS", "172.20.0.0/16,fd00:31::/64")
+    monkeypatch.setenv("GW_API_HOST", "172.20.0.2")
+    monkeypatch.setenv("GW_LISTEN_HOST", "0.0.0.0")
+    g = build_gw(tmp_path / "locked", monkeypatch, {**CONFIG, "never": ["203.0.113.7/32"]}, POLICY)
+    m = translate(g)
+    d = m.to_dict()
+    assert set(d) == {"default", "destinations", "locked"} and d["default"] == "deny"
+    rules = [x for x in m.destinations if x.access in ("allow", "ask", "deny")]
+    assert [x.id for x in rules] == [r.id for r in g.policy.rules]  # evaluation order, nothing left out
+    assert m.destinations[: len(rules)] == rules  # ... and before the grants and the file properties
+    assert [x.id for x in rules[:2]] == ["ok", "net"]
+    blocks = rules[2:]
+    assert [x.match.cidr for x in blocks] == [*g.blocks_builtin, "203.0.113.7/32"]
+    assert {x.source for x in blocks[:-1]} == {"builtin"} and blocks[-1].source == "config"
+    assert all(x.access == "deny" and x.id.startswith("block-") for x in blocks)
+    # locked: the stack's networks and the gateway's own listeners; plain rows with a reason, nothing to act on
+    assert all(set(row) == {"range", "source", "reason"} for row in m.locked)
+    assert [row["range"] for row in m.locked if row["source"] == "stack"] == ["172.20.0.0/16", "fd00:31::/64"]
+    listeners = [row["range"] for row in m.locked if row["source"] == "listener"]
+    assert "172.20.0.2:8081" in listeners and "127.0.0.0/8:3128" in listeners and "::1:1080" in listeners
+    assert g.never_reachable() == m.locked
+    # a locked range is not a rule: it is in no rule list and cannot be addressed as a destination
+    assert not any(x.match.cidr == "172.20.0.0/16" for x in m.destinations)
 
 
-def test_translate_never_marks_locked_and_open(tmp_path, monkeypatch):
-    # ADR-0017: the stack's own networks (grants.internal) are shown once, locked; a scope-all floor range
-    # the admin put in floor_open is marked open; loopback/metadata stay removable.
-    monkeypatch.setenv("GW_INTERNAL_NETS", "172.20.0.0/16")
-    g = build_gw(
-        tmp_path / "locked", monkeypatch, CONFIG,
-        {"default": "ask", "rules": [], "floor_open": ["192.168.0.0/16"]},
-    )  # fmt: skip
-    rows = {e["range"]: e for e in translate(g).never}
-    assert rows["172.20.0.0/16"] == {
-        "range": "172.20.0.0/16", "scope": "all+lan",
-        "reason": "the tallygate stack's own network (locked)", "removable": False, "open": False,
-    }  # fmt: skip
-    assert rows["192.168.0.0/16"]["removable"] and rows["192.168.0.0/16"]["open"]  # opened by the admin
-    assert rows["127.0.0.0/8"]["removable"] and not rows["127.0.0.0/8"]["open"]  # loopback stays removable
-    assert rows["169.254.0.0/16"]["removable"] and not rows["169.254.0.0/16"]["open"]  # metadata too
-    assert len(rows) == len(translate(g).never)  # every range once (the stack net is not duplicated)
+def test_translate_marks_shadowed_and_never_reached_rules(gw):
+    from egressgw.policy import Decision, Rule
+
+    gw.policy.add_rule(Rule(action="allow", cidr="10.1.0.0/16", port=443, id="in"), top=False)  # inside `net`, below it
+    gw.policy.add_rule(Rule(action="deny", cidr="10.2.0.0/16", port=80, id="dup"), top=False)  # inside `net`, a deny
+    gw.policy.add_rule(Rule(action="allow", host="nas.example", id="nas"))
+    by_id = lambda: {x.id: x for x in translate(gw).destinations if x.id}  # noqa: E731
+    rows = by_id()
+    assert rows["in"].covered_by == "net" and rows["dup"].covered_by == "net"
+    assert rows["ok"].covered_by == "" and rows["net"].covered_by == "" and rows["nas"].shadowed is None
+    assert "covered_by" not in rows["ok"].to_dict() and rows["dup"].to_dict()["covered_by"] == "net"
+    dec = gw.policy.evaluate("nas.example", 443, ["192.168.1.10"])
+    gw._hit(dec)
+    gw._hit(dec)
+    sh = by_id()["nas"].shadowed  # not flushed yet: counted already
+    assert (sh["count"], sh["address"], sh["by"], sh["range"]) == (2, "192.168.1.10", "block-192.168.0.0_16", "192.168.0.0/16")
+    gw.flush_hits()
+    gw._hit(gw.policy.evaluate("nas.example", 443, ["10.9.9.9"]))
+    sh = by_id()["nas"].to_dict()["shadowed"]  # stored + unflushed, with the latest case
+    assert (sh["count"], sh["address"], sh["by"]) == (3, "10.9.9.9", "net") and sh["last"] <= time.time()
+    gw.flush_hits()
+    assert gw.events.shadow_stats()["nas"]["count"] == 3 and gw.shadows == {}
+    assert gw.events.hit_stats()["net"]["hits"] == 1  # the blocking rule is what decided, and is counted
+    gw._hit(Decision("allow", "rule ok", "ok"))  # nothing shadowed: nothing recorded
+    assert gw.shadows == {}
+    # the record goes with the rule
+    gw.policy.remove_rule("nas")
+    assert "nas" not in gw.shadow_stats()
+    gw.flush_hits()
+    assert gw.events.shadow_stats() == {}
+    # display fields are ignored on input: a model entry can be sent back as it is
+    d = Destination.from_dict({"match": {"host": "a"}, "access": "allow", "shadowed": {"count": 1}, "covered_by": "x"})
+    assert d.shadowed is None and d.covered_by == ""
 
 
 def test_every_translated_entry_round_trips_through_the_file_format(gw):
@@ -290,7 +351,6 @@ def test_destination_serialisation_keeps_only_set_fields():
         credentials=(("Authorization", "Bearer ${t}"),),
         repos=RepoScopeSpec(["me/app", "org/*"], graphql=True),
         scheme="https",
-        lan=True,
         address="1.2.3.4",
         tls_fingerprint="ab" * 32,
         tls_verify=False,
@@ -302,6 +362,9 @@ def test_destination_serialisation_keeps_only_set_fields():
     )
     assert Destination.from_dict(full.to_dict()) == full
     assert full.to_dict()["tls"] == {"fingerprint": "ab" * 32, "verify": False}
+    # `lan` is read from pre-0019 files (so the migration can report it) and never written (ADR-0019)
+    old = Destination.from_dict({**full.to_dict(), "lan": True})
+    assert old.lan and "lan" not in old.to_dict()
     # expiry is stored as whole seconds, like a rule
     assert Destination(match=Match(host="a.example"), expires=100.6).to_dict()["expires"] == 101
 
@@ -345,7 +408,7 @@ def test_more_validation_errors():
 
 
 def test_destinations_to_config_carries_grant_target_options():
-    # a request destination with the file-only target options (lan / address / pinned TLS / no verify)
+    # a request destination with its target options (address / pinned TLS / no verify); `lan` only from old files
     d = Destination(
         match=Match(host="nas.example", port=22),
         access="request",
@@ -394,7 +457,7 @@ def test_file_only_properties_are_flagged_for_the_trust_split():
     risky = Destination(
         match=Match(host="a.example"),
         credentials=(("Authorization", "Bearer ${t}"),),
-        lan=True,
+        lan=True,  # from an old file: ignored, so nothing to guard any more (ADR-0019)
         tls_verify=False,
     )
-    assert risky.file_only_set() == ["credentials", "lan", "tls.verify: false"]
+    assert risky.file_only_set() == ["credentials", "tls.verify: false"]

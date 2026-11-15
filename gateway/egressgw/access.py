@@ -11,7 +11,7 @@ import time
 from typing import TYPE_CHECKING
 
 from egressgw.destinations import is_local
-from egressgw.policy import host_matches, is_ip, port_matches
+from egressgw.policy import SEEDED_SOURCES, host_matches, is_ip, port_matches
 
 if TYPE_CHECKING:
     from egressgw.core import Gateway
@@ -48,8 +48,8 @@ def overview(gw: Gateway) -> dict:
 
     # 1) the rules, in their order (first match wins)
     for position, r in enumerate(policy.rules, 1):
-        if r.expired(now):
-            continue
+        if r.expired(now) or r.source in SEEDED_SOURCES:
+            continue  # the seeded blocks are listed on the Destinations tab, not in "what the agent can reach"
         info = {"id": r.id, "position": position, "note": r.note, "expires": r.expires, "source": r.source}
         rows.append(_row(r.host or r.cidr, r.port, r.action, info))
 

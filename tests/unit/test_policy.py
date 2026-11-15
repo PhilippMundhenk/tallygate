@@ -1,4 +1,3 @@
-import ipaddress
 import sys
 import time
 from pathlib import Path
@@ -8,12 +7,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gateway"))
 
 from egressgw.policy import (
-    DEFAULT_HARD_DENY,
     TTL_MAX,
     TTL_MIN,
     Policy,
     Rule,
+    builtin_blocks,
     clamp_ttl,
+    ip_addr,
     host_matches,
     load_preset,
     registrable_domain,
@@ -22,6 +22,12 @@ from egressgw.policy import (
 from egressgw.store import Secrets, render
 
 PRESETS = Path(__file__).resolve().parents[2] / "gateway" / "presets"
+
+
+def seeded(p: Policy) -> Policy:
+    """The policy as a gateway has it in force: with the built-in blocks seeded at the bottom (ADR-0019)."""
+    p.seed_blocks(builtin_blocks(), [])
+    return p
 
 
 def test_host_matching():
@@ -33,21 +39,28 @@ def test_host_matching():
     assert host_matches("API.GitHub.com", "api.github.com.")
 
 
-def test_hard_deny_resolved_private_ip():
-    p = Policy()
-    p.rules = [Rule(action="allow", host="*")]
+def test_built_in_blocks_on_resolved_private_ip():
+    p = seeded(Policy())
+    p.rules.insert(0, Rule(action="allow", host="*"))
     d = p.evaluate("nas.example.org", 443, ["192.168.1.10"])
-    assert d.action == "deny" and d.rule_id == "hard_deny"
+    assert d.action == "deny" and d.rule_id == "block-192.168.0.0_16"
     # IPv4-mapped IPv6 is normalised
     assert p.evaluate("x", 443, ["::ffff:10.0.0.1"]).action == "deny"
     assert p.evaluate("10.1.2.3", 22, []).action == "deny"
     assert p.evaluate("example.com", 443, ["93.184.215.14"]).action == "allow"
 
 
-def test_hard_deny_cannot_be_overridden_by_rules_or_approvals():
-    p = Policy()
-    p.add_rule(rule_for_approval("192.168.1.1", 22, "always"))
-    assert p.evaluate("192.168.1.1", 22, ["192.168.1.1"]).action == "deny"
+def test_approving_an_address_opens_exactly_that_address_and_port():
+    # ADR-0019: an approval of an IP literal is an address rule for that address only, at the top
+    p = seeded(Policy())
+    r = p.add_rule(rule_for_approval("192.168.1.1", 22, "always"))
+    assert (r.cidr, r.port, p.rules[0]) == ("192.168.1.1/32", 22, r)
+    assert p.evaluate("192.168.1.1", 22, ["192.168.1.1"]).action == "allow"
+    assert p.evaluate("192.168.1.1", 80, ["192.168.1.1"]).action == "deny"
+    assert p.evaluate("192.168.1.2", 22, ["192.168.1.2"]).action == "deny"
+    # approving a NAME never opens a blocked range, whatever it resolves to
+    p.add_rule(rule_for_approval("nas.example", 443, "always"))
+    assert p.evaluate("nas.example", 443, ["192.168.1.2"]).action == "deny"
 
 
 def test_first_match_and_default():
@@ -66,12 +79,13 @@ def test_first_match_and_default():
     assert p.evaluate("example.org", 443, ["1.2.3.4"]).reason == "default"
 
 
-def test_cidr_allow_applies_to_ip_literals_only():
-    # #10: a name is never allowed (or asked about) because of the addresses it resolves to
+def test_an_address_rule_applies_to_every_destination_that_has_the_address():
+    # ADR-0019 (supersedes the rule of #10): an address rule decides for the address, however it was named
     p = Policy.from_dict({"default": "deny", "rules": [{"id": "c", "action": "allow", "cidr": "140.82.112.0/20"}]})
     assert p.evaluate("140.82.112.3", 443, ["140.82.112.3"]).action == "allow"
     assert p.evaluate("8.8.8.8", 443, ["8.8.8.8"]).action == "deny"
-    assert p.evaluate("github.com", 443, ["140.82.112.3"]).action == "deny"
+    assert p.evaluate("github.com", 443, ["140.82.112.3"]).action == "allow"
+    assert p.evaluate("github.com", 443, ["140.82.112.3", "8.8.8.8"]).action == "deny"  # every address must pass
     p = Policy.from_dict({"default": "allow", "rules": [{"id": "d", "action": "deny", "cidr": "140.82.112.0/20"}]})
     assert p.evaluate("github.com", 443, ["8.8.8.8", "140.82.112.3"]).action == "deny"  # CIDR deny: any IP
 
@@ -178,8 +192,8 @@ def test_ipv4_mapped_ipv6_is_matched_like_ipv4():
     assert p.evaluate("::ffff:8.8.8.8", 443, ["::ffff:8.8.8.8"]).action == "deny"
     assert p.evaluate("x.example", 443, ["::ffff:8.8.8.8"]).action == "deny"
     r = rule_for_approval("[::ffff:8.8.4.4]", 443, "always")
-    assert r.cidr == "8.8.4.4"
-    assert r.matches("8.8.4.4", 443, ["8.8.4.4"]) and r.matches("::ffff:8.8.4.4", 443, ["::ffff:8.8.4.4"])
+    assert r.cidr == "8.8.4.4/32"
+    assert r.contains(ip_addr("8.8.4.4")) and r.contains(ip_addr("::ffff:8.8.4.4"))
 
 
 def test_presets_load():
@@ -252,73 +266,14 @@ def test_hostname_validation():
         assert not valid_hostname(bad), bad
 
 
-def test_hard_deny_floor_cannot_be_removed_via_policy():
-    # TG-03: an API/UI-supplied policy can only add CIDRs
-    p = Policy.from_dict({"default": "allow", "hard_deny": [], "rules": [{"id": "a", "action": "allow", "host": "*"}]})
-    assert p.evaluate("nas.example.org", 443, ["192.168.1.10"]).action == "deny"
-    p = Policy.from_dict({"hard_deny": ["203.0.113.7/32", "10.0.0.0/8"], "hard_deny_floor": ["junk"]})
-    p.use_floor(DEFAULT_HARD_DENY)
-    assert p.hard_deny == ["203.0.113.7/32"]  # 10/8 is already in the floor (deduped); floor key ignored
-    # #11: compared with the floor in force - a range missing from it is kept as an extra
-    p = Policy.from_dict({"hard_deny": ["203.0.113.7/32", "10.0.0.0/8"]})
-    p.use_floor(["192.168.0.0/16"])
-    assert p.hard_deny == ["203.0.113.7/32", "10.0.0.0/8"]
-    assert p.evaluate("10.1.2.3", 22, []).action == "deny"
-    p = Policy.from_dict({"hard_deny": ["8.8.8.8/32"]})
-    assert p.evaluate("dns.google", 443, ["8.8.8.8"]).action == "deny"
-
-
-def test_floor_open_relaxes_a_scope_all_floor_range_on_the_normal_path():
-    # ADR-0017(a): a LAN range in floor_open is no longer hard-denied; the mode decides it instead.
-    p = Policy.from_dict(
-        {"default": "allow", "rules": [{"action": "allow", "host": "*"}], "floor_open": ["192.168.0.0/16"]}
-    )
-    assert p.hard_denied("nas.example", 443, ["192.168.1.10"]) is None
-    assert p.evaluate("nas.example", 443, ["192.168.1.10"]).action == "allow"
-    # other floor ranges stay blocked, and with an empty floor_open nothing changes (secure by default)
-    assert p.evaluate("x", 443, ["10.1.2.3"]).action == "deny"
-    assert Policy.from_dict({"default": "allow"}).evaluate("x", 443, ["192.168.1.10"]).action == "deny"
-    # opening is by the exact normalised range only: a sub-range is inert (the broader floor entry still covers it)
-    sub = Policy.from_dict({"default": "allow", "floor_open": ["192.168.1.0/24"]})
-    assert sub.evaluate("x", 443, ["192.168.1.5"]).action == "deny"  # 192.168.0.0/16 still blocks it
-
-
-def test_floor_open_never_relaxes_the_locked_stack_networks():
-    # ADR-0017(b): locked_nets (the stack's own networks) are checked FIRST and never relaxed, so opening a
-    # broad range that covers the stack cannot expose it.
-    p = Policy.from_dict({"default": "allow", "floor_open": ["172.16.0.0/12"]})
-    p.locked_nets = [ipaddress.ip_network("172.20.0.0/16")]  # a tallygate stack network inside 172.16/12
-    assert p.evaluate("lan", 443, ["172.16.5.5"]).action == "allow"  # a non-stack LAN host passes
-    d = p.evaluate("stack", 443, ["172.20.1.2"])
-    assert d.action == "deny" and "structural" in d.reason  # the stack stays blocked
-    # (c) even naming the exact locked range in floor_open is inert: locked_nets wins
-    p2 = Policy.from_dict({"default": "allow", "floor_open": ["172.20.0.0/16"]})
-    p2.locked_nets = [ipaddress.ip_network("172.20.0.0/16")]
-    assert p2.evaluate("stack", 443, ["172.20.1.2"]).action == "deny"
-
-
-def test_floor_open_round_trips_through_policy_yaml(tmp_path):
-    # ADR-0017(d): floor_open is persisted and validated like hard_deny.
-    p = Policy.from_dict(
-        {"default": "ask", "hard_deny": ["203.0.113.7/32"], "floor_open": ["10.0.0.0/8", "192.168.0.0/16"]}
-    )
-    assert p.floor_open == ["10.0.0.0/8", "192.168.0.0/16"]
-    assert p.to_dict()["floor_open"] == p.floor_open
-    p.save(tmp_path / "p.yaml")
-    q = Policy.load(tmp_path / "p.yaml")
-    assert q.floor_open == p.floor_open and q.to_dict() == p.to_dict()
-    with pytest.raises(ValueError, match="floor_open"):
-        Policy.from_dict({"floor_open": ["not-a-cidr"]})
-
-
-def test_tunnelling_prefixes_are_hard_denied():
-    p = Policy.from_dict({"default": "allow"})
+def test_tunnelling_prefixes_are_blocked():
+    p = seeded(Policy.from_dict({"default": "allow"}))
     for ip in ("64:ff9b::a00:1", "2002:c0a8:101::1", "2001:0:1::1", "::127.0.0.1", "fec0::1"):
         assert p.evaluate("x.example", 443, [ip]).action == "deny", ip
 
 
 def test_name_first_evaluation():
-    # TG-02: names are decided before resolution; only CIDR allow/ask rules need the IPs
+    # TG-02: names are decided before resolution, where no address can change the result (ADR-0019)
     p = Policy.from_dict(
         {
             "default": "ask",
@@ -328,27 +283,18 @@ def test_name_first_evaluation():
             ],
         }
     )
-    assert p.evaluate_name("x.evil.example", 443).action == "deny"
+    assert p.evaluate_name("x.evil.example", 443).action == "deny" and p.evaluate_name("x.evil.example", 443).early
     assert p.evaluate_name("ok.example", 443).action == "allow"
-    assert p.evaluate_name("new.example", 443).action == "ask"
-    # #10: CIDR rules (e.g. an approved IP literal) never make the name phase inconclusive
-    p.add_rule(rule_for_approval("140.82.112.3", 443, "always"), top=True)
-    assert p.evaluate_name("new.example", 443).action == "ask"
-    assert p.evaluate("new.example", 443, ["140.82.112.3"]).action == "ask"
-    assert p.evaluate("140.82.112.3", 443, ["140.82.112.3"]).action == "allow"
+    assert p.evaluate_name("new.example", 443).action == "ask" and p.evaluate_name("new.example", 443).early
     p.add_rule(Rule(action="deny", cidr="1.2.3.0/24"), top=True)
-    assert p.evaluate_name("x.evil.example", 443).action == "deny"  # CIDR deny doesn't force a lookup
-
-
-def test_service_exception_only_in_reverse_mode():
-    # TG-15: the allow_private exception is bound to the service listener, not the proxy modes
-    from egressgw.policy import Exception_
-
-    p = Policy.from_dict({"default": "allow"})
-    p.exceptions = [Exception_(host="192.168.1.5", port=5432)]
-    assert p.evaluate("192.168.1.5", 5432, ["192.168.1.5"], "reverse").action == "allow"
-    assert p.evaluate("192.168.1.5", 5432, ["192.168.1.5"], "regular").action == "deny"
-    assert p.evaluate("192.168.1.5", 5432, ["192.168.1.5"], "socks5").action == "deny"
+    assert p.evaluate_name("x.evil.example", 443).early  # an address deny doesn't force a lookup
+    # An approved IP literal is an address allow for its port: a name that resolves to it is allowed by it,
+    # so names on THAT port can no longer be decided before they are resolved (the price of ADR-0019; #10)
+    p.add_rule(rule_for_approval("140.82.112.3", 443, "always"), top=True)
+    assert p.evaluate("140.82.112.3", 443, ["140.82.112.3"]).action == "allow"
+    assert p.evaluate("new.example", 443, ["140.82.112.3"]).action == "allow"
+    assert not p.evaluate_name("new.example", 443).early and not p.evaluate_name("x.evil.example", 443).early
+    assert p.evaluate_name("new.example", 8443).early and p.evaluate_name("x.evil.example", 8443).early
 
 
 def test_secret_values_reject_control_characters(tmp_path):

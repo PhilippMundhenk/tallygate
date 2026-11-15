@@ -89,11 +89,13 @@ def test_patch_changes_only_mode_and_timeout(gw):
     gw.policy.add_rule(Rule(action="allow", host="new.example", id="new"))
     gw.policy.remove_rule("ok")
     status, data = admin(gw, "PATCH", "/policy", {"default": "deny"})
-    assert status == 200 and data["default"] == "deny" and [r["id"] for r in data["rules"]] == ["new"]
+    assert status == 200 and data["default"] == "deny" and [r["id"] for r in data["rules"] if "source" not in r] == ["new"]
     status, data = admin(gw, "PATCH", "/policy", {"ask_timeout": 120})
     assert data["default"] == "deny" and data["ask_timeout"] == 120
     saved = yaml.safe_load((core.DATA_DIR / "policy.yaml").read_text())  # on disk in the destinations form (ADR-0014)
-    assert saved["default"] == "deny" and saved["ask_timeout"] == 120 and len(saved["destinations"]) == 1
+    assert saved["default"] == "deny" and saved["ask_timeout"] == 120
+    assert [d["id"] for d in saved["destinations"] if d["source"] == "user"] == ["new"]
+    assert saved["seeded"] == gw.blocks_builtin and len(saved["destinations"]) == 1 + len(gw.blocks_builtin)
     assert gw.events.recent(1)[0]["reason"] == "mode deny, approval timeout 120 s via API"
 
 
@@ -136,7 +138,8 @@ def test_emergency_stop_runs_every_step_and_suspends_auto_approval(gw):
     assert not gw.pending and p.future.result().action == "deny"
     assert steps["deny_grant_requests"]["denied"] == ["nas"] and req.status == "denied"
     assert sorted(steps["remove_internet_presets"]["removed"]) == ["internet:all", "open:web"]
-    assert [r.id for r in gw.policy.rules] == ["ok"]
+    assert [r.id for r in gw.policy.rules if r.source != "builtin"] == ["ok"]
+    assert len(gw.policy.rules) == 1 + len(gw.blocks_builtin)  # the emergency stop leaves every block in place
     assert steps["end_learning"]["ended"] == []  # no session was running
     assert steps["mode_deny"]["previous"] == "ask" and gw.policy.default == "deny"
     assert gw.grants.auto_suspended["by"] == "web:admin"

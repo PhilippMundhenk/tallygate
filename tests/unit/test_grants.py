@@ -16,7 +16,10 @@ from egressgw.grants import (
     parse_ttl,
     path_ok,
 )
-from egressgw.policy import ip_addr
+import ipaddress
+import logging
+
+import yaml
 
 HA = {
     "description": "Home Assistant",
@@ -123,75 +126,102 @@ def test_requests_dedupe_cap_and_expiry(tmp_path):
     assert {r.status for r in timed_out} == {"expired"}
 
 
-def test_grants_never_adds_to_the_built_in_list(tmp_path, monkeypatch):
-    monkeypatch.delenv("GW_TEST_FLOOR_REPLACE", raising=False)
-    g = make(tmp_path, grants_never=["192.168.9.0/24", "127.0.0.0/8"])
-    d, t = g.defs["ha"], g.defs["ha"].targets[0]
-    assert "never reachable" in g.address_problem(d, t, ["192.168.9.5"])  # the addition
-    assert "never reachable" in g.address_problem(d, t, ["169.254.169.254"])  # built in, although not listed
-    assert [str(n) for n in g.never_configured] == ["192.168.9.0/24"]  # 127.0.0.0/8 is built in: listed once
-    monkeypatch.setenv("GW_TEST_FLOOR_REPLACE", "1")  # test only: the e2e upstreams live on loopback
-    g = make(tmp_path, grants_never=["192.168.9.0/24"])
-    assert g.address_problem(d, t, ["127.0.0.1"]) is None and "never" in g.address_problem(d, t, ["192.168.9.5"])
-    assert "never reachable" in make(tmp_path).address_problem(d, t, ["127.0.0.1"])  # nothing configured: built in
+def test_lan_flag_and_lan_allow_are_read_from_old_files_and_ignored(tmp_path, caplog):
+    """ADR-0019: `lan`, `grants_lan_allow` (and the grants' own never list) are gone. Old files still load;
+    the log says once what that means for each target, and the UI file is rewritten without the flag."""
+    old = {
+        "cam": {"targets": [{"host": "cam.lan", "port": 80, "scheme": "http", "lan": True}]},
+        "pin": {"targets": [{"host": "pin.lan", "port": 80, "scheme": "http", "lan": True, "address": "192.168.1.9"}]},
+        "lit": {"targets": [{"host": "192.168.1.7", "port": 22, "scheme": "tcp", "lan": True}], "levels": ["write"]},
+        "pub": {"targets": [{"host": "api.example", "port": 443}]},
+    }
+    (tmp_path / "grants.yaml").write_text(yaml.safe_dump(old))
+    with caplog.at_level(logging.WARNING, "egressgw"):
+        g = make(tmp_path, grants_lan_allow=["192.168.1.0/24"])
+    assert not hasattr(g, "ui_lan_allow") and not hasattr(g, "never")
+    assert not any(hasattr(t, "lan") for d in g.defs.values() for t in d.targets)
+    assert all("lan" not in t for d in g.defs.values() for t in d.to_dict()["targets"])
+    assert "(LAN)" not in " ".join(t.label() for d in g.defs.values() for t in d.targets)
+    log = caplog.text
+    assert "grants_lan_allow is ignored since ADR-0019" in log
+    # the config-file grant (HA: a name only, with lan) and the UI file, each target once
+    assert log.count("gateway config: grant ha, target ha.lan:8123: `lan` is ignored now, and a target that is only a name") == 1
+    assert log.count("grant cam, target cam.lan:80: `lan` is ignored now, and a target that is only a name cannot open") == 1
+    assert "It keeps working for a local address only with a fixed `address`" in log
+    assert log.count("grant pin, target pin.lan:80: `lan` is ignored now; the target names an address and keeps working") == 1
+    assert log.count("grant lit, target 192.168.1.7:22: `lan` is ignored now; the target names an address") == 1
+    assert "grant pub" not in log
+    # migrated once: the old file is kept, the new one has no flag, and the next start is silent
+    assert yaml.safe_load((tmp_path / "grants.yaml.pre-0019").read_text()) == old
+    assert "lan" not in (tmp_path / "grants.yaml").read_text().replace(".lan", "")
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, "egressgw"):
+        again = Grants({}, tmp_path)
+    assert "lan" not in caplog.text.replace(".lan", "") and set(again.defs) == {"cam", "pin", "lit", "pub"}
+    assert again.defs["pin"].targets[0].fixed() == "192.168.1.9" and again.defs["lit"].targets[0].fixed() == "192.168.1.7"
+    assert again.defs["cam"].targets[0].fixed() is None
+    # a backup that exists is never overwritten
+    (tmp_path / "grants.yaml").write_text(yaml.safe_dump({"x": {"targets": [{"host": "x.lan", "port": 1, "lan": True}]}}))
+    Grants({}, tmp_path)
+    assert yaml.safe_load((tmp_path / "grants.yaml.pre-0019").read_text()) == old
 
 
-def test_never_reachable_and_ui_lan_limits(tmp_path):
-    g = make(tmp_path, grants_lan_allow=["192.168.1.0/24"])
-    d, t = g.defs["ha"], g.defs["ha"].targets[0]
-    assert g.address_problem(d, t, ["192.168.7.7"]) is None  # config grant: any LAN address
-    assert "never reachable" in g.address_problem(d, t, ["127.0.0.1"])
-    assert "never reachable" in g.address_problem(d, t, ["169.254.169.254"])
-    ui = g.upsert_ui("cam", {"targets": [{"host": "cam.lan", "port": 80, "scheme": "http", "lan": True}]})
-    assert g.address_problem(ui, ui.targets[0], ["192.168.1.20"]) is None
-    assert "outside grants_lan_allow" in g.address_problem(ui, ui.targets[0], ["192.168.7.7"])
+def test_ui_grants_and_config_grants_follow_the_same_rules(tmp_path):
+    g = make(tmp_path)
+    ui = g.upsert_ui("cam", {"targets": [{"host": "cam.lan", "port": 80, "scheme": "http", "address": "192.168.7.7"}]})
+    assert ui.targets[0].fixed() == "192.168.7.7"  # a local address, defined in the UI: an address rule
     with pytest.raises(ValueError):
         g.upsert_ui("ha", HA)  # config grants cannot be overridden from the UI
     assert (tmp_path / "grants.yaml").exists() and Grants({"grants": {"ha": HA}}, tmp_path).defs["cam"].source == "ui"
 
 
-def test_the_stack_itself_is_never_reachable_through_a_grant(tmp_path, monkeypatch):
-    # #112: a LAN target skips the hard deny, so the stack's own networks (GW_INTERNAL_NETS, set in
-    # compose.yaml) and the gateway's own listeners are refused here, whatever grants_never says.
+def test_a_grant_that_names_the_stack_itself_is_refused_when_it_is_saved(tmp_path, monkeypatch):
+    # #112 / ADR-0019: the stack's own networks (GW_INTERNAL_NETS, set in compose.yaml) and the gateway's own
+    # listeners are locked. A target that names such an address is refused at once; every connection is
+    # checked again by the policy (tests/unit/test_gw_locked.py).
     monkeypatch.setenv("GW_INTERNAL_NETS", "172.31.11.0/24, 172.31.12.0/24,")
     monkeypatch.setenv("GW_API_HOST", "192.168.5.2")
-    monkeypatch.setenv("GW_API_PORT", "8123")  # the port of the HA target
-    monkeypatch.setenv("GW_LISTEN_HOST", "egress-gw")  # not an address: nothing to compare with
-    g = make(tmp_path, grants_never=["169.254.0.0/16"], grants_lan_allow=["172.31.0.0/16"])
-    d, t = g.defs["ha"], g.defs["ha"].targets[0]
-    assert t.lan and t.port == 8123
-    assert "belongs to the tallygate stack itself" in g.address_problem(d, t, ["192.168.7.7", "172.31.11.2"])
-    assert "belongs to the tallygate stack itself" in g.address_problem(d, t, ["172.31.12.3"])
-    assert "192.168.5.2:8123 is the gateway itself" in g.address_problem(d, t, ["192.168.5.2"])
-    assert g.address_problem(d, t, ["192.168.5.3"]) is None  # another host on that LAN
-    assert len(g.own) == 1
-    cam = {"host": "cam.lan", "port": 80, "scheme": "http", "lan": True}
-    with pytest.raises(ValueError, match="belongs to the tallygate stack itself"):
-        g.upsert_ui("cam", {"targets": [{**cam, "address": "172.31.11.2"}]})
+    monkeypatch.setenv("GW_API_PORT", "8123")
+    monkeypatch.setenv("GW_LISTEN_HOST", "192.168.5.3")
+    g = make(tmp_path)
+    cam = {"host": "cam.lan", "port": 80, "scheme": "http"}
+    for target, error in (
+        ({**cam, "address": "172.31.11.2"}, "172.31.11.2 belongs to the tallygate stack itself"),
+        ({**cam, "host": "172.31.12.9"}, "172.31.12.9 belongs to the tallygate stack itself"),
+        ({**cam, "host": "::ffff:172.31.12.9"}, "belongs to the tallygate stack itself"),
+        ({**cam, "port": 8123, "address": "192.168.5.2"}, "192.168.5.2:8123 is the gateway itself"),
+        ({**cam, "port": 3128, "host": "192.168.5.3"}, "192.168.5.3:3128 is the gateway itself"),
+    ):
+        with pytest.raises(ValueError, match=error):
+            g.upsert_ui("cam", {"targets": [target]})
+    assert "cam" not in g.defs and not (tmp_path / "grants.yaml").exists()
     assert g.upsert_ui("cam", {"targets": [{**cam, "address": "172.31.99.9"}]}).targets[0].address == "172.31.99.9"
+    assert g.upsert_ui("cam", {"targets": [{**cam, "address": "192.168.5.2"}]})  # port 80 there is not the listener
 
 
 def test_own_listeners_and_internal_nets_from_the_environment(tmp_path, monkeypatch):
     for var in ("GW_INTERNAL_NETS", "GW_API_HOST", "GW_API_PORT", "GW_LISTEN_HOST"):
         monkeypatch.delenv(var, raising=False)
+    net = ipaddress.ip_network
     g = make(tmp_path)
-    assert g.internal == [] and g.own == set()  # nothing configured: only grants_never applies
-    assert own_sockets({"GW_LISTEN_HOST": "172.31.10.2", "GW_API_HOST": "172.31.11.2", "GW_SOCKS_PORT": "1081"}) == {
-        (ip_addr("172.31.11.2"), 8081),
-        (ip_addr("172.31.10.2"), 8079),
-        (ip_addr("172.31.10.2"), 3128),
-        (ip_addr("172.31.10.2"), 1081),
-    }
+    assert g.internal == []
+    # nothing configured: the listeners bind to 127.0.0.1 with their default ports, and that is what is locked
+    assert g.own == [(net("127.0.0.1/32"), p) for p in (8081, 8079, 3128, 1080)]
+    assert own_sockets({"GW_LISTEN_HOST": "172.31.10.2", "GW_API_HOST": "172.31.11.2", "GW_SOCKS_PORT": "1081"}) == [
+        (net("172.31.11.2/32"), 8081),
+        (net("172.31.10.2/32"), 8079),
+        (net("172.31.10.2/32"), 3128),
+        (net("172.31.10.2/32"), 1081),
+    ]
+    # a listener on every address (or bound by name) is reached through any local address: its port is locked
+    # on loopback and on the unspecified addresses, not only on one of them
+    for host in ("0.0.0.0", "::", "egress-gw"):
+        own = own_sockets({"GW_API_HOST": host, "GW_LISTEN_HOST": "10.9.9.9"})
+        assert [str(n) for n, p in own if p == 8081] == ["127.0.0.0/8", "0.0.0.0/32", "::1/128", "::/128"], host
     assert [str(n) for n in internal_nets("10.1.0.0/16,fd00::/8")] == ["10.1.0.0/16", "fd00::/8"]
     monkeypatch.setenv("GW_INTERNAL_NETS", "172.31.10.0/24,nonsense")
     with pytest.raises(ValueError, match="GW_INTERNAL_NETS: invalid CIDR 'nonsense'"):
         make(tmp_path)  # a broken entry stops the gateway
-
-
-def test_ui_lan_grants_need_config_opt_in(tmp_path):
-    g = make(tmp_path)
-    with pytest.raises(ValueError):
-        g.upsert_ui("cam", {"targets": [{"host": "cam.lan", "port": 80, "scheme": "http", "lan": True}]})
 
 
 def test_agent_sees_no_secrets(tmp_path):
