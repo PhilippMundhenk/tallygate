@@ -222,6 +222,42 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   prefix (#116).
 
 ### Changed
+- **One ordered rule list, first match wins** ([ADR-0019](docs/adr/0019-one-ordered-rule-list.md), #208):
+  the policy is evaluated like other firewalls do it. For every address a destination resolves to, the list
+  is walked from the top and the first matching rule decides; the most restrictive result over all addresses
+  wins; the mode is the last line. What this changes:
+  - **Local addresses are handled like any other address.** The built-in blocked ranges (private, loopback,
+    link-local/metadata, CGNAT, multicast, special ranges) and the `never` entries of `gateway.yaml` are
+    ordinary `deny` rules (`source: builtin` / `config`), seeded once at the bottom. They can be moved, edited
+    and deleted; *Restore built-in blocks* adds the missing ones back. To reach one device, add an allow rule
+    for its address and port: it is placed above the blocked range. `hard_deny`, `floor_open` (ADR-0017) and
+    the read-only `hard_deny_floor` are gone.
+  - **An address rule (IP or CIDR) is final for the address, however the destination was named.** A CIDR
+    `allow` now also allows a name that resolves into it (this supersedes #10), and a CIDR `deny` no longer
+    wins "wherever it stands" (#119): position decides.
+  - **A name rule cannot open a blocked range.** A name rule's `deny` is final; its `allow` or `ask` is
+    provisional: an address `deny` rule below it that contains the address wins. The reason says so and how to
+    fix it, in the log, in *Test a destination* and in the denial the agent gets; the Destinations table marks
+    such a rule (*blocked by a range rule below*) and address rules that can never match (*never reached*).
+  - **Only the stack itself is locked**: the stack's own networks (`GW_INTERNAL_NETS`) and the gateway's own
+    listeners are denied before the list, whatever a rule, a grant or the API says. A listener bound to every
+    address is now locked on loopback too. They are shown as the last rows before the default, with no actions.
+  - **Rules have an order you can change**: *Move up* / *Move down* in the table, `POST
+    /destinations/{id}/move` in the API. Approvals and shortcuts are still added at the top.
+  - **Grants are rules at the top of the list while active.** A target with an IP or a fixed `address` is an
+    address rule and may be local; a target that is only a name cannot open a blocked range, and saving one
+    that resolves into a blocked range is refused with the address to pin. `grants_lan_allow`, `lan: true` and
+    the `never` scope `all+lan` are read from old files and ignored (logged once). The *Local-network device*
+    checkbox is gone; the Quick settings form is always available.
+  - **Names are still decided before they are resolved** where no address can change the result. With an
+    address `allow` rule for a port (for example an approved IP literal), names on that port are resolved
+    first, because one of their addresses might be allowed by that rule. Give address rules a port.
+  - API: `GET /policy` returns `{default, ask_timeout, seeded, rules}`; `GET /model` returns `locked` instead
+    of `never` and the rules in evaluation order; `GET /never-reachable` lists only what is locked; `POST
+    /test` returns the deciding rule, its position and `shadow`; new `POST /destinations/{id}/move` and `POST
+    /destinations/restore-blocks`; `GET /grants` has no `lan_allow_ui`. See [docs/api.md](docs/api.md).
+  - Unused built-in blocks are never offered by *Remove unused rules*.
+  - The isolation self-test also probes the management endpoints through the proxy (locked).
 - **One UX concept for the whole web UI** ([docs/ux-concept.md](docs/ux-concept.md), #202): every page is built
   from the same parts. Each tab has one title and at most one line of purpose; a card or form has at most one
   filled button, other actions are secondary, row actions (Edit, Delete, Undo, Test) are quiet "ghost" buttons.
@@ -365,6 +401,20 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
    you only use HTTPS (the new default `auto` decides per connection) (#97).
 7. Start: `docker compose pull && docker compose up -d`, or `make up` from source. Then run the self-test or
    `bash bypass.sh`.
+8. **The policy is migrated to one ordered rule list at the first start** (ADR-0019, #208). Nothing to do, but
+   know what happens to `policy.yaml` and `grants.yaml` in the gateway's data volume:
+   - The old files are kept next to the new ones as `policy.yaml.pre-0019` and `grants.yaml.pre-0019`. A file
+     that cannot be translated stops the gateway with a message that names the entry, with the file untouched.
+   - Your CIDR `deny` rules move to the top, in their order: they won everywhere before and keep winning.
+   - `hard_deny` extras become `deny` rules below your rules. The built-in blocks and your `never` entries are
+     added as `deny` rules at the bottom, except ranges you had opened (`floor_open`): they stay open.
+   - **Check your CIDR `allow` rules.** An allow for an address inside a blocked range did nothing before and
+     decides now, and a CIDR allow now also covers names that resolve into it. The gateway log and the event
+     log list every such rule at the migration (`policy migration: NOTE rule …`); delete those you do not want.
+   - **Grants for local devices need an address.** `lan: true` is dropped. A target with an IP or a fixed
+     `address` keeps working. A target that is only a name (`ha.lan`) no longer reaches a blocked range: set
+     its `address` (the log names each such target). `grants_lan_allow` can be removed from `gateway.yaml`.
+   - To go back to an older release, restore the `*.pre-0019` files.
 
 ## [0.3.0] - 2026-11-11
 

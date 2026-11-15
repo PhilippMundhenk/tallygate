@@ -440,10 +440,12 @@ def http_get_via_proxy(host: str, port: int = 80, path: str = "/") -> str:
 
 
 def _probe_specs() -> list[tuple[str, object]]:
-    """(name, fn) for every probe that must be BLOCKED. Only targets the gateway refuses
-    *unconditionally* are used -- hard-deny IP ranges (directly, as IPv4-mapped/NAT64/6to4/Teredo IPv6,
-    over the HTTP proxy, as plain-HTTP, and over SOCKS), destinations with no route, and a raw socket --
-    so the test never reaches the policy's `ask` path and never holds a connection for approval."""
+    """(name, fn) for every probe that must be BLOCKED. Only targets the gateway refuses without asking are
+    used -- the built-in blocked IP ranges (directly, as IPv4-mapped/NAT64/6to4/Teredo IPv6, over the HTTP
+    proxy, as plain-HTTP, and over SOCKS), destinations with no route, a raw socket, and the stack's own
+    management endpoints (locked: no rule opens them) -- so the test never reaches the policy's `ask` path and
+    never holds a connection for approval. The built-in blocks are rules the operator can delete or override
+    (ADR-0019): a probe that then gets through is reported as what it is, an open path."""
     specs: list[tuple[str, object]] = [
         # No route out of the agent network at all (the proxy is the only path).
         ("Direct TCP to the internet (1.1.1.1:443)", lambda: tcp("1.1.1.1", 443)),
@@ -484,6 +486,12 @@ def _probe_specs() -> list[tuple[str, object]]:
     for p in [x for x in os.environ.get("SELFTEST_BLOCKED_PROBES", "").split(",") if x]:
         h, port = p.rsplit(":", 1)
         specs.append((f"Management endpoint {p}", lambda h=h, port=int(port): tcp(h, port)))
+        # ... and through the proxy: the stack's own networks are locked, whatever the rule list says. Only for
+        # an address: a name would be a destination the policy may ask about.
+        if re.fullmatch(r"[0-9.]+|\[[0-9A-Fa-f:.]+\]", h):
+            specs.append(
+                (f"Management endpoint {p} via proxy (locked)", lambda h=h, port=int(port): connect_via_proxy(h, port))
+            )
     return specs
 
 

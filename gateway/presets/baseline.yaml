@@ -4,7 +4,7 @@ category: policy
 description: "Claude, GitHub and the npm and Python package registries; everything else is asked."
 default: ask          # allow | deny | ask  (ask = human-in-the-loop, deny on timeout)
 ask_timeout: 60       # seconds a connection is held while waiting for approval
-# hard_deny: omitted -> built-in list (RFC1918, loopback, link-local, CGNAT, multicast, ULA, ...)
+# The built-in blocks (RFC1918, loopback, link-local, CGNAT, multicast, ULA, ...) are seeded below these rules.
 rules:
   # --- Claude / Anthropic (API, Remote Control, login, feature flags) ---
   - {id: anthropic, action: allow, host: "*.anthropic.com", port: 443, note: Anthropic API}
