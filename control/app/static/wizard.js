@@ -130,7 +130,7 @@ const FIELD_SOURCE = { ui: "saved in the web UI", environment: "from the environ
 const notifyOpen = new Set();  // channels whose Configure disclosure is open: kept across re-renders
 
 function notifyConfigForm(c, label) {
-  const det = document.createElement("details"); det.className = "notify-config"; det.open = notifyOpen.has(c.channel);
+  const det = document.createElement("details"); det.className = "more notify-config"; det.open = notifyOpen.has(c.channel);
   det.addEventListener("toggle", () => (det.open ? notifyOpen.add(c.channel) : notifyOpen.delete(c.channel)));
   const sum = document.createElement("summary"); sum.textContent = "Configure";
   sum.setAttribute("aria-label", `Configure ${label}`);

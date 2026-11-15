@@ -5,9 +5,8 @@
 #notifyChannels .notify-channel:last-child{border-bottom:0}
 #notifyChannels .notify-why{font-size:12px;margin-top:2px}
 #notifyChannels .notify-channel>.row-between{padding:0;border-bottom:0}
-/* channel settings (#201): a controls disclosure (plain caret, no help mark) with the fields of one channel */
-details.notify-config{margin:6px 0 2px}
-details.notify-config>summary{cursor:pointer;width:fit-content;font-size:13px;padding:2px 0}
+/* channel settings (#201): a controls disclosure (details.more: plain caret, no help mark) with the fields of one channel */
+details.notify-config{margin:6px 0 2px}  /* with class "more": the controls-disclosure style of style.css */
 details.notify-config form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 14px;margin:8px 0 4px}
 details.notify-config label{margin:0}
 details.notify-config input{width:100%;margin:2px 0 0}
