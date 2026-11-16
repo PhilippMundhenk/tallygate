@@ -3,7 +3,7 @@ FROM docker.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d054
 
 # The single source of the Claude Code version. Bump deliberately: there is no auto-updater inside the agent.
 # .github/workflows/claude-code.yml opens a PR when a new version is published.
-ARG CLAUDE_VERSION=2.1.304
+ARG CLAUDE_VERSION=2.1.325
 # Extra Debian packages for your toolchains, e.g. "build-essential golang-go"
 ARG EXTRA_PACKAGES=""
 # ttyd is not packaged for Debian trixie: pinned upstream static binary, checksum-verified.
