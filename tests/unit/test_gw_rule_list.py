@@ -923,6 +923,43 @@ def test_migration_corner_cases_and_fail_closed():
         BUILTIN, [],
     )  # fmt: skip
     assert [r["id"] for r in new["rules"]] == [block_id("203.0.113.7/32"), block_id("203.0.113.7/32") + "-x"]
+    # ... also by a block that is placed at the top: the rule that has its id keeps it
+    new, notes = migrate(
+        {"rules": [{"id": TEN8, "action": "allow", "cidr": "10.0.0.5/32"}, {"id": "q", "action": "ask", "cidr": "10.0.0.0/7"}]},
+        BUILTIN, [],
+    )  # fmt: skip
+    assert [r["id"] for r in new["rules"]] == [TEN8 + "-x", TEN8, "q"] and new["rules"][0]["cidr"] == "10.0.0.0/8"
+    assert f"above rule(s) {TEN8}, q:" in notes[-1] and new["seeded"] == ["10.0.0.0/8"]
+    p, _ = policy_from_any({"rules": [{"id": TEN8, "action": "allow", "cidr": "10.0.0.5/32"}]}, BUILTIN, [])
+    p.seed_blocks(BUILTIN, [])
+    assert p.evaluate("10.0.0.5", 22, []).rule_id == TEN8 + "-x" and p.blocks_missing(BUILTIN, []) == []
+    # a config block and a hard_deny extra are kept on top in the same way; an opened range (floor_open) is not
+    new, notes = migrate(
+        {"hard_deny": ["9.9.9.0/24", "8.8.8.0/24"], "floor_open": ["192.168.0.0/16"], "rules": [
+            {"id": "a", "action": "allow", "cidr": "9.9.9.9/32"}, {"id": "b", "action": "ask", "cidr": "198.18.7.7/32"},
+            {"id": "c", "action": "allow", "cidr": "192.168.1.1/32"}, {"id": "e", "action": "allow", "cidr": "::/0"},
+            {"id": "x", "action": "allow", "cidr": "140.82.112.3/32", "expires": 1},
+        ]},
+        BUILTIN, ["198.18.7.0/24", "140.82.112.0/20"],
+    )  # fmt: skip
+    top = [r for r in new["rules"] if r["action"] == "deny"]
+    v6 = [c for c in BUILTIN if ":" in c]  # `e` reaches into every IPv6 block
+    assert [(r["cidr"], r.get("source")) for r in top] == [
+        ("9.9.9.0/24", None), ("198.18.0.0/15", "builtin"), *[(c, "builtin") for c in v6],
+        ("198.18.7.0/24", "config"), ("140.82.112.0/20", "config"), ("8.8.8.0/24", None),
+    ]  # fmt: skip
+    assert [r["id"] for r in new["rules"]][len(top) - 1 : -1] == [
+        "a",
+        "b",
+        "c",
+        "e",
+        "x",
+    ]  # the untouched extra is last
+    assert "192.168.0.0/16" in new["seeded"] and "192.168.0.0/16" not in [r["cidr"] for r in top]
+    assert notes[-1].startswith(f"NOTE {len(top) - 1} block(s) stay at the top of the list, above rule(s) a, b, e, x:")
+    # a rule that cannot be read is reported as that rule, not by the overlap check
+    with pytest.raises(ValueError, match="rule bad: invalid cidr 'nope'"):
+        policy_from_any({"rules": [{"id": "bad", "action": "allow", "cidr": "nope"}]}, BUILTIN, [])
     # a document with neither rules nor old keys: only the seeding is left to do
     p, notes = policy_from_any({"default": "deny"}, BUILTIN, [])
     assert notes == [] and p.rules == [] and p.seeded == [] and len(p.seed_blocks(BUILTIN, [])) == len(BUILTIN)
