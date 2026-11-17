@@ -16,7 +16,7 @@ dev-setup:  ## install dev dependencies into the current Python env
 lint:  ## ruff + shellcheck + vendored-file checksums
 	ruff check .
 	ruff format --check .
-	shellcheck setup.sh agent/entrypoint.sh tests/integration/bypass.sh
+	shellcheck setup.sh agent/entrypoint.sh agent/rc-loop.sh tests/integration/bypass.sh
 	cd control/app/static/vendor && sha256sum --quiet -c SHA256SUMS
 
 fmt:  ## auto-format
