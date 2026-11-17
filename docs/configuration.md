@@ -435,7 +435,7 @@ one that `compose.yaml` does not list, add it to that service's `environment:` b
 | control | `AGENT_HOST`, `AGENT_STATUS_PORT`, `TERMINALS` | Agent address, status port, `name:port` list of ttyd consoles. |
 | control | `SESSION_TTL`, `LOG_LEVEL` | Session lifetime (s, default 12 h), log level. |
 | control | `SESSION_RECHECK` | Seconds between session re-checks of open event streams and consoles (10). |
-| control | `CONTROL_DATA` | Control state directory inside the container (`/data`): session secret, password hash, VAPID key, push subscriptions, notification settings saved in the UI (`notify.json`). Not the `.env` variable of the same name, which is the host path or volume mounted there. |
+| control | `CONTROL_DATA` | Control state directory inside the container (`/data`): session secret, password hash, VAPID key, push subscriptions, notification settings saved in the UI (`notify.json`: channel settings and the [notification buttons](user-guide.md#notification-buttons), which have no environment variable). Not the `.env` variable of the same name, which is the host path or volume mounted there. |
 | control, agent | `TTYD_CREDENTIAL_FILE` | Credential file in the `ttyd` volume (`/run/tallygate/ttyd/credential`), used when `TTYD_CREDENTIAL` is not set. |
 | control | `GITHUB_API_URL` | Releases API base URL for the update check (the test suite points it at a mock server). |
 | control | `TELEGRAM_API_BASE`, `PUSHOVER_API_BASE` | API base URLs (the test suite points them at mock servers). |
