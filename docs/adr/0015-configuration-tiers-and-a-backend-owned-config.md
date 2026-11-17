@@ -1,8 +1,14 @@
 # ADR-0015: Configuration tiers and a backend-owned config file
 
-- Status: Accepted
+- Status: Accepted; tier 3 narrowed by [ADR-0019](0019-one-ordered-rule-list.md) (2026-11-15)
 - Date: 2026-11-14
 - Issue: #147
+
+> **Amended by [ADR-0019](0019-one-ordered-rule-list.md).** The tiers stay. Tier 3 (file-only) no longer
+> contains the "never-reachable floor", the LAN exemption or `grants_lan_allow`: the blocked ranges are rules
+> in the policy, editable in the UI, and `grants_lan_allow` is ignored. Tier 3 is now credential injection and
+> `tls_verify: false`, plus `GW_INTERNAL_NETS` in the environment (the locked ranges). Open question 3 is
+> moot. The behaviour settings are found under *Settings → Behaviour settings* since the menu was reordered.
 
 ## Outcome
 

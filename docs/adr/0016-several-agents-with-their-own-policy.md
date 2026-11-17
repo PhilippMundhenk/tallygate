@@ -4,6 +4,10 @@
 - Date: 2026-11-14
 - Issue: #77
 
+> **Note (2026-11-15):** written before [ADR-0019](0019-one-ordered-rule-list.md). Where this proposal says
+> "the never-reachable floor" stays global, read: the locked ranges stay global, and each agent's rule list
+> carries its own built-in blocks.
+
 ## Context
 
 One gateway and control plane serving **several agent containers** ("work", "home lab", "experiments") is the

@@ -17,7 +17,7 @@
 │       ├── core.py           #   hooks: server_connect, tls_clienthello, request, dns_request; approvals
 │       ├── model.py          #   one model: the verdict per connection, the limits per request (ADR-0014)
 │       ├── access.py         #   read-only view for the UI: each destination once
-│       ├── policy.py         #   pure policy engine (rules, hard deny, approvals → rules)
+│       ├── policy.py         #   pure policy engine: one ordered rule list, built-in blocks, migration, approvals → rules
 │       ├── grants.py         #   grant definitions, requests, active grants
 │       ├── availability.py   #   away mode, quiet hours, digest of refused requests
 │       ├── activity.py       #   what the agent says it is doing (context for approvals)
@@ -66,8 +66,8 @@ The e2e suite (`tests/e2e`) needs no Docker and no root:
 
 - The gateway runs as a real `mitmdump` process on random localhost ports, with DNS on an unprivileged
   port (`GW_DNS_PORT`) and test-only static name resolution (`GW_TEST_STATIC_HOSTS`) instead of
-  `/etc/hosts`. `GW_TEST_FLOOR_REPLACE=1` lets the test config's `hard_deny_floor` replace the built-in
-  list, because the upstreams run on loopback.
+  `/etc/hosts`. With `GW_TEST_FLOOR_REPLACE=1` and `never` entries in the test config, the built-in blocks
+  are not seeded, because the upstreams run on loopback.
 - Upstreams are local HTTP/HTTPS echo servers with a throwaway certificate.
 - The control plane runs as a real process; Telegram, Matrix, a Web Push service, ntfy, Gotify and Pushover are
   mocked (`tests/e2e/mockbots.py`).
@@ -94,7 +94,7 @@ curl -x http://127.0.0.1:3128 https://example.org/    # appears in Approvals at 
 
 | Level | What | Where | Runs in CI |
 |---|---|---|---|
-| Unit | Policy matching, hard deny, CIDR semantics, expiry, approvals, validation, presets, templating; grants, history, learning mode and rule usage; control (auth, password, setup checks, files, notifications, Web Push); the agent's CLI, hook and status server | `tests/unit` | ✅ |
+| Unit | Policy matching, the ordered rule list (name and address rules, built-in blocks, locked ranges, migration), expiry, approvals, validation, presets, templating; grants, history, learning mode and rule usage; control (auth, password, setup checks, files, notifications, Web Push); the agent's CLI, hook and status server | `tests/unit` | ✅ |
 | E2E | Every enforcement path, held connections, injection incl. SNI spoofing and upstream cert verification, DNS, API auth, UI auth/CSRF/origin, console websocket, Telegram/Matrix flows | `tests/e2e` | ✅ |
 | Integration | Real images and networks, started with zero configuration: first-start secrets, structural hardening and egress probes from an independent container | `tests/integration/bypass.sh` | ✅ (`integration` job) |
 

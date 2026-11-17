@@ -97,9 +97,10 @@ Key properties:
 | Agent can only talk to the gateway's enforcement ports | The gateway binds proxy/SOCKS/DNS/service ports to its `agent-net` address and the API to its `control-net` address only. |
 | Agent cannot reach the UI | Control is on `agent-net` (to reach ttyd/status) but binds its HTTP server to its `mgmt` address only (`CONTROL_BIND_HOST` is mandatory). |
 | Agent cannot run code in the UI | Control serves the console page and its xterm.js client itself and relays only the ttyd WebSocket, filtered (browser → input/resize, agent → terminal output). No agent-supplied HTML/JS is ever served on the UI origin; strict CSP everywhere. |
-| Agent cannot reach the LAN or host via the gateway | `hard_deny` covers RFC1918, loopback, link-local, CGNAT, ULA etc. and is checked on **resolved** IPs; Docker's own subnets (172.16/12) are included. |
-| No DNS exfiltration | The agent's resolver is the gateway, which answers NXDOMAIN to everything. The gateway resolves a name only **after** the policy (or a human) allowed it, so denied or pending names never reach a resolver. |
-| No IPv6 side door | `enable_ipv6: false` on all networks and IPv6 disabled by sysctl in every container (no link-local `fe80::`); IPv6 targets are subject to the same hard deny/policy checks. |
+| Agent cannot reach the stack itself via the gateway | The stack's own networks (`GW_INTERNAL_NETS`) and the gateway's own listeners are **locked**: denied before the rule list, for every literal and resolved address, whatever a rule or grant says ([rules.md](rules.md#locked-ranges)). |
+| Agent cannot reach the LAN or host via the gateway, by default | The built-in blocks: `deny` rules for RFC1918, loopback, link-local, CGNAT, ULA etc. at the bottom of the rule list, checked on every **resolved** IP; Docker's own subnets (172.16/12) are included. A rule for a name never opens them; the operator can open an address with a rule that names it ([rules.md](rules.md#built-in-blocks)). |
+| No DNS exfiltration | The agent's resolver is the gateway, which answers NXDOMAIN to everything. The gateway resolves a name only **after** the policy (or a human) allowed it, so denied or pending names never reach a resolver ([ADR-0011](adr/0011-decide-on-names-before-resolving.md)). |
+| No IPv6 side door | `enable_ipv6: false` on all networks and IPv6 disabled by sysctl in every container (no link-local `fe80::`); IPv6 targets are decided by the same rule list (IPv6 built-in blocks, IPv4-mapped addresses normalised). |
 
 Why topology instead of iptables: [ADR-0001](adr/0001-network-topology-instead-of-iptables.md).
 
@@ -114,7 +115,7 @@ sequenceDiagram
     participant S as api.anthropic.com
     A->>G: CONNECT api.anthropic.com:443
     G->>G: name valid · rules on name → allow (rule "anthropic")
-    G->>G: resolve → [160.79.104.10] · hard deny? no · rules → allow
+    G->>G: resolve → [160.79.104.10] · not locked · rule list for the address → allow
     G->>G: log decision · pin address to 160.79.104.10
     G->>S: TCP connect (pinned IP)
     G-->>A: 200 Connection established
@@ -150,7 +151,7 @@ sequenceDiagram
     H->>C: "Allow 1 h"
     C->>G: POST /pending/{id}/decide {scope: hour, by: telegram:philipp}
     G->>G: insert rule at top (expires in 1 h) · release held connections
-    G->>G: resolve · hard deny on resolved IPs · pin IP
+    G->>G: resolve · rule list for every resolved IP (a blocked range still denies) · pin IP
     G->>A: 200 Connection established
     Note over G: No answer within ask_timeout → deny,<br/>then 60 s negative cache for that host:port
 ```
@@ -209,21 +210,56 @@ All four paths go through the same `server_connect` hook ([ADR-0003](adr/0003-si
 
 ## Policy model
 
-Evaluation for a connection attempt to `host:port`:
+The policy is **one ordered rule list**: checked from the top, the first matching rule decides, the default
+is the last line ([ADR-0019](adr/0019-one-ordered-rule-list.md)). The reference for the decision, with the
+operator's view and worked examples, is [rules.md](rules.md); this is how the gateway runs it
+(`policy.py`: `evaluate_name`, `evaluate`, `_walk`) for a connection attempt to `host:port`:
 
 1. **Validate** the name (strict DNS syntax, ASCII/punycode only, ≤ 253 chars) — otherwise deny.
-2. **Name-first decision** (no DNS yet): rules matched on the name, then the default. `deny` → deny
-   without resolving; `ask` → hold and ask the human first. CIDR rules are not consulted for names
-   ([ADR-0011](adr/0011-decide-on-names-before-resolving.md)).
-3. **Resolve** the allowed name (IP literals skip 1–3).
-4. **Hard deny** = immutable floor + policy extras: if any literal/resolved address is inside → **deny**,
-   never ask, cannot be approved (except a service-port target with `allow_private`, on that port only).
-5. **Rules**, first match wins. Approvals and shortcuts (preset files) are inserted at the top. Expired rules are ignored and
-   pruned every 15 s.
-6. **default** action: `allow` (blocklist mode), `deny` (allowlist mode) or `ask` (human in the loop).
-   While **learning mode** runs, a host name on one of its ports that no rule matched (and no grant is
-   defined for) is allowed instead, in step 2 and again in step 6; steps 3–5 still apply. It is time-limited,
-   held in memory only, and ends on the emergency stop and on restart (#69).
+2. **Active grant.** If an active grant carries the destination, it decides, as rules at the top of the
+   list for its targets ([Grants](#grants)).
+3. **The name** (no DNS yet, [ADR-0011](adr/0011-decide-on-names-before-resolving.md)): the first name rule
+   that matches, else the default; address rules are not looked at. `deny` → refuse without resolving;
+   `ask` → hold and ask the human first. Both always: no address rule can turn them into `allow`. An `allow`
+   is never final here.
+4. **Resolve** the name (IP literals skip 3–4).
+5. **For each address** (the literal, or every resolved one):
+   1. **Locked ranges** (`GW_INTERNAL_NETS`, the gateway's own listeners, also behind a NAT64, 6to4 or
+      IPv4-compatible IPv6 form): deny, before the list and whatever it says. They are not rules and not
+      part of the stored policy.
+   2. **IP-literal destination** (`_walk`): the list from the top; the first address rule that contains the
+      address is final; nothing matched: the default. A catch-all name rule (`*`) above it does not change
+      that: with `deny` it is final, with `allow`/`ask` the address rule below it decides, and only when no
+      address rule contains the address does the `*` rule.
+   3. **Name destination** (`_walk_name`): a name `deny` is final wherever it stands. Otherwise the first
+      address rule with `allow` or `deny` that contains the address says whether the address is open: `deny`
+      blocks it, with a reason that names both rules; `allow`, or no such rule, leaves the result of the name
+      (its rule, or the default). Address `ask` rules are skipped. An address `allow` therefore never lets a
+      name through by itself ([ADR-0013](adr/0013-sni-and-host-bound-to-the-checked-name.md)).
+   4. Rules whose port does not match or whose time is up are skipped throughout.
+6. **The most restrictive result over all addresses wins** (`deny` > `ask` > `allow`). On `ask` the human is
+   asked; the approval adds a rule at the top and the list is walked again for these addresses, so an
+   approved name still cannot open a blocked range. The connection is pinned to the checked address
+   ([ADR-0007](adr/0007-hard-deny-on-resolved-ips-and-pinning.md)).
+
+The **built-in blocks** (private, loopback, link-local/metadata, CGNAT, multicast and special ranges) and the
+`never` entries of the gateway config are ordinary `deny` rules, seeded once at the bottom of the list
+(`source: builtin` / `config`) and remembered in `seeded`, so a deleted block is not added again. A seeded
+block takes no `expires`, and one whose action is changed becomes an ordinary rule (`source: user`). A
+service-port target with `allow_private` skips exactly these seeded blocks, on that port only; every other
+rule and the locked ranges apply to it.
+
+Approvals and shortcuts (preset files) are inserted at the top; rules saved from learning mode below the
+operator's rules, above the seeded blocks. Expired rules are ignored and pruned every 15 s.
+
+While **learning mode** runs, a host name on one of its ports that no rule matched (and no grant is defined
+for) is allowed instead of the default, in step 3 and again in step 5; the locked ranges and every rule,
+the built-in blocks among them, still decide first. It is time-limited, held in memory only, and ends on the
+emergency stop and on restart (#69).
+
+The gateway counts, per name rule, how often an address `deny` stopped it (`shadowed`), and the
+model marks address rules that an earlier one covers completely (`covered_by`); the UI shows both
+([rules.md](rules.md#marks-in-the-table)).
 
 At most `max_pending` approvals are open at once; identical log events are coalesced.
 
@@ -231,8 +267,8 @@ Rule matching:
 
 | Field | Semantics |
 |---|---|
-| `host` | Case-insensitive glob. `*.example.com` matches `example.com` **and** all subdomains. `*` matches everything. |
-| `cidr` | `allow`/`ask`: only for IP-literal destinations (approving an IP never covers names that resolve to it). `deny`: matches IP literals and hostnames with **any** resolved IP inside. |
+| `host` | A **name rule**. Case-insensitive glob. `*.example.com` matches `example.com` **and** all subdomains. `*` matches everything, IP literals included. |
+| `cidr` | An **address rule**. Matches when the address being checked is inside the range. For an IP-literal destination the first match decides (`allow`, `ask`, `deny`); for a name it only says whether a resolved address is open (`allow`) or blocked (`deny`), and `ask` is skipped. |
 | `port` | `443`, `[80, 443]`, `"8000-8100"` or `*` (default). |
 | `expires` | Unix timestamp; omitted = permanent. |
 
@@ -242,17 +278,21 @@ Approval scopes map to rules:
 |---|---|
 | `once` | allow exact host:port for 2 min (covers follow-up connections of the same operation) |
 | `hour` | allow exact host:port for 1 h |
+| `allow` + `ttl` | allow exact host:port for the given time (1 min … 30 days; the web UI's *Allow for 5 min* / *Allow for … min*) |
 | `always` | allow exact host:port permanently |
 | `domain` | allow `*.<registrable domain>`:port permanently. The registrable domain comes from the Public Suffix List **including its private section**, so `foo.github.io` widens to `*.foo.github.io`, never `*.github.io`; not offered for public suffixes or IPs. |
-| `deny` | deny exact host:port for 2 min |
+| `deny` | deny exact host:port for 2 min, or for a given `ttl` (*Deny for … min*) |
 | `deny_always` | deny exact host:port permanently |
+
+An approval for a name adds a name rule; an approval for an IP literal adds an address rule for exactly that
+address and port.
 
 Concurrent connections to the same `host:port` share one pending request (one notification).
 
 An `ask` carries the agent's recent activity (the tool call a Claude Code hook reported, or a
 `tallygate note`) as untrusted context for the human. It never influences the decision itself (#74).
 
-While the operator is **away** or in **quiet hours**, step 6 never waits: an `ask` becomes an immediate
+While the operator is **away** or in **quiet hours**, an `ask` never waits: it becomes an immediate
 `deny` with a message for the agent, and grant requests that need approval are refused the same way (#73).
 It never becomes an `allow`. Refused destinations are collected and sent as one digest later.
 
@@ -260,12 +300,12 @@ It never becomes an `allow`. Refused destinations are collected and sent as one 
 
 | Data | Location | Owner | Notes |
 |---|---|---|---|
-| Policy | `gateway-data`: `policy.yaml` | egress-gw (uid 10001) | Written atomically; seeded from the `baseline` preset on first start. |
+| Policy | `gateway-data`: `policy.yaml` | egress-gw (uid 10001) | Written atomically; created from the `baseline` preset on first start, with the built-in blocks added at the bottom. A file from before ADR-0019 is migrated once (backup `policy.yaml.pre-0019`, [operations](operations.md#upgrade-to-the-ordered-rule-list)). |
 | Event log | `gateway-data`: `events.db` | egress-gw | SQLite/WAL, pruned after `log_keep_days`. Also holds the per-rule hit counters (counted in memory, written every 15 s), the approvals of the last `log_keep_days` and dismissed suggestions. |
-| Policy history | `gateway-data`: `policy-history.db` | egress-gw | Every saved policy as a version (time, author, what), the last `policy_history_keep`. Same content as `policy.yaml`: no floor, no secrets. |
+| Policy history | `gateway-data`: `policy-history.db` | egress-gw | Every saved policy as a version (time, author, what), the last `policy_history_keep`. Same content as `policy.yaml`: the rules in order (the built-in blocks among them) and `seeded`; no locked ranges, no secrets. |
 | Secrets | `gateway-data`: `secrets.json` | egress-gw | Mode 0600, never returned by the API. |
 | Gateway CA | `gateway-data`: `mitmproxy/` | egress-gw | Public cert exported to the `ca` volume for the agent. |
-| Static gateway config | `/etc/egressgw/config.yaml` (default from `config/gateway.yaml` in the image) | operator | Read-only (override by mounting your own file): injection hosts, service ports, hard-deny floor, config grants. |
+| Static gateway config | `/etc/egressgw/config.yaml` (default from `config/gateway.yaml` in the image) | operator | Read-only (override by mounting your own file): injection hosts, read-only hosts, service ports, `never` ranges (seeded once as rules), config grants. |
 | Learning mode | memory (`events.db`: session records) | egress-gw | The running session lives in memory only: a restart ends it. Sessions (start, end, ports, who) are kept for the summary. |
 | UI-defined grants | `gateway-data`: `grants.yaml` | egress-gw | Active grants and pending requests live in memory (a restart ends them: fail closed). |
 | Agent home | `agent-home` | agent (uid 1000) | Claude login, settings, skills, `.gitconfig`, tmux/shell history. |
@@ -283,8 +323,13 @@ It never becomes an `allow`. Refused destinations are collected and sent as one 
 
 ## Grants
 
-Grants are named, time-limited bundles of access to destinations the policy would otherwise refuse, such as
-LAN services ([user documentation](grants.md), [ADR-0012](adr/0012-grants-for-scoped-temporary-access.md)).
+Grants are named, time-limited bundles of destinations that the agent requests and the operator approves,
+such as LAN services ([user documentation](grants.md), [ADR-0012](adr/0012-grants-for-scoped-temporary-access.md)).
+They are under the same rules as everything else: while a grant is active, its targets behave like rules at
+the top of the list. A target that names an address (an IP as host, or a fixed `address`) is an address rule
+and may be local; a target that is only a name is checked like a name rule, so the address rules of the
+list still apply to what it resolves to (a `deny` blocks it, an `allow` above the block opens it). The
+locked ranges are refused for every grant.
 
 ```mermaid
 sequenceDiagram
@@ -299,14 +344,15 @@ sequenceDiagram
     C->>G: POST /grant-requests/{id}/decide {read}
     G-->>A: (long poll) approved, granted_level=read
     A->>G: GET http://ha.lan:8123/api/states (via proxy)
-    G->>G: active grant → resolve, LAN exemption for this target, pin IP
+    G->>G: active grant → fixed address of the target (no lookup), not locked, pin IP
     G->>G: per request: Host == ha.lan, path /api/*, method GET ✔
     A->>G: POST /api/services/light/turn_off
     G-->>A: 403 grant homeassistant is read-only
 ```
 
 An active grant is consulted **before** the rules, but only when the rules would not already allow the
-name: grants add access, they never narrow it. HTTP(S) grant targets are always intercepted, so method,
+name (a target with a fixed address and an IP destination always use the grant): grants add access, they
+never narrow it. HTTP(S) grant targets are always intercepted, so method,
 path and Host can be enforced on every request. Non-HTTP bytes on such targets are cut, and `tcp`
 targets are passed through.
 

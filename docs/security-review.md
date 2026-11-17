@@ -9,6 +9,41 @@
 - **Result:** 25 findings: 1 critical, 6 high, 11 medium, 7 low. **All fixed in v0.2.0.** The remaining
   risks are accepted and documented [below](#accepted-risks).
 
+> **Note, 2026-11-15: the evaluation model changed after this review
+> ([ADR-0019](adr/0019-one-ordered-rule-list.md)).** This document is a record of the review of v0.1.0 and of
+> the fixes in v0.2.0, and its text is left as written. The policy is now one ordered rule list, first match
+> wins; the "hard deny" is no longer a separate, immutable check but a set of ordinary `deny` rules (the
+> built-in blocks) at the bottom of that list, and only the stack's own networks and the gateway's own
+> listeners are locked. The current mitigations are in the [threat model](threat-model.md); the decision is
+> described in [rules.md](rules.md). Findings whose fix or wording it affects:
+>
+> | Finding | What changed |
+> |---|---|
+> | TG-03 (hard-deny list editable at runtime) | **The fix is withdrawn by decision.** There is no immutable floor, no `hard_deny_floor` and no `hard_deny`: the blocked ranges are rules, and an authenticated UI session or the API token can add an allow rule for a local address or delete a block (first ADR-0017, then ADR-0019). The attack described under TG-03 is therefore possible again for whoever holds the UI session; it is accepted and listed in the threat model (T27, residual risks). What still bounds it: the agent has no path to the UI or the API, the locked ranges cannot be opened from there (T46), so the control plane itself stays out of the agent's reach, and every change is a policy version with its author. The regression tests named in the table (`test_hard_deny_floor_…`) no longer exist; `test_gw_rule_list.py`, `test_gw_locked.py` and `test_floor.py` cover the new model. |
+> | TG-01 (script on the UI origin) | The fix is unchanged. Its impact statement "remove hard-deny entries (TG-03)" applies again to a compromised UI session, for the same reason. |
+> | TG-02 (DNS exfiltration, name-first evaluation) | The fix stands: a name the policy denies or still has to ask about is not resolved. "Checked against the hard deny on every resolved IP" now reads: every resolved IP is checked against the rule list, and a name rule never opens a blocked range (T45). The first implementation of ADR-0019 weakened this (see the 2026-11-17 note below); the amendment restored it without exception. |
+> | TG-15 (`allow_private` on every path) | The fix stands: reverse mode, exact host and port. The exception now skips the built-in and config blocks only; the operator's own rules and the locked ranges apply to the target. |
+> | TG-16 (IPv6 link-local) | Unchanged. The IPv6 ranges are built-in blocks like the IPv4 ones. |
+>
+> Findings not listed are not affected.
+>
+> **Note, 2026-11-17: second review, of the implementation of ADR-0019 (PR #211).** It found regressions
+> against earlier fixes, and ADR-0019 was amended the same day ("names pass two checks"). The findings and
+> what became of them:
+>
+> | Finding | Problem in the first implementation | Outcome |
+> |---|---|---|
+> | H1 | The migration made address `allow`/`ask` rules live that had been inert inside blocked ranges: the blocks were seeded below them, so upgrading opened what had been closed. | **Fixed by the amendment.** Blocks that such a rule overlaps are placed at the top, above it; the log names the rules. Restoring an old version and importing an old export are migrated the same way and record the same notes. |
+> | M1 | One address `allow` rule for a port (for example an approved IP literal) switched off the decision before DNS for names on that port: the gateway resolved every name the agent asked for. A regression of TG-02 / ADR-0011. | **Fixed by the two checks.** The name is decided by the name rules alone; `deny` and `ask` are acted on before the lookup, always. |
+> | M2 | Address `allow` rules applied to names: an allowed address allowed every name that resolves to it, with that name's SNI and Host, and outranked a name `deny`. On a shared CDN address that is another site (ADR-0013, threat T7a). | **Fixed by the two checks.** An address `allow` lets no name through by itself, and a name `deny` wins wherever it stands. |
+> | M3 | Grant targets with a fixed address skip every `deny` rule, including the blocks for loopback, cloud metadata and the `never` entries of the gateway config; targets that were inert before go live on upgrade. | **Partly.** The upgrade names each such target in the container log and in the migration event. The rest is the ADR's decision and a documented residual risk (threat model T30, residual risks). |
+> | L1 | One click on *Allow* in the log opened a blocked local address. | **Fixed.** Allowing an address from the log takes a confirming second click. |
+> | L2 | A rule's `source` was not validated and was kept when the action changed. | **Fixed.** `source` is validated; a seeded block whose action is changed becomes `user`. |
+> | L3 | Built-in blocks could vanish through `PUT /policy`, import or restore without a record. | **Fixed.** The admin event and the import preview list the blocks that are not in force. |
+> | L4 | The hint on a name rule stopped by a blocked range steered towards opening the address. | **Fixed.** It leads with the DNS-rebinding warning. |
+> | L5 | A time limit on a seeded block deleted the block for good when it ran out. | **Fixed.** A time limit on a seeded block is refused. |
+> | L6 | The locked ranges depend on the environment. | **Partly.** An empty `GW_INTERNAL_NETS` is logged as an error, and NAT64, 6to4 and IPv4-compatible forms of a locked address are matched. Not done: the gateway does not refuse to start, and its own interface addresses are not added. |
+
 Severity scale: **Critical**: the agent gains control of the operator plane or fully escapes the policy.
 **High**: a security boundary is bypassed or weakened in a realistic setup. **Medium**: an exploitable
 weakness that needs extra conditions, or defence in depth with a concrete attack. **Low**: hardening or

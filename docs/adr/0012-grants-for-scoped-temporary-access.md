@@ -1,13 +1,19 @@
 # ADR-0012: Grants for scoped, temporary access
 
-- Status: Accepted
+- Status: Accepted; the LAN exemption amended by [ADR-0019](0019-one-ordered-rule-list.md) (2026-11-15)
 - Date: 2026-11-11
+
+> **Amended by [ADR-0019](0019-one-ordered-rule-list.md).** Grants stay as decided here. The "LAN exemption
+> per exact target" and `grants_lan_allow` are gone: an active grant behaves like rules at the top of the one
+> rule list, a target that names an address (an IP, or a fixed `address`) may be local, and a target that is
+> only a name cannot open a blocked range. A UI session can therefore define a grant for a local address,
+> as it can add an allow rule for it. See [grants.md](../grants.md#local-targets-and-name-only-targets).
 
 ## Context
 
 Users want the agent to work with services on their home network (Home Assistant, Proxmox, a NAS)
 or other sensitive endpoints, sometimes read-only, sometimes with write access, and only while a task needs
-it. Per-connection approvals ([ADR-0004](0004-human-in-the-loop-approvals.md)) are the wrong unit for this:
+it. Per-connection approvals ([ADR-0008](0008-approvals-as-rules-with-ttl.md)) are the wrong unit for this:
 they cannot express "GET only" or "these paths", they prompt for every new host:port, and LAN addresses are
 hard-denied anyway ([ADR-0007](0007-hard-deny-on-resolved-ips-and-pinning.md)).
 

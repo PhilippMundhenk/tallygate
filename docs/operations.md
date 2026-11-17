@@ -14,6 +14,8 @@
 - [Changing the UI password](#changing-the-ui-password)
 - [Day-to-day](#day-to-day)
 - [Upgrades](#upgrades)
+  - [Upgrade to the ordered rule list](#upgrade-to-the-ordered-rule-list)
+  - [Restoring the built-in blocks](#restoring-the-built-in-blocks)
 - [Resource limits](#resource-limits)
 - [Backup and restore](#backup-and-restore)
 - [Monitoring](#monitoring)
@@ -89,7 +91,7 @@ To change the static gateway configuration (grants, service ports, credential in
 [`config/gateway.yaml`](../config/gateway.yaml) as `gateway.yaml` next to `compose.yaml`, edit it and
 uncomment the `./gateway.yaml:/etc/egressgw/config.yaml:ro` line in `compose.yaml`.
 
-Check the isolation with the UI's **Setup → Self-test**. The authoritative test runs on the host, with a
+Check the isolation with the UI's **Setup → Isolation self-test**. The authoritative test runs on the host, with a
 separate probe container:
 
 ```bash
@@ -301,8 +303,12 @@ to do ([user guide](user-guide.md#setup-wizard)):
 5. **Log in to Claude**: *Start login*, open the link, sign in, paste the code.
 6. **Git identity**: *Use my GitHub identity* → check the preview → *Save identity* (needs the token from step 4).
 7. **Remote Control**: *Enable Remote Control*. The session appears in the Claude app under **Code**.
-8. **Starting policy** and **phone notifications** (optional).
-9. **Self-test**: all rows must be PASS.
+8. **Notifications** (optional): approvals on your phone.
+9. **Isolation self-test**: all rows must be PASS.
+
+The policy starts from the `baseline` preset: Claude, GitHub, npm and PyPI are allowed, everything else asks
+you. **Quick settings** has learning mode and the shortcuts for the first task
+([How access works](access.md#getting-to-a-working-setup)).
 
 Without the UI, the same steps work in the consoles: `claude auth login` in *bash*, the `git config` lines,
 and answering `y` in *rc*.
@@ -336,9 +342,10 @@ docker compose exec control python -m app.passwd --print-hash   # prints scrypt:
 |---|---|
 | Approve/deny connections | UI → Approvals, Telegram buttons, Matrix reactions/replies |
 | Review traffic | UI → Log (filter, "only blocked", one-click allow/deny rule) |
-| Tighten/loosen policy | UI → Rules (shortcuts, mode, add/delete rules, dry-run test, history) |
-| Temporarily open the internet | Rules → Shortcuts → *Allow web (HTTP/HTTPS) for 15 min* (or Overview → *Allow web for 15 min*) |
-| Emergency stop | Rules → Shortcuts → *Emergency stop* (revokes grants, denies what is pending, removes the internet shortcuts, ends learning mode, mode `deny`, suspends auto-approved grants), or `docker compose stop agent` |
+| Tighten/loosen policy | UI → Destinations (add, edit, move and delete rules, *Test a destination*); the default under Settings → Mode; shortcuts and learning mode under Quick settings; versions under Log → *Policy history, export and import* |
+| Let the agent reach one local device | An allow rule for its address and port on Destinations, or a grant (Quick settings → Local network) when it should ask each time: [rules.md](rules.md#a-allow-one-local-device) |
+| Temporarily open the internet | Quick settings → Internet → *Allow web for 15 min* (or Overview → *Allow web for 15 min*) |
+| Emergency stop | Quick settings → *Emergency stop*, or Overview (revokes grants, denies what is pending, removes the internet shortcuts, ends learning mode, mode `deny`, suspends auto-approved grants), or `docker compose stop agent` |
 | Several sessions in parallel | New session in the Claude app on the same environment; `RC_ARGS=--spawn worktree` for isolated worktrees |
 | Files into or out of the workspace | UI → Files (upload into the open folder, download results) |
 | Shell in the agent | UI → Console → bash (or `docker compose exec agent bash`) |
@@ -373,6 +380,92 @@ on the host suffer too. On a host that runs more than tallygate:
 
 The gateway's event log is capped by `log_max_events` and `log_keep_days`, and identical events are coalesced.
 
+### Upgrade to the ordered rule list
+
+The policy is evaluated as one ordered rule list ([ADR-0019](adr/0019-one-ordered-rule-list.md); how it
+decides: [rules.md](rules.md); the release that brought it: [CHANGELOG](../CHANGELOG.md)). The files in the
+gateway's data volume are migrated **once, at the first start** of a gateway with that model. Nothing has to
+be done before the upgrade, and an unattended image update works.
+
+What the gateway does:
+
+| File | Change | Backup |
+|---|---|---|
+| `policy.yaml` | Your CIDR `deny` rules move to the top, in their order: they won wherever they stood, and keep winning. `hard_deny` ranges become `deny` rules below your other rules. The [built-in blocks](rules.md#built-in-blocks) and your `never` entries are added as `deny` rules at the bottom, except ranges you had opened (`floor_open`): those stay open. **Exception, so that nothing opens by upgrading:** a block (built-in, `never` or `hard_deny`) that one of your address `allow` or `ask` rules overlaps is placed at the **top**, right after your CIDR `deny` rules, above that rule. Such a rule had no effect inside the blocked range before and has none after. `hard_deny` and `floor_open` are removed from the file. | `policy.yaml.pre-0019` |
+| `grants.yaml` (grants defined in the UI) | `lan: true` is removed from targets. Only rewritten when a target had it. | `grants.yaml.pre-0019` |
+| `gateway.yaml` (your config, mounted read-only) | Never rewritten. Old keys are read or ignored with a warning: [configuration](configuration.md#removed-and-ignored-keys). | – |
+
+- **Backups are written before anything is changed** and are never overwritten by a later start.
+- **Fail closed.** A file that cannot be translated, or a backup that cannot be written, stops the gateway
+  with a message that names the entry; the old file is untouched. The agent has no network while the gateway
+  is down. Fix the entry (or restore a backup) and start again.
+- **Where it is reported:** in the container log (`docker compose logs egress-gw | grep -i migrat`), as an
+  admin entry in the UI's **Log** (`policy.yaml migrated to one ordered rule list (ADR-0019): …`) and as a
+  version in **Log → Policy history**.
+
+What to check afterwards:
+
+1. **Address `allow` and `ask` rules inside a blocked range.** They did nothing before, and they still do
+   nothing: the migration keeps the blocks they overlap above them and says so (`policy migration: NOTE n
+   block(s) stay at the top of the list, above rule(s) …: these address rules had no effect inside the
+   blocked ranges and still have none. To open an address, move its rule above the block. Blocks: …`). If
+   you want such a rule to open its address, use *Move up* on it until it stands above the block; if not,
+   delete it.
+2. **Grants for local devices.** A target with an IP or a fixed address keeps working. A target that is only
+   a name (`ha.lan`) no longer reaches a blocked range; the log names each one (`` `lan` is ignored now, and
+   a target that is only a name cannot open a blocked range ``). Set its fixed address, or add an allow
+   rule for the address above the block ([grants.md](grants.md#local-targets-and-name-only-targets)).
+   **The other direction:** a target that names an address inside a blocked range and did *not* have
+   `lan: true` was always refused before and is reachable now while its grant is active. The container log
+   and the migration entry in the Log name each one (`NOTE grant …: target … names the address … inside blocked range …. It was
+   refused before; now it is reachable while the grant is active`, with `approval for … is automatic` where
+   that applies). Delete the target, or the grant, if that is not wanted.
+3. **The table.** *Destinations* shows the list in the order it is checked; the line under it counts the
+   built-in and config blocks. *Test a destination* shows what decides for one host and port.
+4. **`gateway.yaml`**: delete `grants_lan_allow`, rename `hard_deny_floor` / `grants_never` to `never`.
+
+**Going back to the older release:** the older gateway refuses the migrated `policy.yaml` (it stops at the
+key `seeded`), so put the backups back before you start it. Changes made after the migration are lost.
+
+```bash
+docker compose stop egress-gw
+docker run --rm -v tallygate_gateway-data:/v debian sh -c \
+  'cp -p /v/policy.yaml.pre-0019 /v/policy.yaml; [ ! -f /v/grants.yaml.pre-0019 ] || cp -p /v/grants.yaml.pre-0019 /v/grants.yaml'
+# set TALLYGATE_VERSION to the older release in .env, then:
+docker compose up -d
+```
+
+With a host directory instead of the volume (`GATEWAY_DATA`), copy the files there and keep owner 10001.
+The same copy, followed by a start of the **new** gateway, runs the migration again from the old file.
+
+Exports and policy versions from before the upgrade stay usable: an import or a *Restore version* of one is
+migrated the same way, and the preview shows the policy as it will be in force. The same `NOTE` lines are
+recorded: an import shows them as warnings before you apply it, and the Log entry of the import or restore
+carries them. Whenever a whole policy is put in force (import, restore, `PUT /policy`, the raw editor), the
+Log entry also says which built-in or config blocks are **not** in force in it (`built-in block(s) not in
+force: …`).
+
+### Restoring the built-in blocks
+
+The built-in blocks are ordinary rules and can be deleted; a deleted block stays deleted across restarts
+and upgrades ([rules.md](rules.md#built-in-blocks), and what that means:
+[threat model](threat-model.md#residual-risks)). To get them back:
+
+- **Destinations → Restore built-in blocks** adds back, at the bottom of the list, every built-in block and
+  every `never` entry of the gateway config that is not in the list as a permanent `deny` for exactly that
+  range on every port. It changes no other rule and says how many it added (*No built-in block is missing*
+  when there is nothing to do). The API route is `POST /destinations/restore-blocks` ([api.md](api.md)).
+- **Restoring does not close what an address rule above the blocks opens.** A restored block is added at the
+  bottom; an `allow` (or `ask`) rule for an address in its range that stands above it keeps deciding for that
+  address. The message after the click and the Log entry list these (`Still open by rules above the blocks:
+  192.168.44.1/32`; in the API answer: `opened`). Delete such rules if you want the whole range closed again.
+- To see who removed a block and when, or to go back to the policy as it was: **Log → Policy history**,
+  *Show changes* and *Restore version*.
+- The line under the *Destinations* table counts the built-in and config blocks in the list.
+
+The locked ranges need no restoring: they are not rules and cannot be removed
+([rules.md](rules.md#locked-ranges)).
+
 ## Backup and restore
 
 Back up the volumes (or the directories in `GATEWAY_DATA`, `CONTROL_DATA`, `AGENT_HOME`,
@@ -380,7 +473,7 @@ Back up the volumes (or the directories in `GATEWAY_DATA`, `CONTROL_DATA`, `AGEN
 
 | Volume | Contains | Sensitivity |
 |---|---|---|
-| `gateway-data` | policy, event log, **secrets (GitHub token)**, gateway CA private key | **high**: encrypt backups |
+| `gateway-data` | policy (and its history, the `*.pre-0019` migration backups), UI grants, event log, **secrets (GitHub token)**, gateway CA private key | **high**: encrypt backups |
 | `agent-home` | **Claude login**, settings, skills, git config | **high** |
 | `workspace` | your repositories | as your code |
 | `control-data` | session secret, UI password hash | medium |
@@ -415,7 +508,10 @@ to a new gateway, the CA changes. That's harmless: the agent re-reads the CA on 
 | `Remote Control requires feature-flag evaluation …` | A settings file or env sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_GROWTHBOOK` or (older versions) `DISABLE_TELEMETRY`. tallygate's agent image sets none of them; check `~/.claude/settings.json` in `agent-home`. |
 | Tool fails with "could not resolve host" | It resolves locally instead of via the proxy. Use `socks5h://`, proxy-side resolution, or a service port. |
 | Tool hangs ~60 s then fails | The destination is in `ask` and nobody answered. Approve it in the UI/phone, then retry. |
-| `502 egress policy: blocked (hard-deny …)` | Destination resolves to a private range. For LAN services define a [grant](grants.md), or a service port with `allow_private: true`. |
+| `502 egress policy: blocked (rule block-… (built-in block))` | The address is inside a blocked range (the local network, loopback, metadata …). To reach one device, add an allow rule for its address and port, or define a [grant](grants.md): [rules.md](rules.md#the-local-network-worked-examples). |
+| `… blocked (name allowed by rule …, but it resolves to …, inside blocked range …)` | A rule allows the name, but a rule for a name never opens a blocked range. If the address should be reachable, add an allow rule for the address; if not, the block did its job: [rules.md](rules.md#why-a-name-rule-cannot-open-a-blocked-range). |
+| `… blocked (locked: … belongs to the tallygate stack itself)` | The destination is the stack's own network or the gateway itself. Nothing opens these: [rules.md](rules.md#locked-ranges). |
+| After an upgrade the gateway does not start, the log names a policy or grant entry | The migration to the ordered rule list failed closed: [Upgrade to the ordered rule list](#upgrade-to-the-ordered-rule-list). |
 | `gh`/`git` 401 against GitHub | No token stored (Setup step 4, GitHub token), PAT expired, or PAT lacks access to that repository. |
 | TLS errors only for github.com | The agent doesn't trust the gateway CA: check `/ca/egress-gw-ca.pem` exists in the agent (`ls /ca`) and restart the agent after the gateway. |
 | `ENOSPC: no space left on device` | Host disk full. Free space (`docker system df`, logs) or grow the VM disk. |

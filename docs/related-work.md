@@ -8,7 +8,7 @@ tallygate draws on ideas from several projects. This page compares protections, 
 | Egress enforcement | Gateway outside the agent; agent on an internal network | iptables inside the container | Host-side proxy | TLS-intercepting proxy | None by default (bwrap sandbox for Bash) |
 | Policy granularity | Domain/IP/CIDR/port, first match, TTLs | IP allowlist resolved at startup | Domain policy (allow/deny) | Host allowlist (strict/permissive) | – |
 | Human in the loop | ✅ hold + approve (web, Telegram, Matrix) | – | – | – | – |
-| LAN protection | Hard deny on resolved IPs + pinning | Depends on the allowlist | ✅ | Depends on the policy | – |
+| LAN protection | Blocked by default on every resolved IP (rules you can open per address) + pinning | Depends on the allowlist | ✅ | Depends on the policy | – |
 | DNS exfiltration | Blocked (NXDOMAIN) | Open | Via policy | – | Open |
 | Credentials kept out of the agent | ✅ GitHub (configurable) | – | ✅ AI providers | ✅ many providers | – |
 | Non-HTTP | SOCKS5, CONNECT, service ports | iptables rules | Explicit rules | Service sidecars | Open |
