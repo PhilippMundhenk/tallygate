@@ -245,7 +245,7 @@ about is decided without resolving it, as for a real connection
 - **Add rule** (above the table): *allow*, *deny* or *ask*; a host pattern or a CIDR; ports; a note; an
   optional time limit in seconds. A new rule is added **at the top**, so it decides before everything below
   it. An IP address in the host field is stored as a rule for that address.
-- **Move up / Move down** change the place of a rule by one. The order is the only precedence there is.
+- **Move up / Move down** change the place of a rule by one. <!-- TODO(0019-amend): which order matters -->
 - **Edit** changes the access, ports, note, time limit and group of a rule in place. What a rule matches is
   not editable: add a new rule and delete the old one.
 - **Group selected / Ungroup selected** put ticked rules in a named set, to keep related rules together.
@@ -254,7 +254,7 @@ about is decided without resolving it, as for a real connection
   the bottom ([operations](operations.md#restoring-the-built-in-blocks)).
 - The line under the table counts the built-in and config blocks in the list and the locked ranges.
 
-Two marks tell you when a rule cannot do what it says: **blocked by a range rule below** on a rule for a
+Two marks tell you when a rule cannot do what it says: **blocked by a range rule below** on a rule for a <!-- TODO(0019-amend) -->
 name whose address was inside a blocked range (with the last address, the range and what to do), and
 **never reached** on an address rule that an earlier one covers completely
 ([rules.md](rules.md#marks-in-the-table)).

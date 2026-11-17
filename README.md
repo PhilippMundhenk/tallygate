@@ -52,8 +52,7 @@ only then let through, turned back, or held for you to decide.
 - **Context for decisions.** A prompt shows what Claude Code was running when it asked (reported by a hook,
   secrets redacted, clearly labelled as the agent's claim).
 - **No DNS exfiltration.** The agent's DNS always answers NXDOMAIN, and every attempt is logged. The gateway
-  resolves a name only after the policy or a human allowed it
-  ([the one exception](docs/rules.md#when-a-name-is-resolved)).
+  resolves a name only after the policy or a human allowed it.
 - **Secrets stay out of the agent.** The GitHub token lives in the gateway and is injected in flight, only when
   the CONNECT target and Host match, optionally only for the repositories you list. The agent's own
   credentials for those hosts are stripped, and

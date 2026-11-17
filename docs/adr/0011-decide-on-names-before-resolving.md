@@ -4,12 +4,9 @@
 - Date: 2026-11-11 (security review, finding TG-02)
 
 > **Amended by [ADR-0019](0019-one-ordered-rule-list.md).** The decision stands: a name the policy denies or
-> still has to ask about is not resolved. Two details changed. The result of the name phase is acted on
-> before the lookup only where no address can change it: an address `allow` rule for the port (for a `deny`:
-> also an address `ask` rule) above what decided makes the gateway resolve first. And an address rule is
-> final for its address however the destination was named, so a CIDR `allow` again covers names that resolve
-> into it (this reverses the last consequence below, #10); "the hard deny" in phase 2 is the rule list with
-> the built-in blocks in it. See [rules.md](../rules.md#when-a-name-is-resolved).
+> still has to ask about is not resolved. "The hard deny" in phase 2 is now the rule list with the built-in
+> blocks in it; how CIDR rules apply to names is defined by ADR-0019. See [rules.md](../rules.md).
+> <!-- TODO(0019-amend): state the final relation of CIDR allow/ask rules to names once ADR-0019 is amended -->
 
 ## Context
 

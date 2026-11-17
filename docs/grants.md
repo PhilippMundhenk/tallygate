@@ -125,11 +125,11 @@ for rules ([name rules and address rules](rules.md#name-rules-and-address-rules)
 | Target | Counts as | May it be inside a blocked range? |
 |---|---|---|
 | an IP address as host (`192.168.1.40`) | an address rule at the top of the list | yes |
-| a name with a fixed `address` (`ha.lan` at `192.168.1.20`) | an address rule at the top of the list; the name is not looked up | yes |
-| only a name (`api.example.com`, `ha.lan`, `*.lan`) | a name rule at the top of the list | **no**: if the name resolves to an address inside any address `deny` rule of the list, the connection is refused |
+| a name with a fixed `address` (`ha.lan` at `192.168.1.20`) | an address rule at the top of the list; the name is not looked up | yes <!-- TODO(0019-amend) --> |
+| only a name (`api.example.com`, `ha.lan`, `*.lan`) | a name rule at the top of the list | **no**: if the name resolves to an address inside any address `deny` rule of the list, the connection is refused <!-- TODO(0019-amend) --> |
 
 The reason is the one given for rules: a name points wherever its DNS says, so only a target that names the
-address opens a blocked range ([why](rules.md#why-a-name-rule-cannot-open-a-blocked-range)). For a name-only
+address opens a blocked range ([why](rules.md#why-a-name-rule-cannot-open-a-blocked-range)). For a name-only <!-- TODO(0019-amend) -->
 target an allow rule for the address elsewhere in the list does not help; set the fixed address on the target.
 
 What you see:
@@ -153,7 +153,7 @@ Earlier releases had a separate switch for local targets. It is gone; old files 
 
 | Option | What happens to it now |
 |---|---|
-| `lan: true` on a target | Ignored, logged once per target. A target with an IP or a fixed `address` keeps working. A target that is only a name no longer reaches a blocked range: add its `address`. |
+| `lan: true` on a target | Ignored, logged once per target. A target with an IP or a fixed `address` keeps working. A target that is only a name no longer reaches a blocked range: add its `address`. <!-- TODO(0019-amend) --> |
 | `grants_lan_allow` in `gateway.yaml` | Ignored, logged once at start. UI grants are no longer limited to listed ranges; delete the key. |
 | `grants_never`, and the `never` scope `all+lan` | Read as plain `never` entries: blocked ranges seeded as rules. |
 | *This is a device on my local network* in the grant editor | Removed. Nothing to tick: enter the IP, or set *Fixed IP*. |
@@ -174,7 +174,7 @@ time out after `grant_request_timeout` (300 s). At most `grant_max_pending` (3) 
 
 ## How it is enforced
 
-1. A connection to a target of an **active** grant is handled by the grant, as if its targets were rules at
+1. A connection to a target of an **active** grant is handled by the grant, as if its targets were rules at <!-- TODO(0019-amend) -->
    the top of the list. The fixed `address` is used, or the name is resolved. The
    [locked ranges](rules.md#locked-ranges) are refused for every grant. A target that names an address is
    then allowed; for a target that is only a name, every address `deny` rule of the list still applies to
@@ -193,7 +193,7 @@ time out after `grant_request_timeout` (300 s). At most `grant_max_pending` (3) 
 4. When the grant expires or is revoked, new connections and new requests on open HTTP connections are
    refused. Established `tcp` sessions (e.g. an open SSH session) are not cut; keep `max_ttl` short for those.
 
-Grants **add** access. A name that your rules already allow is unaffected by a grant that also covers it: the
+Grants **add** access. A name that your rules already allow is unaffected by a grant that also covers it: the <!-- TODO(0019-amend) -->
 rules decide, without the grant's limits. A target with a fixed `address` and a destination given as an IP
 address always go through the active grant and its checks. A destination that a grant is defined for, but
 that is not allowed while the grant is inactive, is refused with a hint (`available via grant <name>`)

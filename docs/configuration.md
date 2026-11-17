@@ -307,12 +307,12 @@ happens to each:
 | Key | Where | What happens to it now |
 |---|---|---|
 | `grants_lan_allow` | `gateway.yaml` | Ignored; a warning at every start until you delete it. UI grants are no longer limited to listed ranges: a target that names an address may be local. |
-| `lan: true` on a grant target | `gateway.yaml`, `grants.yaml` | Ignored; a warning names each target. A target with an IP or a fixed `address` keeps working. A target that is only a name no longer reaches a blocked range: set its `address`. In `grants.yaml` the flag is removed at the first start (backup `grants.yaml.pre-0019`). |
+| `lan: true` on a grant target | `gateway.yaml`, `grants.yaml` | Ignored; a warning names each target. A target with an IP or a fixed `address` keeps working. A target that is only a name no longer reaches a blocked range: set its `address`. In `grants.yaml` the flag is removed at the first start (backup `grants.yaml.pre-0019`). <!-- TODO(0019-amend) --> |
 | `hard_deny_floor` | `gateway.yaml` | Still read, as `never` entries (a warning at start). Rename it to `never`. |
 | `grants_never` | `gateway.yaml` | The same. |
 | `{range: …, scope: all+lan}` in `never` | `gateway.yaml` | Still read; `scope` no longer means anything, the entry is a plain range. Write the CIDR alone. |
-| `hard_deny` | `policy.yaml`, a policy sent to the API, an imported or restored policy | Migrated: each range becomes a `deny` rule below your rules, above the built-in blocks. |
-| `floor_open` | the same | Migrated: the ranges you had opened are not seeded as blocks, so they stay open. |
+| `hard_deny` | `policy.yaml`, a policy sent to the API, an imported or restored policy | Migrated: each range becomes a `deny` rule below your rules, above the built-in blocks. <!-- TODO(0019-amend) --> |
+| `floor_open` | the same | Migrated: the ranges you had opened are not seeded as blocks, so they stay open. <!-- TODO(0019-amend) --> |
 | `rules` without `seeded` | the same | A policy from before the ordered list: migrated as described in [operations](operations.md#upgrade-to-the-ordered-rule-list). |
 
 `python -m egressgw.convert <gateway.yaml>` prints your gateway config without the old keys (it writes

@@ -19,10 +19,10 @@ decision in full; this is the short form.
 
 Two properties of the list are worth knowing before anything else:
 
-- **The local network is closed by rules, not by a special mechanism.** To let the agent reach one device,
+- **The local network is closed by rules, not by a special mechanism.** To let the agent reach one device, <!-- TODO(0019-amend) -->
   add an allow rule for its address above the block, or define a grant for it. To close it again, delete the
   rule. Deleting a built-in block itself is possible and lowers the protection for that whole range.
-- **A rule for a name never opens a blocked range.** If an allowed name resolves to an address inside a
+- **A rule for a name never opens a blocked range.** If an allowed name resolves to an address inside a <!-- TODO(0019-amend) -->
   blocked range, the connection is denied and the log says why. Only a rule (or a grant target) that names
   the address opens it. [Why](rules.md#why-a-name-rule-cannot-open-a-blocked-range).
 
@@ -67,7 +67,7 @@ edit), and it makes the UI login the protection of your local network. The
    keep. That gives you a rule set in minutes instead of a prompt at a time.
 3. **Use shortcuts** (*Quick settings*) for whole tool ecosystems (Python, Node.js, Go, …) or to open the web
    for 15 minutes.
-4. **Define a grant** for each device or sensitive service the agent should reach on request, or add an allow
+4. **Define a grant** for each device or sensitive service the agent should reach on request, or add an allow <!-- TODO(0019-amend) -->
    rule for its address when it may always reach it.
 5. **Look at the *Destinations* table** now and then, and remove what is no longer used (*Overview → Rule
    usage* lists rules that never matched). *Test a destination* shows what decides for one host and port.

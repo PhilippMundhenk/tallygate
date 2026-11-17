@@ -419,8 +419,8 @@ earlier entry ends with *Replaced in this release*. The state you get:
    `--print-hash`), or remove it to use the stored password.
 4. **Static config:** if you changed `config/gateway.yaml`, mount it as described in
    [docs/operations.md](docs/operations.md#with-docker-compose-recommended).
-5. **Behaviour changes to check:** CIDR `allow` rules cover IP literals only (#10; replaced in this release,
-   see step 8: an address `allow` covers names that resolve into it again); UI grants with `inject` or
+5. **Behaviour changes to check:** CIDR `allow` rules cover IP literals only (#10; for how address rules and
+   names relate in this release see step 8 <!-- TODO(0019-amend) -->); UI grants with `inject` or
    `tls_verify: false` are ignored, so move them to the config file (#12); the Hugging Face and registry
    hosts are read-only (#58).
 6. **UI address:** the UI is now published on all interfaces (`0.0.0.0:8080`). With a reverse proxy on the

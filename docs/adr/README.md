@@ -15,7 +15,7 @@ Format: [MADR](https://adr.github.io/madr/)-style, one decision per file. Status
 | [0008](0008-approvals-as-rules-with-ttl.md) | Approvals are rules with TTL; hold connections while asking | Accepted |
 | [0009](0009-web-console-via-ttyd-and-tmux.md) | Web consoles via ttyd + tmux, relayed by control | Accepted (revised) |
 | [0010](0010-notifications-via-outbound-polling-bots.md) | Notifications via outbound-polling Telegram/Matrix bots | Accepted |
-| [0011](0011-decide-on-names-before-resolving.md) | Decide on names before resolving them | Accepted; amended by 0019 (only where no address can change the result) |
+| [0011](0011-decide-on-names-before-resolving.md) | Decide on names before resolving them | Accepted; phase 2 amended by 0019 (the rule list instead of the hard deny) |
 | [0012](0012-grants-for-scoped-temporary-access.md) | Grants for scoped, temporary access | Accepted; the LAN exemption amended by 0019 |
 | [0013](0013-sni-and-host-bound-to-the-checked-name.md) | TLS SNI and HTTP Host are bound to the checked name | Accepted |
 | [0014](0014-one-destination-model.md) | One destination model and one evaluation path | Accepted; §3 (never-reachable list), the `lan` part of §4 and the order of evaluation superseded by 0019 |

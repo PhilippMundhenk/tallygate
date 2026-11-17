@@ -387,6 +387,10 @@ decides: [rules.md](rules.md); the release that brought it: [CHANGELOG](../CHANG
 gateway's data volume are migrated **once, at the first start** of a gateway with that model. Nothing has to
 be done before the upgrade, and an unattended image update works.
 
+<!-- TODO(0019-amend): the migration is being changed (blocks that were in force are seeded ABOVE old CIDR
+allow/ask rules that overlap them; pre-0019 grants with a local fixed target and no `lan` flag stay inactive
+until re-saved). Rewrite the table and check 1 and 2 below against the pushed code. -->
+
 What the gateway does:
 
 | File | Change | Backup |
@@ -406,10 +410,9 @@ What the gateway does:
 What to check afterwards:
 
 1. **Address `allow` rules.** An `allow` (or `ask`) rule for an address inside a blocked range did nothing
-   before and decides now, and an address `allow` now also covers names that resolve into it. The migration
-   lists each such rule (`policy migration: NOTE rule … had no effect inside the blocked range …; it now
-   decides for these addresses`). Delete the ones you do not want.
-2. **Grants for local devices.** A target with an IP or a fixed address keeps working. A target that is only
+   before. The migration log names each such rule (`policy migration: …`); read those lines and delete the
+   rules you do not want. <!-- TODO(0019-amend) -->
+2. **Grants for local devices.** A target with an IP or a fixed address keeps working. A target that is only <!-- TODO(0019-amend) -->
    a name (`ha.lan`) no longer reaches a blocked range; the log names each one (`` `lan` is ignored now, and
    a target that is only a name cannot open a blocked range ``). Set its fixed address
    ([grants.md](grants.md#local-targets-and-name-only-targets)).

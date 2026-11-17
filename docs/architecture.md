@@ -99,7 +99,7 @@ Key properties:
 | Agent cannot run code in the UI | Control serves the console page and its xterm.js client itself and relays only the ttyd WebSocket, filtered (browser → input/resize, agent → terminal output). No agent-supplied HTML/JS is ever served on the UI origin; strict CSP everywhere. |
 | Agent cannot reach the stack itself via the gateway | The stack's own networks (`GW_INTERNAL_NETS`) and the gateway's own listeners are **locked**: denied before the rule list, for every literal and resolved address, whatever a rule or grant says ([rules.md](rules.md#locked-ranges)). |
 | Agent cannot reach the LAN or host via the gateway, by default | The built-in blocks: `deny` rules for RFC1918, loopback, link-local, CGNAT, ULA etc. at the bottom of the rule list, checked on every **resolved** IP; Docker's own subnets (172.16/12) are included. A rule for a name never opens them; the operator can open an address with a rule that names it ([rules.md](rules.md#built-in-blocks)). |
-| No DNS exfiltration | The agent's resolver is the gateway, which answers NXDOMAIN to everything. The gateway resolves a name only **after** the policy (or a human) allowed it, so denied or pending names never reach a resolver, except where an address `allow` rule for the port could still allow one of the name's addresses ([rules.md](rules.md#when-a-name-is-resolved)). |
+| No DNS exfiltration | The agent's resolver is the gateway, which answers NXDOMAIN to everything. The gateway resolves a name only **after** the policy (or a human) allowed it, so denied or pending names never reach a resolver ([ADR-0011](adr/0011-decide-on-names-before-resolving.md)). |
 | No IPv6 side door | `enable_ipv6: false` on all networks and IPv6 disabled by sysctl in every container (no link-local `fe80::`); IPv6 targets are decided by the same rule list (IPv6 built-in blocks, IPv4-mapped addresses normalised). |
 
 Why topology instead of iptables: [ADR-0001](adr/0001-network-topology-instead-of-iptables.md).
@@ -219,18 +219,18 @@ operator's view and worked examples, is [rules.md](rules.md); this is how the ga
 2. **Active grant.** If an active grant carries the destination, it decides, as rules at the top of the
    list for its targets ([Grants](#grants)).
 3. **Name-first decision** (no DNS yet, [ADR-0011](adr/0011-decide-on-names-before-resolving.md)): the first
-   name rule that matches, else the default. The result is acted on without a lookup only where no address
-   can change it: a `deny` when no address `allow`/`ask` rule for the port stands above what decided, an
-   `ask` when no address `allow` rule for the port does. Then `deny` → refuse without resolving; `ask` → hold
-   and ask the human first. An `allow` is never final here.
+   name rule that matches, else the default. `deny` → refuse without resolving; `ask` → hold and ask the
+   human first. An `allow` is never final here. <!-- TODO(0019-amend) -->
 4. **Resolve** the name (IP literals skip 3–4).
 5. **For each address** (the literal, or every resolved one):
    1. **Locked ranges** (`GW_INTERNAL_NETS`, the gateway's own listeners): deny, before the list and
       whatever it says. They are not rules and not part of the stored policy.
-   2. **Walk the list.** An **address rule** (IP or CIDR) that contains the address is final. A **name rule**
-      that matches with `deny` is final; with `allow`/`ask` it is provisional: the walk continues and only an
-      address `deny` rule below it still counts. If one contains the address, the result is `deny`, with a
-      reason that names both rules. Rules whose port does not match or whose time is up are skipped.
+   2. **The address rules.** For an IP-literal destination the list is walked from the top and the first
+      matching address rule decides. For a name, an address `deny` rule that contains the address blocks the
+      connection whatever the name rule said, with a reason that names both rules; a name rule never opens a
+      blocked range. Rules whose port does not match or whose time is up are skipped.
+      <!-- TODO(0019-amend): how name rules and address rules combine for a name is being changed; rewrite
+      this step against the amended ADR-0019 and policy.py -->
    3. Nothing matched: the **default** (`allow`, `deny` or `ask`).
 6. **The most restrictive result over all addresses wins** (`deny` > `ask` > `allow`). On `ask` the human is
    asked; the approval adds a rule at the top and the list is walked again for these addresses, so an
@@ -262,7 +262,7 @@ Rule matching:
 | Field | Semantics |
 |---|---|
 | `host` | A **name rule**. Case-insensitive glob. `*.example.com` matches `example.com` **and** all subdomains. `*` matches everything, IP literals included. |
-| `cidr` | An **address rule**. Matches when the address being checked is inside the range, whether the destination was an IP literal or a name that resolves there. |
+| `cidr` | An **address rule**. Matches when the address being checked is inside the range. <!-- TODO(0019-amend): what it means for a destination given by name --> |
 | `port` | `443`, `[80, 443]`, `"8000-8100"` or `*` (default). |
 | `expires` | Unix timestamp; omitted = permanent. |
 
