@@ -39,10 +39,37 @@
 > | M3 | Grant targets with a fixed address skip every `deny` rule, including the blocks for loopback, cloud metadata and the `never` entries of the gateway config; targets that were inert before go live on upgrade. | **Partly.** The upgrade names each such target in the container log and in the migration event. The rest is the ADR's decision and a documented residual risk (threat model T30, residual risks). |
 > | L1 | One click on *Allow* in the log opened a blocked local address. | **Fixed.** Allowing an address from the log takes a confirming second click. |
 > | L2 | A rule's `source` was not validated and was kept when the action changed. | **Fixed.** `source` is validated; a seeded block whose action is changed becomes `user`. |
-> | L3 | Built-in blocks could vanish through `PUT /policy`, import or restore without a record. | **Fixed.** The admin event and the import preview list the blocks that are not in force. |
-> | L4 | The hint on a name rule stopped by a blocked range steered towards opening the address. | **Fixed.** It leads with the DNS-rebinding warning. |
+> | L3 | Built-in blocks could vanish through `PUT /policy`, import or restore without a record. | **Fixed.** The admin event and the import preview list the blocks that are not in force. (Blocks that are present but outranked by an address rule: F2 in the next note.) |
+> | L4 | The hint on a name rule stopped by a blocked range steered towards opening the address. | **Fixed** in the UI: it leads with the DNS-rebinding warning. (The reason text in the log and to the agent: F4 in the next note.) |
 > | L5 | A time limit on a seeded block deleted the block for good when it ran out. | **Fixed.** A time limit on a seeded block is refused. |
 > | L6 | The locked ranges depend on the environment. | **Partly.** An empty `GW_INTERNAL_NETS` is logged as a warning, and NAT64, 6to4 and IPv4-compatible forms of a locked address are matched. Not done: the gateway does not refuse to start, and its own interface addresses are not added. |
+>
+> **Note, 2026-11-17: review of the amendment (the second review of ADR-0019, PR #211 as merged).** The two checks, the decision
+> before DNS, the migration and the locked ranges held everywhere they were attacked (differential runs
+> against the old evaluator: no destination decided less restrictively). One regression of high severity
+> was found, the rest is low or informational:
+>
+> | Finding | Problem | Outcome |
+> |---|---|---|
+> | F1 (high) | An IPv4 address with a trailing dot (`192.168.1.1.`, `169.254.169.254.`) is not an IP literal for the proxy, so it was asked about as a name. The approval became an address `allow` at the top of the list, above the built-in blocks, and the agent then reached the address by its plain literal. In away mode *Allow for 1 h* in the digest did the same with one click. Learning mode let the dotted form of a public address through. | **Fixed.** A host whose last label is a number (decimal or `0x…`: also `127.1`, `2130706433`, `0x7f.1`) is refused as an invalid host name: never asked about, never resolved, not covered by learning mode. An approval whose rule would be an allow for an address inside a blocked range is refused (`400`), whatever led to the request. *Allow for 1 h* in the digest takes a second click for an address. Tests: `test_gw_second_review.py`, e2e `test_ip_as_name.py`. |
+> | F2 (low) | Replacing the whole policy recorded the blocks that are missing, but not the blocks that an address `allow` above them outranks. | **Fixed.** The admin event of `PUT /policy`, restore and import, and the import preview, name the address rules that are open inside blocked ranges; the gateway logs them at every start and at every replacement. |
+> | F3 (low) | `expires: NaN` in `PUT /policy` answered `400` while the new policy was in force, not saved and not recorded; the rule never ended and every later save failed. | **Fixed for the cause found:** `expires` must be a finite number and `host` a string, checked before anything is adopted. **Unchanged:** `PUT /policy`, restore and import still put the new policy in force before they save it, so a save that fails for another reason (a full disk) leaves it in force without a version until the next restart. Accepted; in the threat model under T38. |
+> | F4 (low) | The fix for L4 changed the UI, but the reason in the log and in the error the agent gets still ended with the advice how to open the range. | **Fixed.** The reason ends `a name rule cannot open a blocked range`; the way out is explained in the UI and in [rules.md](rules.md#why-a-name-rule-cannot-open-a-blocked-range). |
+> | F5 (low) | The locked ranges recognised three IPv6 encodings of an IPv4 address (L6). | **Two more forms:** the local-use NAT64 prefix `64:ff9b:1::/48` and IPv4-translated addresses (`::ffff:0:a.b.c.d`). **Documented as a limit:** ISATAP, Teredo and a NAT64 prefix of the operator's own are not recognised (threat model T46). |
+> | F6 (low) | A block that was edited and edited back to `deny` is a rule of the operator (`source: user`): it could be offered as unused and deleted in bulk, it accepts a time limit, and the `allow_private` exception no longer skips it. | **Partly.** No address `deny` is ever offered as unused, so *remove unused rules* cannot delete such a block. **Unchanged, by decision:** it stays a rule of the operator, accepts `expires`, and the service-port exception does not skip it ([rules.md](rules.md#built-in-blocks)). |
+>
+> Informational items and what became of them:
+>
+> | Item | Outcome |
+> |---|---|
+> | An installation that ran a build of #208 from before the amendment keeps the state of H1 (old address rules above the seeded blocks) and is not migrated again; a `never` entry added to the gateway config later is seeded below address rules that were there before. | **Reported, not changed:** the gateway now logs `policy: open inside blocked ranges: …` at every start (F2), which names such rules. No re-migration. |
+> | A rule range written as IPv4-mapped IPv6 (`::ffff:198.51.100.0/120`) is accepted and never matches. | **Accepted, documented** ([rules.md](rules.md#ip-addresses-and-ranges)). The built-in list itself contains `::ffff:0:0/96`, so refusing the form would refuse the seeded rules. |
+> | `Rule.validate` did not check the type of `host`. | **Fixed** with F3 for policy documents. A single rule posted with a non-string host is refused before a rule is built, with an internal error instead of a `400`; nothing is stored. |
+> | Rule ids are not restricted to a character set. | **Accepted.** The UI escapes them wherever they are shown; an id is chosen by the operator or the API token, not by the agent. |
+> | A `deny` rule may carry `source: builtin` or `config` for any range. | **Accepted.** It is a deny and operator-only. |
+> | A `PUT /policy` without `seeded` built from a current `GET` is migrated again (denies move to the top, blocks are seeded a second time). | **Accepted.** Stricter, not looser; send what `GET /policy` returned, with `seeded`. |
+> | With `allow_private` and the default `ask`, approving the prompt for a service target's address adds an address rule that also applies on the proxy and SOCKS ports. | **Accepted**, as for every approved address. |
+> | `CONNECT` to port 0 matches rules for every port. | **Accepted.** The connection itself fails. |
 
 Severity scale: **Critical**: the agent gains control of the operator plane or fully escapes the policy.
 **High**: a security boundary is bypassed or weakened in a realistic setup. **Medium**: an exploitable

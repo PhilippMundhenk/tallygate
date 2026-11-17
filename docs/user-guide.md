@@ -58,7 +58,8 @@ show only unused or only matched rules.
   for `log_keep_days`.
 - **Unused rules**: permanent rules that did not match anything for `rule_stale_days` (30) days, counted from
   when the gateway first saw the rule. Rules with a time limit are never offered, they end by themselves, and
-  neither are the built-in and config blocks: a block that never matched is doing its job. Tick the ones to
+  neither are the built-in and config blocks or any other `deny` rule for an address or range: a block that
+  never matched is doing its job. Tick the ones to
   remove and click *Delete selected rules*; the gateway checks again that each one is still unused, and the
   policy history keeps them in case you need one back.
 
@@ -104,7 +105,8 @@ approval, so IPs show as "not resolved yet". A name you approve can still be ref
 name adds a rule for the name, and a rule for a name never opens a blocked range (the local network, the
 host, metadata…). The log then says which address and which range
 ([why, and what to do](rules.md#why-a-name-rule-cannot-open-a-blocked-range)). An IP address inside a blocked
-range is denied without a prompt. At most `max_pending` (10) requests wait at once; further unknown
+range is denied without a prompt, and so is an IP address written like a name (`192.168.1.1.`, `127.1`): no
+answer to a prompt opens a blocked range ([details](rules.md#order-of-the-list)). At most `max_pending` (10) requests wait at once; further unknown
 destinations are denied immediately until you have answered.
 
 ### Keyboard shortcuts, compact list and sound
@@ -142,7 +144,8 @@ should not buzz at night. The **Availability** card at the end of **Approvals** 
 
 Nothing is ever allowed automatically because you are away: away mode only turns *ask* into *deny*. Rules
 that allow a destination keep working, and grants with `approval: auto` are still granted (and logged).
-What was refused is listed under **Refused while you were away**, with *Allow 1 h* per destination, and sent
+What was refused is listed under **Refused while you were away**, with *Allow for 1 h* per destination (for an
+IP address it takes a second click, because the rule is added at the top and opens the address), and sent
 as one **digest** to Telegram/Matrix: when quiet hours end, when you are back, and while away every
 `digest_minutes` (30). *Dismiss list* clears the list. The header shows *away* or *quiet hours* on every tab.
 The agent sees the state in `tallygate grants`.

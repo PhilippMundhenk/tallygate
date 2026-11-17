@@ -1026,3 +1026,18 @@ def test_policy_documents_are_strict():
         "default": "ask", "ask_timeout": 60, "seeded": ["10.0.0.0/8"],
         "rules": [{"id": "a", "action": "deny", "cidr": "10.0.0.0/8"}],
     }  # fmt: skip
+
+
+def test_a_name_deny_that_matches_an_ip_literal_as_text_is_final_above_the_address_rule():
+    """docs/rules.md, "Name rules and address rules": a host pattern is compared with the destination as text,
+    so `*` or `8.8.*` also matches an IP literal. An `allow`/`ask` is provisional; a `deny` above the first
+    address rule that contains the address is final, below it it is never reached."""
+    dev = allow("dev", cidr="8.8.8.8/32")
+    for pattern in ("*", "8.8.*", "8.8.8.8"):
+        above = policy([deny("no", host=pattern), dev]).evaluate("8.8.8.8", 443, [])
+        assert (above.action, above.rule_id) == ("deny", "no"), pattern
+        below = policy([dev, deny("no", host=pattern)]).evaluate("8.8.8.8", 443, [])
+        assert (below.action, below.rule_id) == ("allow", "dev"), pattern
+    # a pattern that does not match the literal is not involved, and a name is decided by its name rules
+    assert policy([deny("no", host="9.9.*"), dev]).evaluate("8.8.8.8", 443, []).rule_id == "dev"
+    assert policy([dev, deny("no", host="8.8.*")]).evaluate("x.example", 443, ["8.8.8.8"]).reason == "default"

@@ -155,6 +155,27 @@ and importing an old export record the same notes.
   before the upgrade without `lan` was refused and now works while its grant is active; the migration log
   names each one.
 
+**2026-11-17, second review** (of this amendment; findings in
+[security-review.md](../security-review.md)). Decided:
+
+- A host whose last label is a number (`192.168.1.1.`, `127.1`, `2130706433`, `0x7f.1`) is an IP address in
+  another spelling, not a name: it is refused as an invalid host name, never asked about and never resolved.
+- An approval is never the rule that opens a blocked range: an allowing answer for an IP address that an
+  address `deny` rule blocks is refused. Opening such an address takes a rule added on *Destinations*.
+- Replacing the whole policy also records which address rules stand above a block and are open inside it,
+  and the gateway logs them at every start. A policy that ran a build from before this amendment is not
+  migrated again.
+- The reason for a name stopped by a blocked range ends `a name rule cannot open a blocked range`. The
+  advice quoted under "Why a name rule cannot open a blocked range" is no longer part of it: the agent
+  reads the reason too.
+- `expires` is a finite number. A replacement is still put in force before it is saved.
+- The locked ranges also recognise `64:ff9b:1::/48` and IPv4-translated addresses (`::ffff:0:a.b.c.d`);
+  ISATAP, Teredo and a NAT64 prefix of the operator's own are not recognised.
+- A seeded block that was edited stays a rule of the operator when it is edited back (`source: user`, takes
+  a time limit, not skipped by the service-port exception). No address `deny` is offered as unused.
+- A rule range written as IPv4-mapped IPv6 is accepted and never matches; rule ids are not restricted to a
+  character set.
+
 ## Changelog
 
 - 2026-11-15: accepted.

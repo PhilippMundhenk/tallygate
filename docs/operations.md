@@ -421,9 +421,16 @@ What to check afterwards:
    and the migration entry in the Log name each one (`NOTE grant …: target … names the address … inside blocked range …. It was
    refused before; now it is reachable while the grant is active`, with `approval for … is automatic` where
    that applies). Delete the target, or the grant, if that is not wanted.
-3. **The table.** *Destinations* shows the list in the order it is checked; the line under it counts the
+3. **Address rules that are open inside a blocked range.** At every start the gateway logs the address
+   `allow` and `ask` rules that stand above a built-in or config block and reach into it
+   (`docker compose logs egress-gw | grep "open inside blocked ranges"`): `policy: open inside blocked
+   ranges: 192.168.44.1/32 (allow rule 3f9a1c2e)`. Rules you added for a device belong there. A rule you
+   do not recognise does not: this is also how an installation shows that ran a pre-release build of the
+   rule list, whose migration put old address rules above the blocks, and a `never` entry added to
+   `gateway.yaml` after such a rule existed. Delete the rule, or move the block above it.
+4. **The table.** *Destinations* shows the list in the order it is checked; the line under it counts the
    built-in and config blocks. *Test a destination* shows what decides for one host and port.
-4. **`gateway.yaml`**: delete `grants_lan_allow`, rename `hard_deny_floor` / `grants_never` to `never`.
+5. **`gateway.yaml`**: delete `grants_lan_allow`, rename `hard_deny_floor` / `grants_never` to `never`.
 
 **Going back to the older release:** the older gateway refuses the migrated `policy.yaml` (it stops at the
 key `seeded`), so put the backups back before you start it. Changes made after the migration are lost.
