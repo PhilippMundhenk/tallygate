@@ -79,13 +79,18 @@ def test_first_match_and_default():
     assert p.evaluate("example.org", 443, ["1.2.3.4"]).reason == "default"
 
 
-def test_an_address_rule_applies_to_every_destination_that_has_the_address():
-    # ADR-0019 (supersedes the rule of #10): an address rule decides for the address, however it was named
+def test_an_address_allow_is_for_the_ip_literal_and_an_address_deny_for_every_destination():
+    # ADR-0019, amendment (the rule of #10 again): an address allow decides for the IP literal; it never lets a
+    # name through by itself. An address deny blocks the address, however it was named.
     p = Policy.from_dict({"default": "deny", "rules": [{"id": "c", "action": "allow", "cidr": "140.82.112.0/20"}]})
     assert p.evaluate("140.82.112.3", 443, ["140.82.112.3"]).action == "allow"
     assert p.evaluate("8.8.8.8", 443, ["8.8.8.8"]).action == "deny"
-    assert p.evaluate("github.com", 443, ["140.82.112.3"]).action == "allow"
-    assert p.evaluate("github.com", 443, ["140.82.112.3", "8.8.8.8"]).action == "deny"  # every address must pass
+    d = p.evaluate("github.com", 443, ["140.82.112.3"])
+    assert (d.action, d.reason) == ("deny", "default")  # the name is not allowed: the mode decides
+    p.add_rule(Rule(action="allow", host="github.com", id="n"), top=False)
+    assert p.evaluate("github.com", 443, ["140.82.112.3"]).rule_id == "n"  # allowed by its name
+    p.add_rule(Rule(action="deny", cidr="8.8.8.0/24", id="blk"), top=False)
+    assert p.evaluate("github.com", 443, ["140.82.112.3", "8.8.8.8"]).rule_id == "blk"  # every address must pass
     p = Policy.from_dict({"default": "allow", "rules": [{"id": "d", "action": "deny", "cidr": "140.82.112.0/20"}]})
     assert p.evaluate("github.com", 443, ["8.8.8.8", "140.82.112.3"]).action == "deny"  # CIDR deny: any IP
 
@@ -288,13 +293,15 @@ def test_name_first_evaluation():
     assert p.evaluate_name("new.example", 443).action == "ask" and p.evaluate_name("new.example", 443).early
     p.add_rule(Rule(action="deny", cidr="1.2.3.0/24"), top=True)
     assert p.evaluate_name("x.evil.example", 443).early  # an address deny doesn't force a lookup
-    # An approved IP literal is an address allow for its port: a name that resolves to it is allowed by it,
-    # so names on THAT port can no longer be decided before they are resolved (the price of ADR-0019; #10)
+    # An approved IP literal is an address allow for its port. It approves that literal, not the names that
+    # resolve to it, so names on that port are still decided before they are resolved (ADR-0019 amendment; #10)
     p.add_rule(rule_for_approval("140.82.112.3", 443, "always"), top=True)
     assert p.evaluate("140.82.112.3", 443, ["140.82.112.3"]).action == "allow"
-    assert p.evaluate("new.example", 443, ["140.82.112.3"]).action == "allow"
-    assert not p.evaluate_name("new.example", 443).early and not p.evaluate_name("x.evil.example", 443).early
-    assert p.evaluate_name("new.example", 8443).early and p.evaluate_name("x.evil.example", 8443).early
+    assert p.evaluate("new.example", 443, ["140.82.112.3"]).action == "ask"
+    assert p.evaluate("x.evil.example", 443, ["140.82.112.3"]).rule_id == "d"
+    assert p.evaluate_name("new.example", 443).early and p.evaluate_name("x.evil.example", 443).early
+    assert not p.evaluate_name("ok.example", 443).early  # only an allow waits for the addresses
+    assert p.evaluate("ok.example", 443, ["140.82.112.3"]).rule_id == "a"
 
 
 def test_secret_values_reject_control_characters(tmp_path):

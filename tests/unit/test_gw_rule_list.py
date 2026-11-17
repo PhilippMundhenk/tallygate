@@ -63,14 +63,28 @@ CASES = [
     # --- an address allow above a range block opens that address, and only that
     ("address allow opens one host", [allow("dev", cidr="192.168.1.10/32", port=8123)], "ask",
      "192.168.1.10", 8123, ["192.168.1.10"], "allow", "dev"),
-    ("... also when it is reached by a name", [allow("dev", cidr="192.168.1.10/32", port=8123)], "ask",
-     "ha.lan", 8123, ["192.168.1.10"], "allow", "dev"),
+    ("... for a name that is allowed by name", [allow("dev", cidr="192.168.1.10/32", port=8123), allow("n", host="ha.lan")], "ask",
+     "ha.lan", 8123, ["192.168.1.10"], "allow", "n"),
+    ("... wherever the name rule stands", [allow("n", host="ha.lan"), allow("dev", cidr="192.168.1.10/32", port=8123)], "ask",
+     "ha.lan", 8123, ["192.168.1.10"], "allow", "n"),
+    ("... but it lets no name through by itself: the default decides", [allow("dev", cidr="192.168.1.10/32", port=8123)], "ask",
+     "ha.lan", 8123, ["192.168.1.10"], "ask", None),
+    ("... nor in deny mode", [allow("dev", cidr="192.168.1.10/32", port=8123)], "deny",
+     "ha.lan", 8123, ["192.168.1.10"], "deny", None),
+    ("... nor a public address (another site on a shared address, ADR-0013)", [allow("a", cidr=PUBLIC + "/32")], "ask",
+     "other.example", 443, [PUBLIC], "ask", None),
     ("... but not on another port", [allow("dev", cidr="192.168.1.10/32", port=8123)], "ask",
      "192.168.1.10", 22, ["192.168.1.10"], "deny", LAN16),
     ("... and not its neighbour", [allow("dev", cidr="192.168.1.10/32", port=8123)], "ask",
      "192.168.1.11", 8123, ["192.168.1.11"], "deny", LAN16),
     ("an address ask is final too", [ask("dev", cidr="192.168.1.10/32")], "deny",
      "192.168.1.10", 80, ["192.168.1.10"], "ask", "dev"),
+    ("... for the literal only: for a name it is skipped and the block below it stands", [ask("dev", cidr="192.168.1.10/32"), allow("n", host="ha.lan")], "ask",
+     "ha.lan", 80, ["192.168.1.10"], "deny", LAN16),
+    ("... and it turns no allowed name into a question", [ask("q", cidr=PUBLIC + "/32"), allow("n", host="x.example")], "deny",
+     "x.example", 443, [PUBLIC], "allow", "n"),
+    ("... and no unknown name either: the default decides", [ask("q", cidr=PUBLIC + "/32")], "deny",
+     "x.example", 443, [PUBLIC], "deny", None),
     # --- three layers: a block above the allow closes part of it again
     ("layer 1: the block on top wins", [deny("cam", cidr="192.168.1.10/32"), allow("lan", cidr="192.168.1.0/24")], "ask",
      "192.168.1.10", 80, ["192.168.1.10"], "deny", "cam"),
@@ -107,12 +121,18 @@ CASES = [
      "mixed.example", 443, [PUBLIC, PUBLIC2], "ask", None),
     ("ask and deny: deny", [ask("a", cidr=PUBLIC + "/32"), deny("b", cidr=PUBLIC2 + "/32")], "allow",
      "mixed.example", 443, [PUBLIC, PUBLIC2], "deny", "b"),
-    # --- name rules: deny is final, allow is not above an address rule
+    # --- name rules: deny is final wherever it stands, allow never opens a blocked address
     ("name deny is final", [deny("bad", host="*.evil.example"), allow("a", cidr=PUBLIC + "/32")], "allow",
      "x.evil.example", 443, [PUBLIC], "deny", "bad"),
-    ("an address allow above a name deny is the first match", [allow("a", cidr=PUBLIC + "/32"), deny("bad", host="*.evil.example")], "deny",
-     "x.evil.example", 443, [PUBLIC], "allow", "a"),
-    ("an address deny above a name allow is the first match", [deny("b", cidr=PUBLIC + "/32"), allow("n", host="ok.example")], "allow",
+    ("a name deny below an address allow wins too", [allow("a", cidr=PUBLIC + "/32"), deny("bad", host="*.evil.example")], "allow",
+     "x.evil.example", 443, [PUBLIC], "deny", "bad"),
+    ("a name ask below an address allow stays a question", [allow("a", cidr=PUBLIC + "/32"), ask("q", host="q.example")], "allow",
+     "q.example", 443, [PUBLIC], "ask", "q"),
+    ("an address deny above a name allow blocks the address", [deny("b", cidr=PUBLIC + "/32"), allow("n", host="ok.example")], "allow",
+     "ok.example", 443, [PUBLIC], "deny", "b"),
+    ("the first address rule decides whether the address is open: allow above deny", [allow("n", host="ok.example"), allow("a", cidr=PUBLIC + "/32"), deny("b", cidr="93.184.0.0/16")], "ask",
+     "ok.example", 443, [PUBLIC], "allow", "n"),
+    ("... deny above allow", [allow("n", host="ok.example"), deny("b", cidr="93.184.0.0/16"), allow("a", cidr=PUBLIC + "/32")], "ask",
      "ok.example", 443, [PUBLIC], "deny", "b"),
     ("the first matching name rule decides among names", [deny("bad", host="bad.github.com"), allow("gh", host="*.github.com", port=443)], "deny",
      "bad.github.com", 443, [PUBLIC2], "deny", "bad"),
@@ -164,7 +184,7 @@ def test_a_shadowed_name_rule_says_so_and_how_to_fix_it():
     # the way out the reason names: an allow for the address, added at the top like every new rule
     p.add_rule(Rule(action="allow", cidr="192.168.1.10/32", id="dev"))
     d = p.evaluate("nas.example", 443, ["192.168.1.10"])
-    assert (d.action, d.rule_id, d.shadow) == ("allow", "dev", None)
+    assert (d.action, d.rule_id, d.shadow) == ("allow", "n", None)  # the address is open, the name rule decides
     # an ask rule is "matched", an IP literal has "the address"
     d = policy([ask("n", host="nas.example")]).evaluate("nas.example", 443, ["192.168.1.10"])
     assert d.reason.startswith("name matched by rule n, but it resolves to 192.168.1.10, inside blocked range")
@@ -172,26 +192,60 @@ def test_a_shadowed_name_rule_says_so_and_how_to_fix_it():
     assert d.reason.startswith("name allowed by rule any, but the address 192.168.1.1 is inside blocked range")
     # nothing is shadowed when a rule simply decides
     assert policy([allow("n", host="nas.example")]).evaluate("nas.example", 443, [PUBLIC]).shadow is None
-    assert policy().evaluate("x.example", 443, ["192.168.1.10"]).shadow is None  # no name rule: just the block
+    # no name rule: just the block, and the reason names the address that led into it
+    d = policy().evaluate("x.example", 443, ["192.168.1.10"])
+    assert (d.rule_id, d.shadow) == (LAN16, None)
+    assert d.reason == f"resolves to 192.168.1.10, inside blocked range 192.168.0.0/16 (rule {LAN16} (built-in block))"
 
 
-def test_below_a_name_rule_only_an_address_deny_counts():
-    """The ADR's wording, literally: below a provisional name rule the walk looks only at address `deny`
-    rules. An allow for the address that stands BELOW the name rule does not help - and the reason says to
-    move it, instead of telling the operator to add what is already there."""
+def test_for_a_name_the_position_of_the_name_rule_among_address_rules_does_not_matter():
+    """ADR-0019, amendment: the order among the name rules decides the name, the order among the address rules
+    decides whether an address is open. An allow for the address BELOW the name rule opens it just the same,
+    so there is nothing to move (the old "stands below rule n: move it above" hint is gone)."""
     rules = [allow("n", host="nas.example"), allow("dev", cidr="192.168.1.10/32")]
-    d = policy(rules).evaluate("nas.example", 443, ["192.168.1.10"])
-    assert d.action == "deny" and d.rule_id == LAN16 and d.shadow["rule"] == "n"
-    assert d.reason.endswith("the allow for the address (rule dev) stands below rule n: move it above")
-    # by IP literal the same list allows the address (the name rule does not match a literal)
-    assert policy(rules).evaluate("192.168.1.10", 443, ["192.168.1.10"]).rule_id == "dev"
-    # moved above the name rule it is the first match for the name's address too
-    p = policy(rules)
-    assert p.move_rule("dev", "n")
-    assert p.evaluate("nas.example", 443, ["192.168.1.10"]).rule_id == "dev"
-    # an address ask below the name rule does not turn an allowed name into a question either
+    for order in (rules, rules[::-1]):
+        d = policy(order).evaluate("nas.example", 443, ["192.168.1.10"])
+        assert (d.action, d.rule_id, d.shadow) == ("allow", "n", None), order
+        assert "move it above" not in d.reason
+        # by IP literal the same list allows the address by its own rule (the name rule does not match a literal)
+        assert policy(order).evaluate("192.168.1.10", 443, ["192.168.1.10"]).rule_id == "dev"
+        # the allow is for one address: the name's other address is still inside the block
+        d = policy(order).evaluate("nas.example", 443, ["192.168.1.10", "192.168.1.11"])
+        assert (d.action, d.rule_id, d.shadow["rule"]) == ("deny", LAN16, "n")
+        assert d.reason.endswith("add an allow for the address above that rule")
+    # the address rule must stand above the BLOCK, as for a literal: below it, it opens nothing
+    p = policy([allow("n", host="nas.example")])
+    p.rules.append(Rule(action="allow", cidr="192.168.1.10/32", id="low"))
+    assert p.evaluate("nas.example", 443, ["192.168.1.10"]).rule_id == LAN16
+    # an address ask is a question about an IP literal: above the block it opens nothing for a name ...
+    for order in ([allow("n", host="nas.example"), ask("q", cidr="192.168.1.10/32")],
+                  [ask("q", cidr="192.168.1.10/32"), allow("n", host="nas.example")]):  # fmt: skip
+        d = policy(order).evaluate("nas.example", 443, ["192.168.1.10"])
+        assert (d.action, d.rule_id, d.shadow["rule"]) == ("deny", LAN16, "n"), order
+        assert policy(order).evaluate("192.168.1.10", 443, []).rule_id == "q"  # ... the literal is asked about
+    # ... and it does not turn an allowed name into a question
     d = policy([allow("n", host="x.example"), ask("q", cidr=PUBLIC + "/32")]).evaluate("x.example", 443, [PUBLIC])
     assert (d.action, d.rule_id) == ("allow", "n")
+
+
+def test_an_address_allow_never_lets_a_name_through_by_itself():
+    """ADR-0013, restored by the amendment: an approved address is not an approval of every name that resolves
+    to it. The name is decided by the name rules or the default; the address allow only keeps the address open."""
+    for default in ("ask", "deny", "allow"):
+        p = policy([allow("ip", cidr=PUBLIC + "/32", port=443)], default)
+        assert p.evaluate(PUBLIC, 443, []).rule_id == "ip"  # the literal it was approved for
+        d = p.evaluate("other-site.example", 443, [PUBLIC])
+        assert (d.action, d.rule_id, d.reason) == (default, None, "default")
+    # a name deny below the address allow wins; a name ask below it still asks
+    p = policy([allow("ip", cidr=PUBLIC + "/32"), deny("bad", host="bad.example"), ask("q", host="q.example")], "allow")
+    assert p.evaluate("bad.example", 443, [PUBLIC]).rule_id == "bad"
+    d = p.evaluate("q.example", 443, [PUBLIC])
+    assert (d.action, d.rule_id) == ("ask", "q")
+    # an allow for everything is no exception: names keep their mode, literals are allowed
+    p = policy([allow("v4", cidr="0.0.0.0/0")], "ask")
+    assert p.evaluate("new.example", 443, [PUBLIC]).action == "ask"
+    assert p.evaluate("new.example", 443, ["192.168.1.10"]).action == "ask"  # open for a literal, asked for a name
+    assert p.evaluate("192.168.1.10", 443, []).rule_id == "v4"
 
 
 def test_ports_on_address_rules_and_expired_rules():
@@ -295,7 +349,7 @@ def test_locked_applies_to_service_exceptions_which_only_skip_the_seeded_blocks(
 
 
 # ---------------------------------------------------------------- deciding on the name, before DNS
-def test_name_first_short_cuts_only_where_no_address_can_change_the_result():
+def test_name_first_short_cuts_every_deny_and_ask_whatever_address_rules_there_are():
     p = policy([deny("bad", host="*.evil.example"), allow("ok", host="ok.example"), ask("q", host="q.example")], "ask")
     d = p.evaluate_name("x.evil.example", 443)
     assert (d.action, d.rule_id, d.early) == ("deny", "bad", True)  # never resolved (TG-02)
@@ -306,25 +360,32 @@ def test_name_first_short_cuts_only_where_no_address_can_change_the_result():
     # an address deny anywhere (the built-in blocks are such rules) forces no lookup: it can only deny
     p.add_rule(Rule(action="deny", cidr="1.2.3.0/24", id="blk"))
     assert p.evaluate_name("x.evil.example", 443).early and p.evaluate_name("new.example", 443).early
-    # an address allow ABOVE what decides could be the first match for an address: the name alone cannot say
+    # an address allow at the TOP forces none either (amendment): it cannot let a name through, so after one
+    # approved IP literal the gateway still resolves nothing it denies or has to ask about (ADR-0011)
     p.add_rule(Rule(action="allow", cidr="140.82.112.3/32", port=443, id="ip"))
-    for name in ("x.evil.example", "new.example", "q.example"):
+    for name, action, rule in (
+        ("x.evil.example", "deny", "bad"),
+        ("new.example", "ask", None),
+        ("q.example", "ask", "q"),
+    ):
         d = p.evaluate_name(name, 443)
-        assert not d.early, name
-        assert p.evaluate(name, 443, ["140.82.112.3"]).rule_id == "ip"  # ... and indeed it decides
-    # only for the ports that rule has
-    assert p.evaluate_name("x.evil.example", 8443).early and p.evaluate_name("new.example", 8443).early
-    # BELOW a name deny it changes nothing: the name rule is the first match for every address
-    p = policy([deny("bad", host="*.evil.example"), allow("ip", cidr="140.82.112.3/32")], "deny")
-    assert p.evaluate_name("x.evil.example", 443).early
-    assert not p.evaluate_name("other.example", 443).early  # the default is below it
-    # an address ask above: a deny could become a question (no short cut), a question stays one (short cut)
+        assert (d.action, d.rule_id, d.early) == (action, rule, True), name
+        full = p.evaluate(name, 443, ["140.82.112.3"])  # ... and indeed the address changes nothing
+        assert (full.action, full.rule_id) == (action, rule), name
+    assert p.evaluate("140.82.112.3", 443, []).rule_id == "ip"
+    # the same with an allow for every address, and with an address ask above a name deny
+    p = policy([allow("v4", cidr="0.0.0.0/0"), deny("bad", host="bad.example")], "deny")
+    assert p.evaluate_name("bad.example", 443).early and p.evaluate_name("other.example", 443).early
+    assert p.evaluate("other.example", 443, [PUBLIC]).reason == "default"
     p = policy([ask("ipq", cidr="140.82.112.3/32"), deny("bad", host="bad.example")], "ask")
-    assert not p.evaluate_name("bad.example", 443).early
-    assert p.evaluate_name("new.example", 443).early
-    # an expired address allow is no rule
-    p = policy([{**allow("old", cidr="140.82.112.3/32"), "expires": time.time() - 1}], "deny")
-    assert p.evaluate_name("new.example", 443).early
+    assert p.evaluate_name("bad.example", 443).early and p.evaluate_name("new.example", 443).early
+    assert p.evaluate("bad.example", 443, ["140.82.112.3"]).rule_id == "bad"
+    # the result is the name's alone: address rules are not looked at, an expired name rule is no rule
+    p = policy(
+        [{**allow("old", host="x.example"), "expires": time.time() - 1}, allow("ip", cidr=PUBLIC + "/32")], "deny"
+    )
+    d = p.evaluate_name("x.example", 443)
+    assert (d.action, d.reason, d.rule_id, d.early) == ("deny", "default", None, True)
 
 
 def _random_policy(rng: random.Random) -> Policy:
@@ -387,16 +448,12 @@ def test_the_name_first_short_cut_is_proven_against_the_full_evaluation():
 
 
 def test_the_short_cut_is_not_needlessly_strict():
-    """The other direction, so that the proof above is not satisfied by never short-cutting: without an
-    address allow/ask rule for the port, a name the list denies or asks about is ALWAYS decided early."""
+    """The other direction, so that the proof above is not satisfied by never short-cutting: a name the list
+    denies or asks about is ALWAYS decided early, whatever address rules there are (amendment)."""
     rng = random.Random(19)  # noqa: S311
     for _ in range(1500):
         p = _random_policy(rng)
-        now = time.time()
         for port in (443, 22):
-            live = [r for r in p.rules if r.cidr and not r.expired(now) and (r.port == "*" or port == 443)]
-            if any(r.action != "deny" for r in live):
-                continue
             for name in ("a.example", "other.org"):
                 pre = p.evaluate_name(name, port)
                 assert pre.early == (pre.action != "allow"), (p.to_dict(), name, port, pre)
@@ -478,7 +535,7 @@ def test_an_address_rule_that_can_never_match_is_found():
             deny("cam", cidr="192.168.1.10/32"),
             allow("lan", cidr="192.168.1.0/24"),
             allow("dup", cidr="192.168.1.20/32"),  # inside `lan`, an allow: never the first match
-            deny("late", cidr="192.168.1.30/32"),  # inside `lan`, a deny: still blocks for a name rule above
+            deny("late", cidr="192.168.1.30/32"),  # inside `lan`, a deny: `lan` says the address is open
             deny("cam2", cidr="192.168.1.10/32", port=443),  # covered by `cam`, a deny
             allow("web", cidr="192.168.1.0/25", port=[80, 443]),  # inside `lan`
             allow("other", cidr="192.168.2.0/24"),
@@ -486,21 +543,34 @@ def test_an_address_rule_that_can_never_match_is_found():
             {**allow("tmp", cidr="10.0.0.0/8"), "expires": time.time() + 60},
             allow("ten", cidr="10.1.0.0/16"),  # `tmp` ends by itself: not covered for good
             allow("v6", cidr="fd00::/8"),
+            ask("q", cidr="172.16.0.0/16"),
+            allow("qa", cidr="172.16.1.0/24"),  # below an ask: still opens the address for a name
+            deny("qd", cidr="172.16.2.0/24"),  # below an ask: still blocks it for a name
+            ask("qq", cidr="172.16.3.0/24"),  # an ask below an ask never asks
+            ask("lq", cidr="192.168.1.40/32"),  # an ask below an allow never asks
         ]
     )
     covered = {r.id: (c.id if (c := p.covered_by(r)) else None) for r in p.rules if r.source == "user"}
     assert covered == {
-        "cam": None, "lan": None, "dup": "lan", "late": None, "cam2": "cam", "web": "lan", "other": None,
-        "n": None, "tmp": None, "ten": None, "v6": None,
+        "cam": None, "lan": None, "dup": "lan", "late": "lan", "cam2": "cam", "web": "lan", "other": None,
+        "n": None, "tmp": None, "ten": None, "v6": None, "q": None, "qa": None, "qd": None, "qq": "q", "lq": "lan",
     }  # fmt: skip
-    # the claim is true: a covered rule decides for no address, by literal or behind a name rule
-    q = policy([allow("name", host="*"), *[r.to_dict() for r in p.rules if r.source == "user"]])
-    for rid in ("dup", "cam2", "web"):
-        for ip in ("192.168.1.10", "192.168.1.20", "192.168.1.30", "192.168.1.100", "192.168.1.200"):
+    # the claim is true: a covered rule decides for no address, by literal or behind a name
+    user = [r.to_dict() for r in p.rules if r.source == "user"]
+    q = policy([allow("name", host="*.example"), *user])
+    for rid in ("dup", "late", "cam2", "web", "qq", "lq"):
+        without = policy([allow("name", host="*.example"), *[r for r in user if r["id"] != rid]])
+        for ip in ("192.168.1.10", "192.168.1.20", "192.168.1.30", "192.168.1.40", "192.168.1.100", "172.16.3.1"):
             for port in (80, 443, 22):
                 assert p.evaluate(ip, port, []).rule_id != rid
                 assert q.evaluate("x.example", port, [ip]).rule_id != rid
-    assert q.evaluate("x.example", 22, ["192.168.1.30"]).rule_id == "late"  # ... and `late` is not covered
+                assert q.evaluate("x.example", port, [ip]).action == without.evaluate("x.example", port, [ip]).action
+    assert q.evaluate("x.example", 22, ["192.168.1.30"]).action == "allow"  # `late` blocks nothing: `lan` opened it
+    # ... and the rules below the ask are not covered: the ask is skipped for a name, they are what is found
+    assert q.evaluate("x.example", 443, ["172.16.1.1"]).action == "allow"
+    assert q.evaluate("x.example", 443, ["172.16.2.1"]).rule_id == "qd"
+    assert q.evaluate("x.example", 443, ["172.16.4.1"]).rule_id == block_id("172.16.0.0/12")
+    assert p.evaluate("172.16.1.1", 443, []).rule_id == "q"  # by literal the ask is the first match
     # an allow below the built-in block that covers it never matched and never will
     p = policy()
     p.add_rule(Rule(action="allow", cidr="192.168.1.10/32", id="low"), top=False)
@@ -548,8 +618,17 @@ def test_migration_of_a_pre_0019_policy():
     new, notes = migrate(OLD, BUILTIN, ["198.18.5.0/24"])
     assert set(new) == {"default", "ask_timeout", "rules", "seeded"}  # hard_deny, floor_open, the echo: gone
     assert (new["default"], new["ask_timeout"]) == ("allow", 30)
-    # CIDR deny rules first, in their order; then the other rules in theirs; then the hard_deny extras
-    assert [r["id"] for r in new["rules"]] == ["d1", "d2", "gh", "ip", "ip2", "nd", block_id("203.0.113.7/32")]
+    # CIDR deny rules first, in their order; then the block an old address allow reaches into (10/8, for ip2);
+    # then the other rules in theirs; then the hard_deny extras
+    order = ["d1", "d2", TEN8, "gh", "ip", "ip2", "nd", block_id("203.0.113.7/32")]
+    assert [r["id"] for r in new["rules"]] == order
+    assert new["rules"][2] == {
+        "id": TEN8,
+        "action": "deny",
+        "cidr": "10.0.0.0/8",
+        "source": "builtin",
+        "note": "built-in block",
+    }
     extra = new["rules"][-1]
     assert extra == {
         "id": block_id("203.0.113.7/32"),
@@ -558,12 +637,17 @@ def test_migration_of_a_pre_0019_policy():
         "note": "was hard_deny",
     }
     # floor_open: the operator had opened 192.168/16 - remembered as seeded, so no block is added for it.
-    # 10/8 was an "extra" that is built in anyway; 198.51.100.0/24 is built in and was opened too.
-    assert new["seeded"] == ["192.168.0.0/16", "198.51.100.0/24"]
+    # 10/8 was an "extra" that is built in anyway; 198.51.100.0/24 is built in and was opened too. The block
+    # that was placed at the top is remembered as seeded, so it is not added a second time at the bottom.
+    assert new["seeded"] == ["192.168.0.0/16", "198.51.100.0/24", "10.0.0.0/8"]
     p, _ = policy_from_any(OLD, BUILTIN, ["198.18.5.0/24"])
     added = p.seed_blocks(BUILTIN, ["198.18.5.0/24"])
-    assert [r.id for r in p.rules][:7] == ["d1", "d2", "gh", "ip", "ip2", "nd", block_id("203.0.113.7/32")]
-    assert {r.cidr for r in added} == (set(BUILTIN) | {"198.18.5.0/24"}) - {"192.168.0.0/16", "198.51.100.0/24"}
+    assert [r.id for r in p.rules][:8] == order
+    assert {r.cidr for r in added} == (set(BUILTIN) | {"198.18.5.0/24"}) - set(new["seeded"])
+    assert [r.id for r in p.rules].count(TEN8) == 1 and p.blocks_missing(BUILTIN, ["198.18.5.0/24"]) == [
+        "192.168.0.0/16",
+        "198.51.100.0/24",
+    ]
     assert p.rules[-1].cidr == "198.18.5.0/24" and p.rules[-1].source == "config"
     # what was decided before is decided now:
     assert p.evaluate("api.github.com", 443, ["140.82.112.3"]).rule_id == "d1"  # the CIDR deny below the allow won
@@ -576,10 +660,25 @@ def test_migration_of_a_pre_0019_policy():
     assert "moved 2 CIDR deny rule(s) to the top: d1, d2" in text
     assert f"hard_deny 203.0.113.7/32 is now deny rule {block_id('203.0.113.7/32')}" in text
     assert "not blocked, as before (floor_open): 192.168.0.0/16, 198.51.100.0/24" in text
-    # an address allow inside a range that stays blocked did nothing before and decides now: named in the log
-    assert "NOTE rule ip2 (allow 10.0.0.5/32) had no effect inside the blocked range 10.0.0.0/8" in text
-    assert "rule ip " not in text  # 192.168/16 was open: that rule already worked
-    assert p.evaluate("10.0.0.5", 22, []).rule_id == "ip2"
+    # an address allow inside a range that stays blocked did nothing before and does nothing now: its block
+    # stays above it, and the log names the rule and the way to open the address
+    assert (
+        "NOTE 1 block(s) stay at the top of the list, above rule(s) ip2: these address rules had no effect inside "
+        "the blocked ranges and still have none. To open an address, move its rule above the block. "
+        "Blocks: 10.0.0.0/8"
+    ) in text
+    assert "it now decides" not in text
+    assert "rule(s) ip2:" in text and "ip," not in text  # 192.168/16 was open: that rule already worked
+    assert p.evaluate("10.0.0.5", 22, []).rule_id == TEN8
+    assert p.evaluate("nas.example", 22, ["10.0.0.5"]).rule_id == TEN8
+    assert p.opened_above(BUILTIN, ["198.18.5.0/24"]) == []  # nothing is open inside a block in force
+    assert p.evaluate("192.168.1.10", 22, []).rule_id == "ip"
+    # the way the note names: moved above the block, the rule opens its address
+    assert p.move_rule("ip2", TEN8) and p.evaluate("10.0.0.5", 22, []).rule_id == "ip2"
+    assert p.opened_above(BUILTIN, []) == [
+        {"rule": "ip2", "action": "allow", "cidr": "10.0.0.5/32", "block": "10.0.0.0/8"}
+    ]
+    assert p.move_rule("ip2", "nd")
     # migrating the result again changes nothing
     assert not is_pre_0019(p.to_dict())
     again, notes = policy_from_any(p.to_dict(), BUILTIN, ["198.18.5.0/24"])
