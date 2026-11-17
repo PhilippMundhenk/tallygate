@@ -228,8 +228,9 @@ operator's view and worked examples, is [rules.md](rules.md); this is how the ga
       IPv4-compatible IPv6 form): deny, before the list and whatever it says. They are not rules and not
       part of the stored policy.
    2. **IP-literal destination** (`_walk`): the list from the top; the first address rule that contains the
-      address is final; nothing matched: the default. A name rule whose pattern matches the literal (`*`) is
-      final with `deny` and provisional with `allow`/`ask`: below it only an address `deny` still counts.
+      address is final; nothing matched: the default. A catch-all name rule (`*`) above it does not change
+      that: with `deny` it is final, with `allow`/`ask` the address rule below it decides, and only when no
+      address rule contains the address does the `*` rule.
    3. **Name destination** (`_walk_name`): a name `deny` is final wherever it stands. Otherwise the first
       address rule with `allow` or `deny` that contains the address says whether the address is open: `deny`
       blocks it, with a reason that names both rules; `allow`, or no such rule, leaves the result of the name
@@ -326,8 +327,9 @@ Grants are named, time-limited bundles of destinations that the agent requests a
 such as LAN services ([user documentation](grants.md), [ADR-0012](adr/0012-grants-for-scoped-temporary-access.md)).
 They are under the same rules as everything else: while a grant is active, its targets behave like rules at
 the top of the list. A target that names an address (an IP as host, or a fixed `address`) is an address rule
-and may be local; a target that is only a name is a name rule, so an address `deny` rule anywhere in the
-list still applies to what it resolves to. The locked ranges are refused for every grant.
+and may be local; a target that is only a name is checked like a name rule, so the address rules of the
+list still apply to what it resolves to (a `deny` blocks it, an `allow` above the block opens it). The
+locked ranges are refused for every grant.
 
 ```mermaid
 sequenceDiagram

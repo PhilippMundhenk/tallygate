@@ -33,14 +33,16 @@
 >
 > | Finding | Problem in the first implementation | Outcome |
 > |---|---|---|
-> | H1 | One address `allow` rule for a port (for example an approved IP literal) meant that no `deny` or `ask` for a name on that port could be acted on before DNS: the gateway resolved every name the agent asked for. A regression of TG-02 / ADR-0011. | **Fixed by the amendment.** The name is decided by the name rules alone; `deny` and `ask` are acted on before the lookup, always. |
-> | M1 | An allowed address allowed every name that resolves to it, with that name's SNI and Host, and outranked a name `deny` below it. On a shared CDN address that is another site (ADR-0013, threat T7a). | **Fixed by the amendment.** An address `allow` lets no name through by itself, and a name `deny` wins wherever it stands. |
-> | M2 | The migration seeded the blocks below old address `allow`/`ask` rules, which had had no effect inside a blocked range: upgrading opened what had been closed. | **Fixed by the amendment.** Blocks that such a rule overlaps are placed above it; the log names the rules. Old versions and exports are migrated the same way. |
-> | M3 | A grant target that names an address (an IP, or a fixed `address`) is not subject to the blocks, including loopback, cloud metadata and the `never` entries of the gateway config, which were closed to every grant before; targets stored without `lan` start to work on upgrade. | **Partly.** The upgrade names each such target in the log, with whether a level is approved automatically. The rest is accepted by the ADR and listed in the threat model (T30, residual risks). |
->
-> Also changed with it: a seeded block takes no time limit; replacing a whole policy records which built-in
-> blocks are not in force; the locked ranges match NAT64 and 6to4 forms of a locked address; an empty
-> `GW_INTERNAL_NETS` is logged as an error; allowing an address from the log takes a second click.
+> | H1 | The migration made address `allow`/`ask` rules live that had been inert inside blocked ranges: the blocks were seeded below them, so upgrading opened what had been closed. | **Fixed by the amendment.** Blocks that such a rule overlaps are placed at the top, above it; the log names the rules. Restoring an old version and importing an old export are migrated the same way and record the same notes. |
+> | M1 | One address `allow` rule for a port (for example an approved IP literal) switched off the decision before DNS for names on that port: the gateway resolved every name the agent asked for. A regression of TG-02 / ADR-0011. | **Fixed by the two checks.** The name is decided by the name rules alone; `deny` and `ask` are acted on before the lookup, always. |
+> | M2 | Address `allow` rules applied to names: an allowed address allowed every name that resolves to it, with that name's SNI and Host, and outranked a name `deny`. On a shared CDN address that is another site (ADR-0013, threat T7a). | **Fixed by the two checks.** An address `allow` lets no name through by itself, and a name `deny` wins wherever it stands. |
+> | M3 | Grant targets with a fixed address skip every `deny` rule, including the blocks for loopback, cloud metadata and the `never` entries of the gateway config; targets that were inert before go live on upgrade. | **Partly.** The upgrade names each such target in the container log and in the migration event. The rest is the ADR's decision and a documented residual risk (threat model T30, residual risks). |
+> | L1 | One click on *Allow* in the log opened a blocked local address. | **Fixed.** Allowing an address from the log takes a confirming second click. |
+> | L2 | A rule's `source` was not validated and was kept when the action changed. | **Fixed.** `source` is validated; a seeded block whose action is changed becomes `user`. |
+> | L3 | Built-in blocks could vanish through `PUT /policy`, import or restore without a record. | **Fixed.** The admin event and the import preview list the blocks that are not in force. |
+> | L4 | The hint on a name rule stopped by a blocked range steered towards opening the address. | **Fixed.** It leads with the DNS-rebinding warning. |
+> | L5 | A time limit on a seeded block deleted the block for good when it ran out. | **Fixed.** A time limit on a seeded block is refused. |
+> | L6 | The locked ranges depend on the environment. | **Partly.** An empty `GW_INTERNAL_NETS` is logged as an error, and NAT64, 6to4 and IPv4-compatible forms of a locked address are matched. Not done: the gateway does not refuse to start, and its own interface addresses are not added. |
 
 Severity scale: **Critical**: the agent gains control of the operator plane or fully escapes the policy.
 **High**: a security boundary is bypassed or weakened in a realistic setup. **Medium**: an exploitable

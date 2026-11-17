@@ -467,7 +467,7 @@ earlier entry ends with *Replaced in this release*. The state you get:
      its `address` (the log names each such target). `grants_lan_allow` can be removed from `gateway.yaml`.
    - **Check grant targets that name a blocked address.** A target with an IP or a fixed `address` inside a
      blocked range that did not have `lan: true` was always refused; now it is reachable while its grant is
-     active, loopback, metadata and `never` addresses included. The event log names each one at the
+     active, loopback, metadata and `never` addresses included. The gateway log and the event log name each one at the
      migration (`NOTE grant …`, with whether a level is approved automatically); delete those you do not want.
    - `grants.yaml.pre-0019` is only written when a UI grant had `lan: true`.
    - *Restore built-in blocks* does not close ranges that an address rule above the blocks opens.

@@ -80,7 +80,7 @@ A rule matches either a name or an address, never both, and the two kinds do dif
 | | Address rule | Name rule |
 |---|---|---|
 | Matches | an IP address or a range (CIDR), e.g. `192.168.44.1/32`, `198.51.100.0/24` | a host pattern, e.g. `github.com`, `*.example.com`, `*` |
-| For a destination given as an IP | the first one that contains the address decides: `allow`, `ask` or `deny` | not involved, unless its pattern matches the literal (`*`): see below |
+| For a destination given as an IP | the first one that contains the address decides: `allow`, `ask` or `deny` | not involved; a catch-all pattern (`*`) decides only when no address rule contains the address |
 | For a destination given by name | second check, per resolved address: the first `allow` or `deny` that contains it says whether the address is open. `ask` is skipped | first check: the first one that matches the name decides `allow`, `ask` or `deny`; `deny` and `ask` before the lookup |
 
 So, as in other firewalls:
@@ -91,12 +91,10 @@ So, as in other firewalls:
   rule (or approval) for the name, and the address `allow` above the block
   ([example a](#a-allow-one-local-device)).
 
-**A `*` name rule and IP destinations.** A pattern such as `*` (the *Allow web* shortcut is `allow *` on
-ports 80 and 443) also matches a destination given as an IP. There it behaves like a name rule: its `deny`
-is final; its `allow` or `ask` cannot open a blocked range, so an address `deny` further down still denies
-the address. In this one case the position of a name rule does matter: an address `allow` for that IP counts
-only when it stands **above** the `*` rule. Rules you add are placed at the top, so a new address rule is
-above it; one that was there before the shortcut is not, until you move it up or the shortcut ends.
+A catch-all name rule such as `*` (the *Allow web* shortcut is `allow *` on ports 80 and 443) also matches a
+destination given as an IP. It does not change the above: the first address rule that contains the address
+decides, wherever the `*` rule stands, and only when no address rule contains the address does the `*` rule
+decide. So `allow *` never opens a blocked range for an IP either.
 
 An IP address typed into the *Host* field of the rule form is stored as an address rule.
 
@@ -124,7 +122,7 @@ Variants of the same message:
 | Part | When |
 |---|---|
 | `name matched by rule …` | the rule that matched says `ask` instead of `allow` |
-| `the address 192.168.44.1 is inside blocked range …` | the destination was the IP itself and a `*` name rule matched it |
+| `the address 192.168.44.1 is inside blocked range …` | the destination was the IP itself, a `*` name rule matched it and an address `deny` rule contains the address |
 | `resolves to 192.168.44.1, inside blocked range 192.168.0.0/16 (rule …)` | no name rule matched the name (the default is `allow`, or learning mode let it through) |
 | `grant ha: name allowed by the grant, but it resolves to …: set a fixed address on the grant target` | a grant target that is only a name ([grants.md](grants.md#local-targets-and-name-only-targets)) |
 
@@ -216,9 +214,7 @@ Which order matters:
 - **Among address rules**: the first one that contains the address decides (for a name: the first `allow` or
   `deny`). An `allow` opens an address only when it stands above the block of its range.
 - **Among name rules**: the first one that matches the name decides.
-- **Between a name rule and an address rule**: not at all for a destination given by name. The one exception
-  is a `*` pattern matching a destination given as an IP
-  ([above](#name-rules-and-address-rules)).
+- **Between a name rule and an address rule**: not at all.
 
 Because approvals and shortcuts are added at the top, they win over your own **name** rules while they
 exist, name `deny` rules included. What they cannot do:

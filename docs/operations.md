@@ -413,11 +413,11 @@ What to check afterwards:
    delete it.
 2. **Grants for local devices.** A target with an IP or a fixed address keeps working. A target that is only
    a name (`ha.lan`) no longer reaches a blocked range; the log names each one (`` `lan` is ignored now, and
-   a target that is only a name cannot open a blocked range ``). Set its fixed address
-   ([grants.md](grants.md#local-targets-and-name-only-targets)).
+   a target that is only a name cannot open a blocked range ``). Set its fixed address, or add an allow
+   rule for the address above the block ([grants.md](grants.md#local-targets-and-name-only-targets)).
    **The other direction:** a target that names an address inside a blocked range and did *not* have
-   `lan: true` was always refused before and is reachable now while its grant is active. The migration entry
-   in the Log names each one (`NOTE grant …: target … names the address … inside blocked range …. It was
+   `lan: true` was always refused before and is reachable now while its grant is active. The container log
+   and the migration entry in the Log name each one (`NOTE grant …: target … names the address … inside blocked range …. It was
    refused before; now it is reachable while the grant is active`, with `approval for … is automatic` where
    that applies). Delete the target, or the grant, if that is not wanted.
 3. **The table.** *Destinations* shows the list in the order it is checked; the line under it counts the

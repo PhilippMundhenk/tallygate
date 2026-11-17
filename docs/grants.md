@@ -126,11 +126,12 @@ for rules ([name rules and address rules](rules.md#name-rules-and-address-rules)
 |---|---|---|
 | an IP address as host (`192.168.1.40`) | an address rule at the top of the list | yes |
 | a name with a fixed `address` (`ha.lan` at `192.168.1.20`) | an address rule at the top of the list; the name is not looked up | yes |
-| only a name (`api.example.com`, `ha.lan`, `*.lan`) | a name rule at the top of the list | **no**: if the name resolves to an address inside any address `deny` rule of the list, the connection is refused |
+| only a name (`api.example.com`, `ha.lan`, `*.lan`) | a name rule at the top of the list | **not by itself**: every address the name resolves to is checked like for a name rule. If the first address rule with `allow` or `deny` that contains it is a `deny`, the connection is refused |
 
 The reason is the one given for rules: a name points wherever its DNS says, so only a target that names the
-address opens a blocked range ([why](rules.md#why-a-name-rule-cannot-open-a-blocked-range)). For a name-only
-target an allow rule for the address elsewhere in the list does not help; set the fixed address on the target.
+address opens a blocked range ([why](rules.md#why-a-name-rule-cannot-open-a-blocked-range)). A name-only
+target is checked like a name rule: set the fixed address on the target, or add an allow rule for the
+address above the block on *Destinations*, which opens the address for the target too.
 
 **A target that names an address is not subject to the blocked ranges or to your `deny` rules at all**, only
 to the locked ranges. That includes addresses you may not think of as "a device": loopback (`127.0.0.1`, the
@@ -185,8 +186,8 @@ time out after `grant_request_timeout` (300 s). At most `grant_max_pending` (3) 
 1. A connection to a target of an **active** grant is handled by the grant, as if its targets were rules at
    the top of the list. The fixed `address` is used, or the name is resolved. The
    [locked ranges](rules.md#locked-ranges) are refused for every grant. A target that names an address is
-   then allowed; for a target that is only a name, every address `deny` rule of the list still applies to
-   what it resolves to ([above](#local-targets-and-name-only-targets)). The connection is pinned to the
+   then allowed; for a target that is only a name, the address rules of the list still apply to what it
+   resolves to, as for a name rule ([above](#local-targets-and-name-only-targets)). The connection is pinned to the
    checked IP.
 2. `https`/`http` targets are **always intercepted**, so every request is checked:
    - plain HTTP to an `https` target is refused;
