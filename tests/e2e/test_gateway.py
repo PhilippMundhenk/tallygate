@@ -55,7 +55,7 @@ def test_a_name_resolving_to_a_blocked_private_ip_is_denied_at_once(gateway):
         and ev["reason"]
         == (
             "name allowed by rule lan, but it resolves to 192.168.99.99, inside blocked range 192.168.0.0/16 "
-            "(rule block-192.168.0.0_16): add an allow for the address above that rule"
+            "(rule block-192.168.0.0_16): a name rule cannot open a blocked range"
         )
     )
 
