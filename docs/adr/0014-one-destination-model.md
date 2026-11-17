@@ -102,8 +102,9 @@ interception, it is refused with "connect by name". That is the rule #108 needed
 > one ordered rule list, first match wins. Only the locked ranges (the stack's own networks and the gateway's
 > own listeners) are checked before the list; "never reachable" ranges are ordinary `deny` rules in it, and a
 > CIDR `deny` is no longer a separate check before name entries: among address rules position decides, and a
-> name rule never opens a blocked range. The destination model itself (§1) and the one evaluation path stay.
-> <!-- TODO(0019-amend) -->
+> name rule never opens a blocked range, wherever it stands (a name passes two checks: the name rules, then
+> the address rules for every resolved address). The destination model itself (§1) and the one evaluation
+> path stay.
 
 Order of evaluation:
 
@@ -182,7 +183,7 @@ listed in the changelog and upgrade notes:
 
 | Change | Today | After |
 |---|---|---|
-| CIDR `deny` and a host `allow` above it (#119) | the host rule wins | the CIDR deny wins (*still true under ADR-0019, for a different reason: a name rule never opens a blocked range. "A CIDR deny wins wherever it stands" no longer holds between address rules: position decides*) <!-- TODO(0019-amend) --> |
+| CIDR `deny` and a host `allow` above it (#119) | the host rule wins | the CIDR deny wins (*still true under ADR-0019, for a different reason: a name rule never opens a blocked range. "A CIDR deny wins wherever it stands" no longer holds between address rules: position decides*) |
 | `*.example.lan` in a grant target | subdomains only | the domain and its subdomains, as in rules |
 | `grants_never` set in the config | replaces the built-in list | adds to it |
 

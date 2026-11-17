@@ -243,39 +243,58 @@ earlier entry ends with *Replaced in this release*. The state you get:
 
 ### Changed
 - **One ordered rule list, first match wins** ([ADR-0019](docs/adr/0019-one-ordered-rule-list.md), #208):
-  the policy is evaluated like other firewalls do it. For every address a destination resolves to, the list
-  is walked from the top and the first matching rule decides; the most restrictive result over all addresses
+  the policy is evaluated like other firewalls do it. A destination given as an IP address is decided by the
+  list from the top: the first rule for an address that contains it decides. A destination given by name
+  passes two checks: the first rule for a name that matches decides (deny and ask before the name is looked
+  up), and every address it resolves to must not be blocked. The most restrictive result over all addresses
   wins; the mode is the last line. What this changes:
   - **Local addresses are handled like any other address.** The built-in blocked ranges (private, loopback,
     link-local/metadata, CGNAT, multicast, special ranges) and the `never` entries of `gateway.yaml` are
     ordinary `deny` rules (`source: builtin` / `config`), seeded once at the bottom. They can be moved, edited
     and deleted; *Restore built-in blocks* adds the missing ones back. To reach one device, add an allow rule
-    for its address and port: it is placed above the blocked range. `hard_deny`, `floor_open` (ADR-0017) and
-    the read-only `hard_deny_floor` are gone.
-  - **An address rule (IP or CIDR) is final for the address, however the destination was named.** A CIDR
-    `allow` now also allows a name that resolves into it (this supersedes #10), and a CIDR `deny` no longer
-    wins "wherever it stands" (#119): position decides.
-  - **A name rule cannot open a blocked range.** A name rule's `deny` is final; its `allow` or `ask` is
-    provisional: an address `deny` rule below it that contains the address wins. The reason says so and how to
-    fix it, in the log, in *Test a destination* and in the denial the agent gets; the Destinations table marks
-    such a rule (*blocked by a range rule below*) and address rules that can never match (*never reached*).
+    for its address and port: it is placed above the blocked range. To reach it by name, allow the name as
+    well. `hard_deny`, `floor_open` (ADR-0017) and the read-only `hard_deny_floor` are gone.
+  - **Restoring the built-in blocks does not close ranges that an address rule above them opens.** Restored
+    blocks are added at the bottom; the message and the log list what is still open (`opened` in the API).
+    A block takes no time limit (add an allow rule with a time limit above it instead), and a block whose
+    action is changed becomes an ordinary rule of yours.
+  - **Among address rules, position decides.** An address `allow` above a range block opens that address; a
+    CIDR `deny` no longer wins "wherever it stands" over an address `allow` above it (#119).
+  - **An address `allow` lets no name through by itself.** It opens the address for connections to the IP,
+    and for a name that is allowed by name; the name still needs a name rule or your approval (as since #10).
+    Address `ask` rules apply to IP destinations only.
+  - **A name rule cannot open a blocked range, and a name `deny` wins wherever it stands.** If an allowed name
+    resolves into a range that an address `deny` rule covers, the connection is denied. Where a name rule
+    stands relative to address rules does not matter. The reason says so and what to do, in the log, in
+    *Test a destination* and in the denial the agent gets; the Destinations table marks such a rule (*blocked
+    by a range rule*, with a warning that the name may have been redirected) and address rules that can never
+    decide (*never reached*).
   - **Only the stack itself is locked**: the stack's own networks (`GW_INTERNAL_NETS`) and the gateway's own
     listeners are denied before the list, whatever a rule, a grant or the API says. A listener bound to every
-    address is now locked on loopback too. They are shown as the last rows before the default, with no actions.
+    address is now locked on loopback too, and so is an IPv6 address that carries a locked IPv4 address
+    (NAT64, 6to4). An empty `GW_INTERNAL_NETS` is logged as an error. They are shown as the last rows before
+    the default, with no actions.
   - **Rules have an order you can change**: *Move up* / *Move down* in the table, `POST
     /destinations/{id}/move` in the API. Approvals and shortcuts are still added at the top.
   - **Grants are rules at the top of the list while active.** A target with an IP or a fixed `address` is an
     address rule and may be local; a target that is only a name cannot open a blocked range, and saving one
-    that resolves into a blocked range is refused with the address to pin. `grants_lan_allow`, `lan: true` and
+    that resolves into a blocked range is refused with the address to pin. A target that names an address is
+    not subject to the blocked ranges or to `deny` rules at all, only to the locked ranges: that includes
+    loopback, the cloud metadata address and your `never` entries, which were closed to grants before
+    ([threat model](docs/threat-model.md#residual-risks)). `grants_lan_allow`, `lan: true` and
     the `never` scope `all+lan` are read from old files and ignored (logged once). The *Local-network device*
     checkbox is gone; the Quick settings form is always available.
-  - **Names are still decided before they are resolved** where no address can change the result. With an
-    address `allow` rule for a port (for example an approved IP literal), names on that port are resolved
-    first, because one of their addresses might be allowed by that rule. Give address rules a port.
+  - **Names are still decided before they are resolved**, without exception: a name that is denied, or that
+    you have not answered yet, never reaches a resolver, whatever address rules exist.
+  - **Replacing a whole policy** (raw editor, `PUT /policy`, restore, import) records in the log which
+    built-in blocks are not in force afterwards; an import shows them as warnings first. *Allow* on a log
+    line for an IP address takes a second click, because the rule opens the address even inside a blocked
+    range.
   - API: `GET /policy` returns `{default, ask_timeout, seeded, rules}`; `GET /model` returns `locked` instead
     of `never` and the rules in evaluation order; `GET /never-reachable` lists only what is locked; `POST
     /test` returns the deciding rule, its position and `shadow`; new `POST /destinations/{id}/move` and `POST
-    /destinations/restore-blocks`; `GET /grants` has no `lan_allow_ui`. See [docs/api.md](docs/api.md).
+    /destinations/restore-blocks` (`{added, opened}`); a rule's `source` is validated; `GET /grants` has no
+    `lan_allow_ui`. See [docs/api.md](docs/api.md).
   - Unused built-in blocks are never offered by *Remove unused rules*.
   - The isolation self-test also probes the management endpoints through the proxy (locked).
 - **One UX concept for the whole web UI** ([docs/ux-concept.md](docs/ux-concept.md), #202): every page is built
@@ -419,8 +438,8 @@ earlier entry ends with *Replaced in this release*. The state you get:
    `--print-hash`), or remove it to use the stored password.
 4. **Static config:** if you changed `config/gateway.yaml`, mount it as described in
    [docs/operations.md](docs/operations.md#with-docker-compose-recommended).
-5. **Behaviour changes to check:** CIDR `allow` rules cover IP literals only (#10; for how address rules and
-   names relate in this release see step 8 <!-- TODO(0019-amend) -->); UI grants with `inject` or
+5. **Behaviour changes to check:** CIDR `allow` rules cover IP literals only: they let no name through by
+   itself (#10; what they do for a name that is allowed by name: step 8); UI grants with `inject` or
    `tls_verify: false` are ignored, so move them to the config file (#12); the Hugging Face and registry
    hosts are read-only (#58).
 6. **UI address:** the UI is now published on all interfaces (`0.0.0.0:8080`). With a reverse proxy on the
@@ -435,13 +454,25 @@ earlier entry ends with *Replaced in this release*. The state you get:
    - Your CIDR `deny` rules move to the top, in their order: they won everywhere before and keep winning.
    - `hard_deny` extras become `deny` rules below your rules. The built-in blocks and your `never` entries are
      added as `deny` rules at the bottom, except ranges you had opened (`floor_open`): they stay open.
-   - **Check your CIDR `allow` rules.** An allow for an address inside a blocked range did nothing before and
-     decides now, and a CIDR allow now also covers names that resolve into it. The gateway log and the event
-     log list every such rule at the migration (`policy migration: NOTE rule …`); delete those you do not want.
+   - **Nothing that was blocked opens by upgrading.** A CIDR `allow` or `ask` rule for an address inside a
+     blocked range did nothing before. The blocks such a rule overlaps are placed at the **top** of the list,
+     above it, so it still does nothing. The gateway log and the event log name the rules and the blocks
+     (`policy migration: NOTE … block(s) stay at the top of the list, above rule(s) …`). To open such an
+     address, move its rule above the block; otherwise delete the rule.
+   - **A CIDR `allow` and names.** It opens the address for connections to the IP and for names that are
+     allowed by name. It lets no name through by itself, and a `deny` or `ask` for a name is still acted on
+     before the name is resolved.
    - **Grants for local devices need an address.** `lan: true` is dropped. A target with an IP or a fixed
      `address` keeps working. A target that is only a name (`ha.lan`) no longer reaches a blocked range: set
      its `address` (the log names each such target). `grants_lan_allow` can be removed from `gateway.yaml`.
-   - To go back to an older release, restore the `*.pre-0019` files.
+   - **Check grant targets that name a blocked address.** A target with an IP or a fixed `address` inside a
+     blocked range that did not have `lan: true` was always refused; now it is reachable while its grant is
+     active, loopback, metadata and `never` addresses included. The event log names each one at the
+     migration (`NOTE grant …`, with whether a level is approved automatically); delete those you do not want.
+   - `grants.yaml.pre-0019` is only written when a UI grant had `lan: true`.
+   - *Restore built-in blocks* does not close ranges that an address rule above the blocks opens.
+   - To go back to an older release, restore the `*.pre-0019` files
+     ([docs/operations.md](docs/operations.md#upgrade-to-the-ordered-rule-list)).
 
 ## [0.3.0] - 2026-11-11
 

@@ -387,15 +387,11 @@ decides: [rules.md](rules.md); the release that brought it: [CHANGELOG](../CHANG
 gateway's data volume are migrated **once, at the first start** of a gateway with that model. Nothing has to
 be done before the upgrade, and an unattended image update works.
 
-<!-- TODO(0019-amend): the migration is being changed (blocks that were in force are seeded ABOVE old CIDR
-allow/ask rules that overlap them; pre-0019 grants with a local fixed target and no `lan` flag stay inactive
-until re-saved). Rewrite the table and check 1 and 2 below against the pushed code. -->
-
 What the gateway does:
 
 | File | Change | Backup |
 |---|---|---|
-| `policy.yaml` | Your CIDR `deny` rules move to the top, in their order: they won wherever they stood, and keep winning. `hard_deny` ranges become `deny` rules below your other rules. The [built-in blocks](rules.md#built-in-blocks) and your `never` entries are added as `deny` rules at the bottom, except ranges you had opened (`floor_open`): those stay open. `hard_deny` and `floor_open` are removed from the file. | `policy.yaml.pre-0019` |
+| `policy.yaml` | Your CIDR `deny` rules move to the top, in their order: they won wherever they stood, and keep winning. `hard_deny` ranges become `deny` rules below your other rules. The [built-in blocks](rules.md#built-in-blocks) and your `never` entries are added as `deny` rules at the bottom, except ranges you had opened (`floor_open`): those stay open. **Exception, so that nothing opens by upgrading:** a block (built-in, `never` or `hard_deny`) that one of your address `allow` or `ask` rules overlaps is placed at the **top**, right after your CIDR `deny` rules, above that rule. Such a rule had no effect inside the blocked range before and has none after. `hard_deny` and `floor_open` are removed from the file. | `policy.yaml.pre-0019` |
 | `grants.yaml` (grants defined in the UI) | `lan: true` is removed from targets. Only rewritten when a target had it. | `grants.yaml.pre-0019` |
 | `gateway.yaml` (your config, mounted read-only) | Never rewritten. Old keys are read or ignored with a warning: [configuration](configuration.md#removed-and-ignored-keys). | – |
 
@@ -409,13 +405,21 @@ What the gateway does:
 
 What to check afterwards:
 
-1. **Address `allow` rules.** An `allow` (or `ask`) rule for an address inside a blocked range did nothing
-   before. The migration log names each such rule (`policy migration: …`); read those lines and delete the
-   rules you do not want. <!-- TODO(0019-amend) -->
-2. **Grants for local devices.** A target with an IP or a fixed address keeps working. A target that is only <!-- TODO(0019-amend) -->
+1. **Address `allow` and `ask` rules inside a blocked range.** They did nothing before, and they still do
+   nothing: the migration keeps the blocks they overlap above them and says so (`policy migration: NOTE n
+   block(s) stay at the top of the list, above rule(s) …: these address rules had no effect inside the
+   blocked ranges and still have none. To open an address, move its rule above the block. Blocks: …`). If
+   you want such a rule to open its address, use *Move up* on it until it stands above the block; if not,
+   delete it.
+2. **Grants for local devices.** A target with an IP or a fixed address keeps working. A target that is only
    a name (`ha.lan`) no longer reaches a blocked range; the log names each one (`` `lan` is ignored now, and
    a target that is only a name cannot open a blocked range ``). Set its fixed address
    ([grants.md](grants.md#local-targets-and-name-only-targets)).
+   **The other direction:** a target that names an address inside a blocked range and did *not* have
+   `lan: true` was always refused before and is reachable now while its grant is active. The migration entry
+   in the Log names each one (`NOTE grant …: target … names the address … inside blocked range …. It was
+   refused before; now it is reachable while the grant is active`, with `approval for … is automatic` where
+   that applies). Delete the target, or the grant, if that is not wanted.
 3. **The table.** *Destinations* shows the list in the order it is checked; the line under it counts the
    built-in and config blocks. *Test a destination* shows what decides for one host and port.
 4. **`gateway.yaml`**: delete `grants_lan_allow`, rename `hard_deny_floor` / `grants_never` to `never`.
@@ -435,7 +439,11 @@ With a host directory instead of the volume (`GATEWAY_DATA`), copy the files the
 The same copy, followed by a start of the **new** gateway, runs the migration again from the old file.
 
 Exports and policy versions from before the upgrade stay usable: an import or a *Restore version* of one is
-migrated the same way, and the preview shows the policy as it will be in force.
+migrated the same way, and the preview shows the policy as it will be in force. The same `NOTE` lines are
+recorded: an import shows them as warnings before you apply it, and the Log entry of the import or restore
+carries them. Whenever a whole policy is put in force (import, restore, `PUT /policy`, the raw editor), the
+Log entry also says which built-in or config blocks are **not** in force in it (`built-in block(s) not in
+force: …`).
 
 ### Restoring the built-in blocks
 
@@ -447,8 +455,10 @@ and upgrades ([rules.md](rules.md#built-in-blocks), and what that means:
   every `never` entry of the gateway config that is not in the list as a permanent `deny` for exactly that
   range on every port. It changes no other rule and says how many it added (*No built-in block is missing*
   when there is nothing to do). The API route is `POST /destinations/restore-blocks` ([api.md](api.md)).
-- A restored block is added **at the bottom**. An allow rule for an address in its range that stands above it
-  keeps deciding for that address; delete such rules if you want the whole range closed again.
+- **Restoring does not close what an address rule above the blocks opens.** A restored block is added at the
+  bottom; an `allow` (or `ask`) rule for an address in its range that stands above it keeps deciding for that
+  address. The message after the click and the Log entry list these (`Still open by rules above the blocks:
+  192.168.44.1/32`; in the API answer: `opened`). Delete such rules if you want the whole range closed again.
 - To see who removed a block and when, or to go back to the policy as it was: **Log → Policy history**,
   *Show changes* and *Restore version*.
 - The line under the *Destinations* table counts the built-in and config blocks in the list.

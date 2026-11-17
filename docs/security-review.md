@@ -21,11 +21,26 @@
 > |---|---|
 > | TG-03 (hard-deny list editable at runtime) | **The fix is withdrawn by decision.** There is no immutable floor, no `hard_deny_floor` and no `hard_deny`: the blocked ranges are rules, and an authenticated UI session or the API token can add an allow rule for a local address or delete a block (first ADR-0017, then ADR-0019). The attack described under TG-03 is therefore possible again for whoever holds the UI session; it is accepted and listed in the threat model (T27, residual risks). What still bounds it: the agent has no path to the UI or the API, the locked ranges cannot be opened from there (T46), so the control plane itself stays out of the agent's reach, and every change is a policy version with its author. The regression tests named in the table (`test_hard_deny_floor_…`) no longer exist; `test_gw_rule_list.py`, `test_gw_locked.py` and `test_floor.py` cover the new model. |
 > | TG-01 (script on the UI origin) | The fix is unchanged. Its impact statement "remove hard-deny entries (TG-03)" applies again to a compromised UI session, for the same reason. |
-> | TG-02 (DNS exfiltration, name-first evaluation) | The fix stands: a name the policy denies or still has to ask about is not resolved. "Checked against the hard deny on every resolved IP" now reads: every resolved IP is checked against the rule list, and a name rule never opens a blocked range (T45). <!-- TODO(0019-amend): confirm against the amended ADR-0019 that name-first holds without exceptions --> |
+> | TG-02 (DNS exfiltration, name-first evaluation) | The fix stands: a name the policy denies or still has to ask about is not resolved. "Checked against the hard deny on every resolved IP" now reads: every resolved IP is checked against the rule list, and a name rule never opens a blocked range (T45). The first implementation of ADR-0019 weakened this (see the 2026-11-17 note below); the amendment restored it without exception. |
 > | TG-15 (`allow_private` on every path) | The fix stands: reverse mode, exact host and port. The exception now skips the built-in and config blocks only; the operator's own rules and the locked ranges apply to the target. |
 > | TG-16 (IPv6 link-local) | Unchanged. The IPv6 ranges are built-in blocks like the IPv4 ones. |
 >
 > Findings not listed are not affected.
+>
+> **Note, 2026-11-17: second review, of the implementation of ADR-0019 (PR #211).** It found regressions
+> against earlier fixes, and ADR-0019 was amended the same day ("names pass two checks"). The findings and
+> what became of them:
+>
+> | Finding | Problem in the first implementation | Outcome |
+> |---|---|---|
+> | H1 | One address `allow` rule for a port (for example an approved IP literal) meant that no `deny` or `ask` for a name on that port could be acted on before DNS: the gateway resolved every name the agent asked for. A regression of TG-02 / ADR-0011. | **Fixed by the amendment.** The name is decided by the name rules alone; `deny` and `ask` are acted on before the lookup, always. |
+> | M1 | An allowed address allowed every name that resolves to it, with that name's SNI and Host, and outranked a name `deny` below it. On a shared CDN address that is another site (ADR-0013, threat T7a). | **Fixed by the amendment.** An address `allow` lets no name through by itself, and a name `deny` wins wherever it stands. |
+> | M2 | The migration seeded the blocks below old address `allow`/`ask` rules, which had had no effect inside a blocked range: upgrading opened what had been closed. | **Fixed by the amendment.** Blocks that such a rule overlaps are placed above it; the log names the rules. Old versions and exports are migrated the same way. |
+> | M3 | A grant target that names an address (an IP, or a fixed `address`) is not subject to the blocks, including loopback, cloud metadata and the `never` entries of the gateway config, which were closed to every grant before; targets stored without `lan` start to work on upgrade. | **Partly.** The upgrade names each such target in the log, with whether a level is approved automatically. The rest is accepted by the ADR and listed in the threat model (T30, residual risks). |
+>
+> Also changed with it: a seeded block takes no time limit; replacing a whole policy records which built-in
+> blocks are not in force; the locked ranges match NAT64 and 6to4 forms of a locked address; an empty
+> `GW_INTERNAL_NETS` is logged as an error; allowing an address from the log takes a second click.
 
 Severity scale: **Critical**: the agent gains control of the operator plane or fully escapes the policy.
 **High**: a security boundary is bypassed or weakened in a realistic setup. **Medium**: an exploitable

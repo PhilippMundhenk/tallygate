@@ -237,30 +237,39 @@ about is decided without resolving it, as for a real connection
 | Rows | What they are | Actions |
 |---|---|---|
 | Rules | Your rules, approvals, shortcut rules and rules saved from learning mode, each with its access (*allow*, *ask*, *deny*), ports, time limit, group and source | **Move up**, **Move down**, **Edit**, **Delete** |
-| Built-in blocks | `deny` rules for your local network, loopback, cloud metadata and other special ranges (source *built-in block*), and the `never` entries of the gateway config (source *never (config file)*). They start at the bottom of the list | the same: they are ordinary rules. Deleting one asks for confirmation and names the range |
+| Built-in blocks | `deny` rules for your local network, loopback, cloud metadata and other special ranges (source *built-in block*), and the `never` entries of the gateway config (source *never (config file)*). They start at the bottom of the list | the same: they are ordinary rules, except that a block takes no time limit. Deleting one asks for confirmation and names the range |
 | Read-only hosts, credentials, repository limits | Limits from the gateway config file, tagged *config file* | none here |
 | Locked ranges | The tallygate stack's own networks and the gateway's own ports, marked *locked*: checked before the list | none: nothing opens them |
 | Everything else | The default: *ask*, *deny* or *allow* | changed under [Settings](#settings) |
 
 - **Add rule** (above the table): *allow*, *deny* or *ask*; a host pattern or a CIDR; ports; a note; an
-  optional time limit in seconds. A new rule is added **at the top**, so it decides before everything below
-  it. An IP address in the host field is stored as a rule for that address.
-- **Move up / Move down** change the place of a rule by one. <!-- TODO(0019-amend): which order matters -->
+  optional time limit in seconds. A new rule is added **at the top**. An IP address in the host field is
+  stored as a rule for that address.
+- **How the table decides, in short:** a destination given as an IP is decided by the first rule for an
+  address that contains it. A destination given by name passes two checks: the first rule for a name that
+  matches decides (deny and ask before the name is looked up), and every address it resolves to must not be
+  blocked. An allow rule for an address lets no name through by itself.
+- **Move up / Move down** change the place of a rule by one. The order matters among rules for addresses
+  (an allow opens an address only above the block of its range) and among rules for names; where a name
+  rule stands relative to an address rule does not ([rules.md](rules.md#order-of-the-list)).
 - **Edit** changes the access, ports, note, time limit and group of a rule in place. What a rule matches is
   not editable: add a new rule and delete the old one.
 - **Group selected / Ungroup selected** put ticked rules in a named set, to keep related rules together.
 - **Filter** narrows the table to rows whose host or range contains the text.
 - **Restore built-in blocks** adds back the built-in and config blocks that are missing from the list, at
-  the bottom ([operations](operations.md#restoring-the-built-in-blocks)).
+  the bottom. It does not close what an address rule above the blocks opens, and says which ranges are still
+  open ([operations](operations.md#restoring-the-built-in-blocks)).
 - The line under the table counts the built-in and config blocks in the list and the locked ranges.
 
-Two marks tell you when a rule cannot do what it says: **blocked by a range rule below** on a rule for a <!-- TODO(0019-amend) -->
-name whose address was inside a blocked range (with the last address, the range and what to do), and
+Two marks tell you when a rule cannot do what it says: **blocked by a range rule** on a rule for a name
+whose address was inside a blocked range (with the last address, the range, the warning that somebody may
+be redirecting the name, and what to do if the address is right), and
 **never reached** on an address rule that an earlier one covers completely
 ([rules.md](rules.md#marks-in-the-table)).
 
 **To let the agent reach one device on your local network**, add an allow rule for its address and port
-here (it lands above the block of its range), or create a grant when the agent should ask each time
+here (it lands above the block of its range). To reach it by name, allow the name as well: both rules are
+needed. Or create a grant when the agent should ask each time
 ([worked examples](rules.md#the-local-network-worked-examples)). Do not delete the block of the whole range
 for it.
 
@@ -516,7 +525,7 @@ destinations in plain text, like Telegram does.
 | Allow docs browsing for an hour | *Quick settings → Internet → Allow web for 1 h* (preset file `open` with TTL `3600`) |
 | Let the agent install Go modules today | *Quick settings → Tool ecosystems → Go modules → For 1 day → Allow* |
 | Block a noisy telemetry host quietly | `deny` rule for the host (no more prompts) |
-| Always allow one device on the local network | *Destinations → Add rule*: `allow`, *CIDR*, its address, its port ([example](rules.md#a-allow-one-local-device)) |
+| Always allow one device on the local network | *Destinations → Add rule*: `allow`, *CIDR*, its address, its port; to use it by name, also `allow`, *Host*, its name ([example](rules.md#a-allow-one-local-device)) |
 | Let the agent use a local device on request | *Quick settings → Local network*, or a grant with paths and levels ([grants.md](grants.md)) |
 | Reach a LAN database from a client that cannot use a proxy | `services:` entry with `allow_private: true` in the gateway config (`gateway.yaml`, see [operations](operations.md#with-docker-compose-recommended)) |
 | Find out why something is blocked | *Destinations → Test a destination*, or the reason in the *Log* |

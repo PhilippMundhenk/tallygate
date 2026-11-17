@@ -218,20 +218,24 @@ operator's view and worked examples, is [rules.md](rules.md); this is how the ga
 1. **Validate** the name (strict DNS syntax, ASCII/punycode only, ≤ 253 chars) — otherwise deny.
 2. **Active grant.** If an active grant carries the destination, it decides, as rules at the top of the
    list for its targets ([Grants](#grants)).
-3. **Name-first decision** (no DNS yet, [ADR-0011](adr/0011-decide-on-names-before-resolving.md)): the first
-   name rule that matches, else the default. `deny` → refuse without resolving; `ask` → hold and ask the
-   human first. An `allow` is never final here. <!-- TODO(0019-amend) -->
+3. **The name** (no DNS yet, [ADR-0011](adr/0011-decide-on-names-before-resolving.md)): the first name rule
+   that matches, else the default; address rules are not looked at. `deny` → refuse without resolving;
+   `ask` → hold and ask the human first. Both always: no address rule can turn them into `allow`. An `allow`
+   is never final here.
 4. **Resolve** the name (IP literals skip 3–4).
 5. **For each address** (the literal, or every resolved one):
-   1. **Locked ranges** (`GW_INTERNAL_NETS`, the gateway's own listeners): deny, before the list and
-      whatever it says. They are not rules and not part of the stored policy.
-   2. **The address rules.** For an IP-literal destination the list is walked from the top and the first
-      matching address rule decides. For a name, an address `deny` rule that contains the address blocks the
-      connection whatever the name rule said, with a reason that names both rules; a name rule never opens a
-      blocked range. Rules whose port does not match or whose time is up are skipped.
-      <!-- TODO(0019-amend): how name rules and address rules combine for a name is being changed; rewrite
-      this step against the amended ADR-0019 and policy.py -->
-   3. Nothing matched: the **default** (`allow`, `deny` or `ask`).
+   1. **Locked ranges** (`GW_INTERNAL_NETS`, the gateway's own listeners, also behind a NAT64, 6to4 or
+      IPv4-compatible IPv6 form): deny, before the list and whatever it says. They are not rules and not
+      part of the stored policy.
+   2. **IP-literal destination** (`_walk`): the list from the top; the first address rule that contains the
+      address is final; nothing matched: the default. A name rule whose pattern matches the literal (`*`) is
+      final with `deny` and provisional with `allow`/`ask`: below it only an address `deny` still counts.
+   3. **Name destination** (`_walk_name`): a name `deny` is final wherever it stands. Otherwise the first
+      address rule with `allow` or `deny` that contains the address says whether the address is open: `deny`
+      blocks it, with a reason that names both rules; `allow`, or no such rule, leaves the result of the name
+      (its rule, or the default). Address `ask` rules are skipped. An address `allow` therefore never lets a
+      name through by itself ([ADR-0013](adr/0013-sni-and-host-bound-to-the-checked-name.md)).
+   4. Rules whose port does not match or whose time is up are skipped throughout.
 6. **The most restrictive result over all addresses wins** (`deny` > `ask` > `allow`). On `ask` the human is
    asked; the approval adds a rule at the top and the list is walked again for these addresses, so an
    approved name still cannot open a blocked range. The connection is pinned to the checked address
@@ -239,7 +243,8 @@ operator's view and worked examples, is [rules.md](rules.md); this is how the ga
 
 The **built-in blocks** (private, loopback, link-local/metadata, CGNAT, multicast and special ranges) and the
 `never` entries of the gateway config are ordinary `deny` rules, seeded once at the bottom of the list
-(`source: builtin` / `config`) and remembered in `seeded`, so a deleted block is not added again. A
+(`source: builtin` / `config`) and remembered in `seeded`, so a deleted block is not added again. A seeded
+block takes no `expires`, and one whose action is changed becomes an ordinary rule (`source: user`). A
 service-port target with `allow_private` skips exactly these seeded blocks, on that port only; every other
 rule and the locked ranges apply to it.
 
@@ -251,7 +256,7 @@ for) is allowed instead of the default, in step 3 and again in step 5; the locke
 the built-in blocks among them, still decide first. It is time-limited, held in memory only, and ends on the
 emergency stop and on restart (#69).
 
-The gateway counts, per name rule, how often an address `deny` below it stopped it (`shadowed`), and the
+The gateway counts, per name rule, how often an address `deny` stopped it (`shadowed`), and the
 model marks address rules that an earlier one covers completely (`covered_by`); the UI shows both
 ([rules.md](rules.md#marks-in-the-table)).
 
@@ -262,7 +267,7 @@ Rule matching:
 | Field | Semantics |
 |---|---|
 | `host` | A **name rule**. Case-insensitive glob. `*.example.com` matches `example.com` **and** all subdomains. `*` matches everything, IP literals included. |
-| `cidr` | An **address rule**. Matches when the address being checked is inside the range. <!-- TODO(0019-amend): what it means for a destination given by name --> |
+| `cidr` | An **address rule**. Matches when the address being checked is inside the range. For an IP-literal destination the first match decides (`allow`, `ask`, `deny`); for a name it only says whether a resolved address is open (`allow`) or blocked (`deny`), and `ask` is skipped. |
 | `port` | `443`, `[80, 443]`, `"8000-8100"` or `*` (default). |
 | `expires` | Unix timestamp; omitted = permanent. |
 

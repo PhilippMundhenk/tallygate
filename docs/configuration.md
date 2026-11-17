@@ -307,12 +307,12 @@ happens to each:
 | Key | Where | What happens to it now |
 |---|---|---|
 | `grants_lan_allow` | `gateway.yaml` | Ignored; a warning at every start until you delete it. UI grants are no longer limited to listed ranges: a target that names an address may be local. |
-| `lan: true` on a grant target | `gateway.yaml`, `grants.yaml` | Ignored; a warning names each target. A target with an IP or a fixed `address` keeps working. A target that is only a name no longer reaches a blocked range: set its `address`. In `grants.yaml` the flag is removed at the first start (backup `grants.yaml.pre-0019`). <!-- TODO(0019-amend) --> |
+| `lan: true` on a grant target | `gateway.yaml`, `grants.yaml` | Ignored; a warning names each target. A target with an IP or a fixed `address` keeps working. A target that is only a name no longer reaches a blocked range: set its `address`. In `grants.yaml` the flag is removed at the first start (backup `grants.yaml.pre-0019`). A target that names an address inside a blocked range and never had the flag was refused before and works now; the upgrade names each one in the Log. |
 | `hard_deny_floor` | `gateway.yaml` | Still read, as `never` entries (a warning at start). Rename it to `never`. |
 | `grants_never` | `gateway.yaml` | The same. |
 | `{range: …, scope: all+lan}` in `never` | `gateway.yaml` | Still read; `scope` no longer means anything, the entry is a plain range. Write the CIDR alone. |
-| `hard_deny` | `policy.yaml`, a policy sent to the API, an imported or restored policy | Migrated: each range becomes a `deny` rule below your rules, above the built-in blocks. <!-- TODO(0019-amend) --> |
-| `floor_open` | the same | Migrated: the ranges you had opened are not seeded as blocks, so they stay open. <!-- TODO(0019-amend) --> |
+| `hard_deny` | `policy.yaml`, a policy sent to the API, an imported or restored policy | Migrated: each range becomes a `deny` rule below your rules, above the built-in blocks. A range that one of your address `allow`/`ask` rules overlaps is placed at the top instead, above that rule, so that nothing opens. |
+| `floor_open` | the same | Migrated: the ranges you had opened are not seeded as blocks, so they stay open. Every other block that an address `allow`/`ask` rule overlaps is placed at the top, above that rule. |
 | `rules` without `seeded` | the same | A policy from before the ordered list: migrated as described in [operations](operations.md#upgrade-to-the-ordered-rule-list). |
 
 `python -m egressgw.convert <gateway.yaml>` prints your gateway config without the old keys (it writes
@@ -345,8 +345,14 @@ destinations:              # the rules, in the order they are checked: the first
     source: builtin                        # builtin | config: a seeded block; otherwise who added the rule
 ```
 
-- **Order is the order of the file.** There is no other precedence: an address rule above a block opens that
-  address, a rule below it does not ([rules.md](rules.md#how-a-destination-is-decided)).
+`source` is one of `user` (the default), `approval`, `learning`, `suggestion`, `preset:<name>`,
+`builtin` and `config`; anything else is refused. A block (`builtin`, `config`) is a `deny` for a range
+without `expires`: a time limit on one is refused, and a block whose `access` is changed is stored as
+`user`.
+
+- **Order is the order of the file.** An address rule above a block opens that address, one below it does
+  not; among rules for names the first match decides. A destination given by name must pass both kinds
+  ([rules.md](rules.md#how-a-destination-is-decided)).
 - **The built-in blocks are rules in this file** (`source: builtin`), and the `never` entries of the gateway
   config too (`source: config`). The list of ranges and what each protects:
   [rules.md](rules.md#built-in-blocks).
@@ -418,7 +424,7 @@ one that `compose.yaml` does not list, add it to that service's `environment:` b
 | egress-gw | `GW_HTTP_PORT` / `GW_SOCKS_PORT` / `GW_DNS_PORT` | Listener ports (3128 / 1080 / 53). |
 | egress-gw | `GW_API_HOST` / `GW_API_PORT` | API address on control-net / port (8081). |
 | egress-gw | `GW_GRANTS_PORT` | Agent grant API port on agent-net (8079). |
-| egress-gw | `GW_INTERNAL_NETS` | The **locked ranges**: the stack's own networks as comma-separated CIDRs (compose: the four `172.31.1x.0/24` networks). They are denied before the rule list is walked, for every connection and every grant; no rule, grant or API call opens them ([rules.md](rules.md#locked-ranges)). The gateway's own listeners (`GW_API_HOST`/`GW_API_PORT`, `GW_LISTEN_HOST` with the grant, proxy and SOCKS ports) are locked the same way, without a setting. Change it together with the `networks:` subnets; an invalid entry stops the gateway. |
+| egress-gw | `GW_INTERNAL_NETS` | The **locked ranges**: the stack's own networks as comma-separated CIDRs (compose: the four `172.31.1x.0/24` networks). They are denied before the rule list is walked, for every connection and every grant; no rule, grant or API call opens them ([rules.md](rules.md#locked-ranges)). Empty or unset, no network of the stack is locked and the gateway logs an error at start. The gateway's own listeners (`GW_API_HOST`/`GW_API_PORT`, `GW_LISTEN_HOST` with the grant, proxy and SOCKS ports) are locked the same way, without a setting. Change it together with the `networks:` subnets; an invalid entry stops the gateway. |
 | egress-gw | `GW_CONFIG`, `DATA_DIR`, `CA_EXPORT_DIR`, `PRESET_DIR` | Paths. |
 | egress-gw | `GW_EXTRA_ARGS` | Extra mitmdump arguments (advanced). |
 | egress-gw, control | `GW_API_TOKEN_FILE` | Token file in the `gw-token` volume (`/run/tallygate/gw/api-token`), used when `GW_API_TOKEN` is not set. |

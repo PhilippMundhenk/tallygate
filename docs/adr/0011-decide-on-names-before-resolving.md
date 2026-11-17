@@ -4,9 +4,11 @@
 - Date: 2026-11-11 (security review, finding TG-02)
 
 > **Amended by [ADR-0019](0019-one-ordered-rule-list.md).** The decision stands: a name the policy denies or
-> still has to ask about is not resolved. "The hard deny" in phase 2 is now the rule list with the built-in
-> blocks in it; how CIDR rules apply to names is defined by ADR-0019. See [rules.md](../rules.md).
-> <!-- TODO(0019-amend): state the final relation of CIDR allow/ask rules to names once ADR-0019 is amended -->
+> still has to ask about is not resolved, without exception (ADR-0019, amendment of 2026-11-17). "The hard
+> deny" in phase 2 is now the address rules of the one list, with the built-in blocks among them: for a name,
+> a CIDR `deny` blocks a resolved address, a CIDR `allow` above it opens the address but lets no name through
+> by itself (so the last consequence below still holds), and CIDR `ask` rules apply to IP literals only. See
+> [rules.md](../rules.md#when-a-name-is-resolved).
 
 ## Context
 
