@@ -10,7 +10,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from egressgw.policy import host_matches, is_ip, port_matches
+from egressgw.destinations import is_local
+from egressgw.policy import SEEDED_SOURCES, host_matches, is_ip, port_matches
 
 if TYPE_CHECKING:
     from egressgw.core import Gateway
@@ -47,8 +48,8 @@ def overview(gw: Gateway) -> dict:
 
     # 1) the rules, in their order (first match wins)
     for position, r in enumerate(policy.rules, 1):
-        if r.expired(now):
-            continue
+        if r.expired(now) or r.source in SEEDED_SOURCES:
+            continue  # the seeded blocks are listed on the Destinations tab, not in "what the agent can reach"
         info = {"id": r.id, "position": position, "note": r.note, "expires": r.expires, "source": r.source}
         rows.append(_row(r.host or r.cidr, r.port, r.action, info))
 
@@ -90,7 +91,7 @@ def overview(gw: Gateway) -> dict:
             entry = {
                 "name": g.name,
                 "levels": g.levels,
-                "lan": t.lan,
+                "local": is_local(t.fixed()),  # the target names an address that is not public
                 "scheme": t.scheme,
                 "paths": None if t.scheme == "tcp" or t.paths == ["/*"] else t.paths,
                 "credentials": any(i["host"] == t.host for i in g.inject),

@@ -7,7 +7,7 @@
   box.innerHTML = `<p class="hint">Every change to the policy is kept as a version: compare two, or go back to one.</p>
     <details class="help"><summary>What is in a version?</summary>
       <p>Changes from this UI, the API, approvals, shortcuts and the emergency stop each make a version. The
-        hard-deny floor and secrets are never part of a version.</p></details>
+        built-in blocks are rules and part of every version, in their place in the list; secrets never are.</p></details>
     <div class="row wrap">
       <label class="inline">From <select id="hiFrom"></select></label>
       <label class="inline">To <select id="hiTo"></select></label>
@@ -21,7 +21,9 @@
     <p class="hint">One YAML file with the policy and the grants defined in the UI; secrets are not included.</p>
     <details class="help"><summary>What happens on an import?</summary>
       <p>The file moves a setup to another host or shares it as a starting point. An import is checked like a
-        normal policy change and shown before anything is replaced; the hard-deny floor stays as configured.</p></details>
+        normal policy change and shown before anything is replaced. A file from an older release is translated to the one ordered list: its
+        CIDR deny rules move to the top and the built-in blocks are added at the bottom. A block that an allow or ask rule for an
+        address reaches into goes to the top instead, so nothing that was blocked opens; the preview lists these.</p></details>
     <div class="row wrap">
       <button id="hiExport" class="secondary">Export policy</button>
       <label class="filebtn">Import policy&hellip;<input id="hiImport" type="file" accept=".yaml,.yml,text/yaml"></label>
@@ -34,16 +36,12 @@
     return `${r.action} ${r.host || r.cidr}${r.port !== undefined && r.port !== "*" ? ":" + portText(r.port) : ""}` +
       (r.note ? ` (${r.note})` : "") + (r.expires ? `, until ${fmtDate(r.expires)}` : "");
   }
-  // A diff from the gateway ({default, ask_timeout, hard_deny, rules, reordered, identical}) as a list.
+  // A diff from the gateway ({default, ask_timeout, rules, reordered, identical}) as a list.
   function renderDiff(d) {
     if (d.identical) return '<p class="muted">No differences.</p>';
     const li = [];
     if (d.default) li.push(`<li>Mode <code>${esc(d.default[0])}</code> &rarr; <code>${esc(d.default[1])}</code></li>`);
     if (d.ask_timeout) li.push(`<li>Approval timeout ${esc(d.ask_timeout[0])} s &rarr; ${esc(d.ask_timeout[1])} s</li>`);
-    if (d.hard_deny) {
-      d.hard_deny.added.forEach((c) => li.push(`<li class="add">+ hard deny <code>${esc(c)}</code></li>`));
-      d.hard_deny.removed.forEach((c) => li.push(`<li class="del">&minus; hard deny <code>${esc(c)}</code></li>`));
-    }
     if (d.rules) {
       d.rules.added.forEach((r) => li.push(`<li class="add">+ rule <code>${esc(ruleText(r))}</code></li>`));
       d.rules.removed.forEach((r) => li.push(`<li class="del">&minus; rule <code>${esc(ruleText(r))}</code></li>`));

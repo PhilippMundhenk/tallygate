@@ -1,9 +1,17 @@
 # ADR-0017: The admin may edit the deny floor from the UI
 
-- Status: Accepted
+- Status: Superseded by [ADR-0019](0019-one-ordered-rule-list.md) (2026-11-15)
 - Date: 2026-11-14
 - Issue: #177
 - Amends: ADR-0014 §4 (the trust split), for the never-floor only
+
+> **Superseded by [ADR-0019](0019-one-ordered-rule-list.md).** The text below is kept as the record of the
+> decision as it was taken. What it decided in principle still holds: an authenticated UI session may open
+> the local network. How it is done no longer does: there is no deny floor, no `floor_open` and no
+> *Unblock range* action. The blocked ranges are ordinary `deny` rules at the bottom of one ordered rule list,
+> opened narrowly by an address rule above them or removed by deleting them, and `policy.yaml` is migrated
+> (ranges in `floor_open` are not seeded as blocks). `grants.internal` lives on as the locked ranges. The
+> statement that `lan: true` and `grants_lan_allow` stay file-only is void: both are gone.
 
 ## Outcome
 

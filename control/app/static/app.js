@@ -69,7 +69,7 @@ function showTab(name) {
   });
   history.replaceState(null, "", "#" + name);
   if (name === "destinations") guard(loadPolicy)();  // the rules table
-  if (name === "quickstart") { guard(loadPolicy)(); guard(loadGrants)(); }  // shortcuts reflect the policy; the LAN form needs lan_allow_ui
+  if (name === "quickstart") { guard(loadPolicy)(); guard(loadGrants)(); }  // shortcuts reflect the policy; the local-network form checks the grant names
   if (name === "settings") guard(loadPolicy)();  // Mode + raw policy JSON come from the policy
   if (name === "grants") { guard(loadGrants)(); guard(loadSecrets)(); }
   if (tabHooks[name]) guard(tabHooks[name])();
@@ -233,14 +233,20 @@ function logRow(e) {
     <td><code>${esc(dest)}</code>${e.ips && e.ips.length ? `<br><span class="muted">${esc(e.ips.join(", "))}</span>` : ""}</td>
     <td class="a-${esc(e.action)}">${esc(e.action)}</td><td>${esc(e.reason)}</td><td></td>`;
   const reason = String(e.reason);
-  if (e.kind === "conn" && e.host && !reason.startsWith("hard-deny") && reason !== "invalid hostname") {
+  if (e.kind === "conn" && e.host && !reason.startsWith("locked:") && reason !== "invalid hostname") {
     const cell = tr.lastElementChild;
     for (const [action, label] of [["allow", "Allow"], ["deny", "Deny"]]) {
       const b = document.createElement("button"); b.textContent = label; b.className = "small ghost";
       b.setAttribute("aria-label", `${label} ${dest}`);
-      b.onclick = guard(async () => {
+      const add = async () => {
         await gw("POST", "/destinations", { access: action, match: { host: e.host, port: e.port }, note: "from log" }); toast(`Rule added: ${action} ${dest}`);
-      });
+      };
+      // An allow for an address goes to the top of the list and opens the address even inside a blocked range
+      // (your local network, metadata): the agent chose it, so this takes a second click.
+      const address = /^[\d.]+$/.test(e.host) || e.host.includes(":");
+      b.onclick = action === "allow" && address
+        ? confirmClick(b, `Allow the address ${dest}? The rule is added at the top and opens it even if it is inside a blocked range.`, add)
+        : guard(add);
       cell.appendChild(b);
     }
   }
@@ -301,7 +307,7 @@ function setField(sel, value, keepEdits) {
   el.value = value; delete el.dataset.dirty; el.classList.remove("stale"); el.title = "";
   return true;
 }
-// The never-reachable deny floor is shown and edited in the one Destinations table (ADR-0017), not here.
+// The blocked ranges are rules in the one Destinations table (ADR-0019), not a setting here.
 let rawBase = null;  // the policy the raw editor's text was loaded from (JSON)
 async function loadPolicy(keepEdits = false) {
   policy = await gw("GET", "/policy");
@@ -334,18 +340,22 @@ $("#saveRaw").onclick = guard(async () => {
 });
 $("#reloadRaw").onclick = guard(async () => { delete $("#rawPolicy").dataset.dirty; await loadPolicy(true); });
 function explainTest(r) {
-  // What decided, in the order the gateway checks (docs/rules.md#how-a-connection-is-decided).
-  const idx = r.rule_id && policy ? policy.rules.findIndex((x) => x.id === r.rule_id) : -1;
-  if (idx >= 0) {
-    const rule = policy.rules[idx];
-    return `Decided by rule #${idx + 1}: ${rule.action} ${rule.host || rule.cidr} port ${portText(rule.port)}` +
-      (rule.source && rule.source !== "user" ? ` [${rule.source}]` : "") + " (the first matching rule from the top wins).";
+  // What decided, in the order the gateway checks: the gateway names the deciding rule and its position.
+  const lines = [];
+  if (r.rule) {
+    const rule = r.rule;
+    lines.push(`Decided by rule #${r.pos} (${rule.id}): ${rule.action} ${rule.host || rule.cidr} port ${portText(rule.port === undefined ? "*" : rule.port)}` +
+      (rule.source && rule.source !== "user" ? ` [${rule.source}]` : "") + ". The first matching rule from the top wins.");
+  } else if (r.rule_id === "locked") {
+    lines.push("Decided before the list: the tallygate stack's own networks and the gateway's own ports are locked. No rule or grant opens them.");
+  } else if (/invalid hostname/.test(r.reason || "")) lines.push("Not a valid host name.");
+  else if (/^default/.test(r.reason || "")) lines.push(`No rule matched, so the default decided (${policy ? policy.default : "default"}).`);
+  if (r.shadow) {
+    lines.push(`Rule ${r.shadow.rule} matches the name, but a name rule cannot open a blocked range: ${r.shadow.address} is inside ${r.shadow.range} (rule ${r.shadow.by}).`,
+      "If you did not expect this name to point there, somebody may be redirecting it (DNS rebinding): leave it blocked.",
+      `If the address is right, add an allow rule for the address ${r.shadow.address} on Destinations: it is added at the top, above the blocked range.`);
   }
-  if (r.rule_id === "hard_deny" || /hard-deny/.test(r.reason || ""))
-    return "Decided by the hard deny: local network, Docker host or metadata addresses are never reachable. Use a grant for one device.";
-  if (/invalid hostname/.test(r.reason || "")) return "Not a valid host name.";
-  if (/^default/.test(r.reason || "")) return `No rule matched, so the mode decided (${policy ? policy.default : "default"}).`;
-  return "";
+  return lines.join("\n");
 }
 $("#testBtn").onclick = guard(async () => {
   const r = await gw("POST", "/test", { host: $("#testHost").value.trim(), port: +$("#testPort").value || 443 });
@@ -453,16 +463,11 @@ $("#qaStop").onclick = confirmClick($("#qaStop"), "Revoke all grants, deny every
   showStopResult(r); toast(r.ok ? "Emergency stop: unknown destinations are blocked" : "Emergency stop incomplete", !r.ok);
   await Promise.allSettled([loadPolicy(true), loadGrants(), loadPending()]);
 });
-// Local network (#198): a short form that creates a grant for one device directly. UI grants may only reach
-// addresses inside grants_lan_allow (gateway config, file-only by the trust split), so without it the form is
-// replaced by a hint that says what to do instead - never a button that only reveals text.
-function renderLan() {
-  const allow = grants.lan_allow_ui || [], help = $("#qaLanHelp");
-  $("#qaLanForm").classList.toggle("hidden", !allow.length);
-  help.classList.toggle("hidden", false);
-  help.innerHTML = allow.length ? `Devices inside <code>${esc(allow.join(", "))}</code>.`
-    : `Not available yet: set <code>grants_lan_allow</code> in the gateway config and restart the gateway, or unblock
-       a whole range on <i>Destinations</i>.`;  // the example and the docs link are in the help disclosure below
+// Local network (#198, ADR-0019): a short form that creates a grant for one device directly, with the host as
+// given. A target that is an IP is an address and may be local; one that is only a name cannot open a blocked
+// range - the gateway refuses it with the address to use instead, and that explanation is shown under the form.
+function lanError(msg) {
+  const box = $("#qaLanError"); box.textContent = msg || ""; box.classList.toggle("hidden", !msg);
 }
 $("#qlKind").onchange = () => {
   const tcp = $("#qlKind").value === "tcp";  // raw TCP cannot be limited to reading
@@ -473,24 +478,30 @@ $("#qaLanForm").onsubmit = guard(async (e) => {
   const name = $("#qlName").value.trim(), kind = $("#qlKind").value, full = $("#qlAccess").value === "full" || kind === "tcp";
   if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(name)) throw new Error("Name: lower case letters, digits, - and _");
   if (grants.defs.some((d) => d.name === name)) throw new Error(`A grant named ${name} exists already: edit it on the Grants tab`);
-  const target = { scheme: kind, host: $("#qlHost").value.trim(), port: Number($("#qlPort").value), lan: true };
+  const target = { scheme: kind, host: $("#qlHost").value.trim(), port: Number($("#qlPort").value) };
   if (kind !== "tcp") target.paths = ["/*"];
   const levels = kind === "tcp" ? ["write"] : full ? ["read", "write"] : ["read"];
-  await gw("PUT", `/destinations/grant/${encodeURIComponent(name)}`, {
-    description: "Device on the local network", levels, approval: Object.fromEntries(levels.map((l) => [l, "ask"])),
-    default_ttl: $("#qlDur").value, max_ttl: $("#qlDur").value, targets: [target] });
+  lanError("");
+  try {
+    await gw("PUT", `/destinations/grant/${encodeURIComponent(name)}`, {
+      description: "Device on the local network", levels, approval: Object.fromEntries(levels.map((l) => [l, "ask"])),
+      default_ttl: $("#qlDur").value, max_ttl: $("#qlDur").value, targets: [target] });
+  } catch (err) {
+    lanError(err.message);  // e.g. the name resolves into a blocked range: says which address to enter instead
+    throw err;
+  }
   toast(`Grant ${name} created`); e.target.reset(); await loadGrants();
 });
 
 /* ---------------- grants ---------------- */
-let grants = { defs: [], active: [], requests: [], lan_allow_ui: [], missing_secrets: {} };
+let grants = { defs: [], active: [], requests: [], missing_secrets: {} };
 const fmtLeft = (exp) => { const s = Math.max(0, Math.round(exp - Date.now() / 1000)); return s > 5400 ? `${Math.round(s / 3600)} h` : s > 90 ? `${Math.round(s / 60)} min` : `${s} s`; };
 async function loadGrants() {
   grants = await gw("GET", "/grants");
-  renderGrantRequests(); renderGrants(); renderLan();
+  renderGrantRequests(); renderGrants();
 }
 function grantTargets(d) {
-  return d.targets.map((t) => `<code>${esc(t.scheme)}://${esc(t.host)}:${esc(t.port)}${t.paths && t.paths.join(",") !== "/*" ? esc(" " + t.paths.join(",")) : ""}</code>${t.lan ? ' <span class="tag">LAN</span>' : ""}`).join("<br>");
+  return d.targets.map((t) => `<code>${esc(t.scheme)}://${esc(t.host)}:${esc(t.port)}${t.paths && t.paths.join(",") !== "/*" ? esc(" " + t.paths.join(",")) : ""}</code>${t.address ? ` <span class="muted">at ${esc(t.address)}</span>` : ""}${t.local ? ' <span class="tag">local</span>' : ""}`).join("<br>");
 }
 function renderGrantRequests() {
   syncCards($("#grantReqList"), grants.requests, grantRequestCard);
@@ -559,7 +570,6 @@ function renderGrants() {
     defs.appendChild(el);
   }
   if (!grants.defs.length) defs.innerHTML = '<p class="empty">No grants defined yet. Create the first one below.</p>';
-  $("#geLanAllow").textContent = grants.lan_allow_ui.join(", ") || "nothing (set grants_lan_allow in the config file)";
   updateBadges();
 }
 function updateBadges() {
@@ -574,11 +584,11 @@ function targetRow(t = { scheme: "https", host: "", port: 443, paths: ["/*"] }) 
   const row = document.createElement("div"); row.className = "target-row";
   row.innerHTML = `<select class="t-scheme" aria-label="Scheme"><option>https</option><option>http</option><option>tcp</option></select>
     <input class="t-host" aria-label="Host" placeholder="ha.lan or 192.168.1.5"><input class="t-port" type="number" min="1" max="65535" aria-label="Port">
-    <input class="t-paths" aria-label="Paths" placeholder="Paths, e.g. /api/*"><label><input type="checkbox" class="t-lan"> LAN</label>
+    <input class="t-paths" aria-label="Paths" placeholder="Paths, e.g. /api/*">
     <input class="t-address" aria-label="Fixed IP (optional)" placeholder="Fixed IP (optional)"><input class="t-fp" aria-label="SHA-256 certificate fingerprint (optional)" placeholder="SHA-256 cert fingerprint (optional)">
     <button class="small ghost t-del" aria-label="Remove target">Remove</button>`;
   $(".t-scheme", row).value = t.scheme; $(".t-host", row).value = t.host; $(".t-port", row).value = t.port;
-  $(".t-paths", row).value = (t.paths || ["/*"]).join(", "); $(".t-lan", row).checked = !!t.lan;
+  $(".t-paths", row).value = (t.paths || ["/*"]).join(", ");
   $(".t-address", row).value = t.address || ""; $(".t-fp", row).value = t.tls_fingerprint || "";
   $(".t-del", row).onclick = () => row.remove();
   return row;
@@ -586,7 +596,6 @@ function targetRow(t = { scheme: "https", host: "", port: 443, paths: ["/*"] }) 
 // The simple form (#121): address, type, access, duration, local network. It writes into the controls under
 // "Advanced", which are what is saved; changes made there are shown back in the simple form.
 const GE_PORTS = { https: 443, http: 80 };
-const GE_LOCAL = /(\.(lan|local|home\.arpa|internal|fritz\.box)$)|^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
 function parseGrantAddress(value) {
   let v = value.trim(), scheme = null, path = null;
   const m = v.match(/^([a-z][a-z0-9+.-]*):\/\/(.*)$/i);
@@ -609,8 +618,6 @@ function grantSimpleToAdvanced() {
   $(".t-scheme", row).value = kind; $(".t-host", row).value = a.host;
   $(".t-port", row).value = a.port || GE_PORTS[kind] || (a.scheme === "ssh" ? 22 : "");
   if (kind !== "tcp" && a.path && a.path !== "/") $(".t-paths", row).value = a.path.endsWith("/") ? `${a.path}*` : `${a.path}, ${a.path}/*`;
-  if (!$("#geLan").dataset.touched) $("#geLan").checked = GE_LOCAL.test(a.host);
-  $(".t-lan", row).checked = $("#geLan").checked;
   if (kind === "tcp") $("#geAccess").value = "full";  // no protocol visibility: read-only cannot be enforced
   $("#geAccess").options[0].disabled = kind === "tcp";
   const full = $("#geAccess").value === "full";
@@ -626,7 +633,6 @@ function grantAdvancedToSimple() {
   $("#geKind").value = kind;
   const host = row ? $(".t-host", row).value.trim() : "", port = row ? $(".t-port", row).value : "";
   $("#geAddr").value = host ? `${host.includes(":") ? `[${host}]` : host}${port ? `:${port}` : ""}` : "";
-  $("#geLan").checked = !!row && $(".t-lan", row).checked;
   $("#geAccess").options[0].disabled = kind === "tcp";
   $("#geAccess").value = $("#geWrite").checked ? "full" : "read";
   const dur = $("#geTtl").value.trim();
@@ -640,7 +646,6 @@ function grantAdvancedToSimple() {
   return special;
 }
 ["#geAddr", "#geKind", "#geAccess", "#geDur"].forEach((id) => { $(id).oninput = grantSimpleToAdvanced; $(id).onchange = grantSimpleToAdvanced; });
-$("#geLan").onchange = () => { $("#geLan").dataset.touched = "1"; grantSimpleToAdvanced(); };
 $("#geAdvanced").addEventListener("change", grantAdvancedToSimple);
 $("#geAdvanced").addEventListener("click", (e) => { if (e.target.closest(".t-del, #geAddTarget")) setTimeout(grantAdvancedToSimple); });
 
@@ -653,7 +658,6 @@ function openGrantEditor(d) {
   $("#geApprRead").value = d?.approval?.read || "ask"; $("#geApprWrite").value = d?.approval?.write || "ask";
   $("#geTtl").value = d ? d.default_ttl : "1h"; $("#geMaxTtl").value = d ? d.max_ttl : "4h";
   $("#geTargets").innerHTML = ""; (d ? d.targets : [undefined]).forEach((t) => $("#geTargets").appendChild(targetRow(t)));
-  delete $("#geLan").dataset.touched; if (d) $("#geLan").dataset.touched = "1";  // an existing grant keeps its LAN setting
   if (!d) { $("#geAddr").value = ""; $("#geKind").value = "https"; $("#geAccess").value = "read"; $("#geDur").value = "1h"; grantSimpleToAdvanced(); }
   $("#geAdvanced").open = grantAdvancedToSimple();  // open "Advanced" when the grant uses more than the simple form shows
   ed.scrollIntoView({ behavior: "smooth" });
@@ -668,7 +672,6 @@ $("#geSave").onclick = guard(async () => {
   const targets = $$("#geTargets .target-row").map((r) => {
     const t = { scheme: $(".t-scheme", r).value, host: $(".t-host", r).value.trim(), port: Number($(".t-port", r).value) };
     if (t.scheme !== "tcp") t.paths = $(".t-paths", r).value.split(",").map((x) => x.trim()).filter(Boolean);
-    if ($(".t-lan", r).checked) t.lan = true;
     if ($(".t-address", r).value.trim()) t.address = $(".t-address", r).value.trim();
     if ($(".t-fp", r).value.trim()) t.tls_fingerprint = $(".t-fp", r).value.trim();
     return t;

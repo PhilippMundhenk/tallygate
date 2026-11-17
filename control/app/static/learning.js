@@ -73,7 +73,7 @@
       <p>For a limited time, connections to public destinations that no rule covers are allowed on the chosen
         ports and recorded. Afterwards you see what was used, grouped by domain, and add the rules you want in
         one go.</p>
-      <p>The hard deny (local network, Docker host, metadata), your deny and ask rules and grants stay in force,
+      <p>The blocked ranges (local network, Docker host, metadata), your deny and ask rules and grants stay in force,
         names are still decided before they are resolved, and learning mode ends by itself (also on the emergency
         stop and when the gateway restarts).</p></details>
     <div id="learnState"></div><div id="learnSessions" class="row wrap"></div><div id="learnSummary"></div>`;

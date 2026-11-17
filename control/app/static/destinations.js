@@ -1,8 +1,9 @@
 "use strict";
-/* Destinations (ADR-0014 / #122): every destination in one place, from GET /model.
-   Access entries (rules) are added, edited, deleted and grouped here; on-request destinations (grants) open on
-   the Grants tab; read-only hosts, credentials and repository scope come from the gateway config file and are
-   shown read-only. Uses app.js helpers: $, esc, gw, toast, fmtDate, fmtLeft, parsePort, portText, guard,
+/* Destinations (ADR-0014 / #122, ADR-0019): every destination in one place, from GET /model.
+   One ordered rule list, shown in the order it is evaluated: the rules (the built-in blocks are rules among
+   them), then the locked ranges, then the default. Rules are added, edited, moved, deleted and grouped here;
+   on-request destinations (grants) open on the Grants tab; read-only hosts, credentials and repository scope
+   come from the gateway config file and are shown read-only. Uses app.js helpers: $, esc, gw, toast, fmtDate, fmtLeft, parsePort, portText, guard,
    showTab, checkMatch, tabHooks. */
 (() => {
   const box = $("#destBox");
@@ -15,14 +16,27 @@
   let model = null;
 
   box.innerHTML = `<h3>Rules and blocked ranges</h3>
-    <p class="hint">Every destination the agent may reach, in one place; the first matching rule from the top wins.</p>
-    <details class="help"><summary>What does this table show?</summary>
-      <p>Access rules are edited here. On-request destinations (grants) are defined on the <i>Grants</i> tab.
-        Read-only hosts, added credentials and repository limits come from the gateway config file and are shown
-        read-only (tagged <i>config file</i>).</p>
-      <p>The never-reachable deny floor is listed too, each blocked range with its reason: your own LAN and other
-        removable ranges can be unblocked here (with a warning before the agent can reach them), while the
-        gateway's own networks stay locked: they are structural and cannot be removed here.</p>
+    <p class="hint">One list, checked from the top: the first matching rule decides. A name must also resolve to addresses that are not blocked. New rules are added at the top.</p>
+    <details class="help"><summary>How is a connection decided?</summary>
+      <p>A destination given as an <b>IP address</b>: the list is checked from top to bottom, the first rule for
+        an address (an IP or a range) that contains it decides, and the default at the end applies when none does.</p>
+      <p>A destination given by <b>name</b> passes two checks. First the name: the first rule for a name that
+        matches decides, else the default. Deny and ask are acted on before the name is looked up. Then every
+        address the name resolves to: the first allow or deny rule for an address that contains it says whether
+        the address is open.</p>
+      <p>So a name rule <b>cannot open a blocked range</b>: if the name resolves into a range that a deny rule
+        covers, the connection is denied. Names are chosen by whoever controls DNS, so only a rule that names the
+        address opens it. And an allow rule for an address lets no name through by itself: the name still needs
+        its own rule or your approval. To reach one device on your local network by its address, add an allow
+        rule for the address (and port): it is added at the top, above the blocked range. To reach it by name,
+        add the name as well.</p>
+      <p>The built-in blocked ranges (your local network, loopback, cloud metadata and other special addresses) and
+        the <code>never</code> entries of the gateway config are ordinary deny rules at the bottom: they can be
+        edited, moved and deleted, and <i>Restore built-in blocks</i> adds the missing ones back. The tallygate
+        stack's own networks and the gateway's own ports are <b>locked</b>: they are checked before the list and
+        cannot be opened by any rule or grant.</p>
+      <p>On-request destinations (grants) are defined on the <i>Grants</i> tab. Read-only hosts, added credentials
+        and repository limits come from the gateway config file and are shown read-only (tagged <i>config file</i>).</p>
       <p><a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/rules.md" target="_blank" rel="noopener">Rules by example</a></p></details>
     <div class="toolbar">
       <select id="dAction" aria-label="Access">${RULE_ACTIONS.map((a) => `<option>${a}</option>`).join("")}</select>
@@ -38,6 +52,7 @@
       <button id="dGroupSel" class="small secondary">Group selected</button>
       <button id="dUngroupSel" class="small secondary">Ungroup selected</button>
       <input id="dFilter" type="search" aria-label="Filter destinations" placeholder="Filter">
+      <button id="dRestore" class="small secondary">Restore built-in blocks</button>
     </div>
     <div class="table-wrap"><table class="dests"><thead><tr><th scope="col"><span class="sr-only">Select</span></th>
       <th scope="col">Destination</th><th scope="col">Access</th><th scope="col">Limits</th><th scope="col">Group</th><th scope="col">Source</th>
@@ -59,16 +74,35 @@
     if (d.read_paths && d.read_paths.length) out.push(`read paths: ${d.read_paths.join(", ")}`);
     if (d.credentials && d.credentials.length) out.push("credentials added");
     if (d.repos) out.push(`repositories: ${d.repos.patterns.join(", ")}${d.repos.graphql ? " (+graphql)" : ""}`);
-    if (d.lan) out.push("local network");
     if (d.scheme && d.scheme !== "https") out.push(d.scheme);
     if (d.tls && d.tls.fingerprint) out.push("pinned TLS");
     return out.map((t) => `<div>${esc(t)}</div>`).join("") || '<span class="muted">–</span>';
   }
   const isRule = (d) => RULE_ACTIONS.includes(d.access) && d.id;
+  const SOURCE = { builtin: "built-in block", config: "never (config file)" };
+  // What the operator has to see about a rule that cannot do what it says (ADR-0019), as status lines:
+  // a name rule that a blocked range stopped, and an address rule an earlier one covers completely.
+  function ruleNotes(d) {
+    const out = [];
+    if (d.shadowed) {
+      const s = d.shadowed;
+      out.push(`<div class="status warn">blocked by a range rule</div>
+        <div class="muted small-text">last: <code>${esc(s.address)}</code> in <code>${esc(s.range)}</code> (rule <code>${esc(s.by)}</code>),
+          ${esc(fmtDate(s.last))}, ${Number(s.count)}&times;. A name cannot open a blocked range. If you did not expect this name
+          to point into that range, somebody may be redirecting it (DNS rebinding): leave it blocked. If the address is
+          right, add an allow rule for the address.</div>`);
+    }
+    if (d.covered_by) {
+      out.push(`<div class="status off">never reached</div>
+        <div class="muted small-text">covered by rule <code>${esc(d.covered_by)}</code> above it</div>`);
+    }
+    return out.join("");
+  }
 
   function render() {
     const q = $("#dFilter").value.trim().toLowerCase(), body = $("#destBody");
     body.innerHTML = "";
+    const rules = model.destinations.filter(isRule);  // in evaluation order
     let shown = 0;
     for (const d of model.destinations) {
       if (d.access === "request") continue;  // on-request destinations (grants) are managed in the section below
@@ -78,20 +112,28 @@
       const tr = document.createElement("tr");
       shown++;
       tr.innerHTML = `<td>${isRule(d) ? '<input type="checkbox" class="dsel" aria-label="Select rule">' : ""}</td>
-        <td>${matchText(d)}</td>
+        <td>${matchText(d)}${isRule(d) ? ruleNotes(d) : ""}</td>
         <td><span class="${cls}">${esc(al)}</span>${d.expires ? `<div class="muted small-text">ends in ${esc(fmtLeft(d.expires))}</div>` : ""}</td>
         <td>${limitsText(d)}</td>
         <td>${d.group ? `<span class="tag">${esc(d.group)}</span>` : ""}</td>
-        <td class="muted small-text">${esc(d.source || "")}</td><td></td>`;
-      if (isRule(d)) tr.querySelector(".dsel").dataset.id = d.id;
+        <td class="muted small-text">${esc(SOURCE[d.source] || d.source || "")}</td><td></td>`;
+      if (isRule(d)) { tr.querySelector(".dsel").dataset.id = d.id; tr.dataset.rule = d.id; }
       const actions = tr.lastElementChild;
       if (isRule(d)) {
-        const what = `${d.access} ${label}`;
+        const what = `${d.access} ${label}`, at = rules.indexOf(d);
+        // Move up / down: one place in the evaluation order. `before` is the rule this one goes in front of.
+        const up = mkbtn("Move up", guard(() => move(d, rules[at - 1].id)), `Move rule ${what} up`);
+        const down = mkbtn("Move down", guard(() => move(d, at + 2 < rules.length ? rules[at + 2].id : null)), `Move rule ${what} down`);
+        up.disabled = at === 0; down.disabled = at === rules.length - 1;
+        up.dataset.move = "up"; down.dataset.move = "down";
+        const block = d.access === "deny" && !!d.match.cidr;
         const del = mkbtn("Delete", null, `Delete rule ${what}`, true);
-        del.onclick = confirmClick(del, `Delete rule ${what}?`, async () => {
-          await gw("DELETE", `/destinations/${d.id}`); toast("Rule deleted"); await load();
+        // deleting a block lowers security: the confirmation names the range and the consequence
+        del.onclick = confirmClick(del, block ? `Delete the block of ${label}? The agent will be able to reach these addresses if another rule or the default allows it.`
+          : `Delete rule ${what}?`, async () => {
+          await gw("DELETE", `/destinations/${encodeURIComponent(d.id)}`); toast("Rule deleted"); await load();
         });
-        actions.append(mkbtn("Edit", () => editRow(tr, d), `Edit rule ${what}`), del);
+        actions.append(up, down, mkbtn("Edit", () => editRow(tr, d), `Edit rule ${what}`), del);
       } else {
         actions.innerHTML = '<span class="tag">config file</span>';
       }
@@ -101,54 +143,40 @@
       body.innerHTML = `<tr><td colspan="7" class="muted">${q ? "No rule matches the filter."
         : "No rules yet. Add the first one with the form above."}</td></tr>`;
     }
-    renderNever(body, q);
-    const blocked = (model.never || []).filter((n) => !n.open).length;
+    renderLocked(body, q);
+    // the default: the last line of the list
     const mode = ACCESS[model.default] || [model.default, "muted"];
-    $("#destMode").innerHTML = `Everything else: <b class="${mode[1]}">${esc(mode[0])}</b> (${esc(MODE[model.default] || "mode")}; change it under <i>Settings</i>). `
-      + `${blocked} blocked range${blocked === 1 ? " is" : "s are"} listed at the end of the table.`;
+    const last = document.createElement("tr"); last.className = "dest-default";
+    last.innerHTML = `<td></td><td>Everything else</td><td><b class="${mode[1]}">${esc(mode[0])}</b></td>
+      <td>${esc(MODE[model.default] || "mode")}</td><td></td><td class="muted small-text">default</td><td></td>`;
+    body.appendChild(last);
+    const blocks = rules.filter((d) => d.source === "builtin" || d.source === "config").length;
+    $("#destMode").innerHTML = `The default is changed under <i>Settings</i>. ${blocks} built-in or config block${blocks === 1 ? " is" : "s are"} in the list, `
+      + `${(model.locked || []).length} locked range${(model.locked || []).length === 1 ? "" : "s"} below it.`;
   }
 
-  // The never-reachable deny floor (ADR-0017), shown as blocked rows in the one table. A removable range
-  // (your LAN, the cloud metadata address, your own deny additions) can be unblocked behind a scary confirm;
-  // the gateway's own networks are locked and have no action.
-  function scopeText(d) {
-    const base = d.scope === "all+lan" ? "all connections, incl. LAN grants" : "all connections";
-    return d.open ? `${base} — unblocked for normal connections` : base;
-  }
-  function renderNever(body, q) {
-    for (const d of model.never || []) {
+  // Locked (ADR-0019): the stack's own networks and the gateway's own ports. Shown as the last rows before the
+  // default so the operator sees them; checked before the list, so they have a state and no actions.
+  function renderLocked(body, q) {
+    for (const d of model.locked || []) {
       if (q && !d.range.toLowerCase().includes(q)) continue;
-      const tr = document.createElement("tr");
+      const tr = document.createElement("tr"); tr.className = "dest-locked";
       tr.innerHTML = `<td></td>
         <td><code>${esc(d.range)}</code></td>
-        <td>${d.open ? '<span class="status warn">unblocked</span>' : '<span class="a-deny">deny</span>'}</td>
-        <td>${esc(scopeText(d))}</td>
+        <td><span class="a-deny">deny</span></td>
+        <td>checked before the list</td>
         <td></td>
-        <td class="muted small-text">${esc(d.reason || "")}</td><td></td>`;
-      const actions = tr.lastElementChild;
-      if (!d.removable) {
-        actions.innerHTML = '<span class="tag">locked</span>';  // structural: explained in the help above
-      } else if (d.open) {
-        actions.append(mkbtn("Undo unblock", guard(() => floorOpen(d.range, false)), `Block ${d.range} again`));
-      } else {
-        // security-lowering: danger colour, and the confirmation names the range and the consequence
-        const b = mkbtn("Unblock range", null, `Unblock ${d.range}`, true);
-        b.onclick = confirmClick(b, `Unblock ${d.range}? The agent will be able to reach your local network.`,
-          () => floorOpen(d.range, true));
-        actions.append(b);
-      }
+        <td class="muted small-text">${esc(d.reason || "")}</td><td><span class="status off">locked</span></td>`;
       body.appendChild(tr);
     }
   }
-  // Add or remove a range from the policy's floor_open and PUT the whole policy (start from the policy as it
-  // is now, like the raw editor, so a change elsewhere is not lost).
-  async function floorOpen(range, open) {
-    const fresh = await gw("GET", "/policy");
-    const set = new Set(fresh.floor_open || []);
-    if (open) set.add(range); else set.delete(range);
-    await gw("PUT", "/policy", { ...fresh, floor_open: [...set] });
-    toast(open ? `Range ${range} unblocked` : `Range ${range} blocked again`);
-    await load();
+  async function move(d, before) {
+    await gw("POST", `/destinations/${encodeURIComponent(d.id)}/move`, { before });
+    toast("Rule moved"); await load();
+    // keep the keyboard on the rule that moved, so it can be moved again
+    const row = [...document.querySelectorAll("#destBody tr")].find((tr) => tr.dataset.rule === d.id);
+    const btn = row && [...row.querySelectorAll("button[data-move]")].find((b) => !b.disabled);
+    if (btn) btn.focus();
   }
 
   // a row action: ghost rank; destructive or security-lowering ones in the danger colour (and confirmed)
@@ -178,7 +206,7 @@
         if (t) { if (!/^\d+$/.test(t) || +t <= 0) throw new Error("Expiry: whole seconds from now, or blank for permanent"); changes.expires = Date.now() / 1000 + +t; }
         else changes.expires = null;
         const dest = { access: changes.action, match: { port: changes.port }, note: changes.note, group: changes.group, expires: changes.expires };
-        await gw("PATCH", `/destinations/${d.id}`, dest); toast("Rule saved"); await load();
+        await gw("PATCH", `/destinations/${encodeURIComponent(d.id)}`, dest); toast("Rule saved"); await load();
       })),
       mkbtn("Cancel", () => load()),
     );
@@ -210,6 +238,12 @@
   $("#dGroupSel").onclick = guard(() => group($("#dGroupName").value.trim()));
   $("#dUngroupSel").onclick = guard(() => group(""));
   $("#dFilter").oninput = () => { if (model) render(); };
+  $("#dRestore").onclick = guard(async () => {
+    const r = await gw("POST", "/destinations/restore-blocks", {});
+    const n = (r.added || []).length, open = (r.opened || []).map((o) => o.cidr);
+    toast((n ? `${n} built-in block${n === 1 ? "" : "s"} restored` : "No built-in block is missing")
+      + (open.length ? `. Still open by rules above the blocks: ${[...new Set(open)].join(", ")}` : "")); await load();
+  });
 
   async function load() {
     const m = await gw("GET", "/model");

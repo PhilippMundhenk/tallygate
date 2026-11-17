@@ -10,6 +10,20 @@ The result of a full project review: Docker Compose with published images as the
 set of security fixes from two review rounds, quick actions and templates, help everywhere, and a 95 %
 coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you update.
 
+**How to read this section.** The policy model and the web UI were reworked in several steps, and the
+entries below were written step by step. Where a later step of this release replaced an earlier one, the
+earlier entry ends with *Replaced in this release*. The state you get:
+
+- **The policy is one ordered rule list** ([ADR-0019](docs/adr/0019-one-ordered-rule-list.md), first entry
+  under *Changed*). The "hard deny", the "deny floor", `hard_deny_floor`, `floor_open`, the "never reachable"
+  list, `grants_lan_allow` and `lan: true` named in older entries do not exist any more: the blocked ranges
+  are ordinary rules, and only the stack itself is locked ([docs/rules.md](docs/rules.md)).
+- **The menu** is Overview, Approvals, Setup, Quick settings, Destinations, Grants, Log, Console, Files,
+  Settings. Where an entry says *Rules tab*, read: *Destinations* (the rule list, *Test a destination*),
+  *Quick settings* (learning mode, shortcuts, tool ecosystems, the local-network form), *Overview* (rule
+  usage), *Log* (policy history, export and import), *Settings* (mode, behaviour settings, raw policy).
+  *Quick start* was renamed *Quick settings*. Grant definitions are on the *Grants* tab.
+
 ### Security
 - **Read-only hosts refuse protocol upgrades:** a WebSocket (or any `Upgrade`) to a read-only host was a
   channel the gateway could not inspect, so writes could flow; it is now refused, like a write method.
@@ -28,12 +42,15 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   is refused wherever that rule stands. Before, a host `allow` rule above it won, and approvals and shortcuts
   are added on top, so an *Always allow* or *Allow web for 15 min* silently switched the deny off (#119).
 - **`grants_never` adds to the built-in list** instead of replacing it: loopback, link-local, multicast and
-  unspecified addresses stay closed for every grant, whatever the config lists.
+  unspecified addresses stay closed for every grant, whatever the config lists. *Replaced in this release:
+  `grants_never` is read as plain `never` entries, and a grant target that names such an address is decided
+  like an address rule (ADR-0019).*
 - **Grants and the stack itself:** a `lan: true` grant target skips the hard deny, and `grants_never` did not
   cover the stack's own networks, so a LAN grant pointing there could reach the gateway's management API or
   the control UI. The stack's networks (`GW_INTERNAL_NETS`, set in `compose.yaml`) and the gateway's own
   listeners are now refused for every grant, whatever `grants_never` says. If you changed the subnets in
-  `compose.yaml`, change `GW_INTERNAL_NETS` with them (#112).
+  `compose.yaml`, change `GW_INTERNAL_NETS` with them (#112). *The fix stands and became the locked ranges of
+  ADR-0019, which apply to every connection; `lan: true` and the hard deny it describes are gone.*
 - **IP literal to an intercepted host:** an intercepted host (credential injection / read-only) could be
   reached without interception by connecting to its IP as a literal — with the host's name as the TLS SNI, a
   mismatched SNI, or no SNI at all — skipping the credential strip/inject and the read-only check.
@@ -47,8 +64,8 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   the host's address on `agent-net`, bypassing the gateway. `agent-net` and `control-net` no longer give the
   host an address (`com.docker.network.bridge.inhibit_ipv4`); `bypass.sh` checks it with a real listener (#7).
 - **Fail closed:** an error inside a gateway hook (for example when the event log cannot be written) refuses
-  the connection instead of letting it through. An invalid `hard_deny_floor` entry stops the gateway at
-  startup, and until a failed startup has exited every connection is refused (#8).
+  the connection instead of letting it through. An invalid `hard_deny_floor` entry (now: `never`) stops the
+  gateway at startup, and until a failed startup has exited every connection is refused (#8).
 - **Credential stripping and read-only hosts:** TLS to injection and read-only hosts is always intercepted.
   A missing, trailing-dot or different SNI used to pass it through untouched (#9).
 - **Domain fronting:** TLS is passed through only when the SNI matches the checked name (a missing SNI is
@@ -59,7 +76,8 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
 - **DNS before the decision:** CIDR `allow`/`ask` rules, including those from approving an IP, apply only to
   IP-literal destinations; they used to make the gateway resolve unknown names before asking (TG-02
   regression) (#10).
-- **Hard deny:** `hard_deny_floor` extends the built-in list instead of replacing it (#11).
+- **Hard deny:** `hard_deny_floor` extends the built-in list instead of replacing it (#11). *Replaced in this
+  release: the key is read as `never`, whose entries are seeded once as `deny` rules (ADR-0019).*
 - **Secrets:** grants defined in the UI or API can no longer use `inject` or `tls_verify: false`; a UI
   session could send stored secrets to any host (#12).
 - **Rule validation:** null or non-integer ports are refused (they matched every port), and IPv4-mapped IPv6
@@ -104,7 +122,8 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   edited under *Setup → Behaviour settings* (`GET`/`PATCH /settings`) and persisted to a backend-owned
   `settings.yaml`, seeded once from `gateway.yaml`/env. No file edit, and the live ones apply without a restart.
   The trust-critical settings (credential injection, LAN, `tls_verify`, the never-reachable floor) stay
-  file-only in `gateway.yaml` by design (#147).
+  file-only in `gateway.yaml` by design (#147). *Replaced in this release: the settings are under Settings →
+  Behaviour settings, and only credential injection and `tls_verify` stay file-only (ADR-0019).*
 - **State files in the destinations form** (ADR-0014): the gateway writes its own `policy.yaml` and UI
   `grants.yaml` as `destinations:`, and reads either form. A pre-0014 file is migrated once on first start —
   backed up as `*.pre-0014` and rewritten — and a file that cannot be translated stops the gateway (fail
@@ -127,13 +146,14 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   deleted and grouped here; the mode, shortcuts, templates, test-a-destination, never-reachable list, raw-policy
   editor and policy history moved here too, and the separate **Rules tab is gone** (folded into Destinations).
   Grant *definitions* (the list and the full multi-target/credential editor) also moved to the Destinations
-  tab; the **Grants tab is now a slim flow surface** — active grants and secrets (#122).
+  tab; the **Grants tab is now a slim flow surface** — active grants and secrets (#122). *Replaced in this
+  release: see "How to read this section" for where each part is now; there is no never-reachable list.*
 - **Group rules into a named set** in the Rules tab: tick several rules, name a set and group them, so related
   allows (e.g. all the used-car shops) are shown and managed together. A rule's group is editable like its
   other fields and round-trips in the destination model (#142).
 - **How access works** (`docs/access.md`): the access model on one page — never reachable, on request, rules,
   everything else, the limits inside a destination, who decides what, and why some settings are file-only
-  (#121).
+  (#121). *The page now describes the one rule list: locked ranges, on request, rules, everything else.*
 - **Docker Compose with published images** is the recommended installation. Multi-arch images
   `ghcr.io/philippmundhenk/tallygate-{gateway,control,agent}` (`linux/amd64`, `linux/arm64`) are published
   from `main` (`:main`) and for every release (`:X.Y.Z`, `:X.Y`, `:latest`). Releases attach `compose.yaml`,
@@ -208,9 +228,9 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   saved filters, a destinations view with new destinations, a page per destination with the rule that decides
   it, and CSV or JSON export (#80).
 - **Learning mode:** for a limited time, destinations no rule covers are allowed on the chosen ports and
-  recorded; afterwards they are proposed as rules, grouped by domain, to save in one go. The hard deny, deny
-  and ask rules, grants and name-first decisions stay in force; it is shown in the header and ends by itself,
-  on the emergency stop and on restart (#69).
+  recorded; afterwards they are proposed as rules, grouped by domain, to save in one go. The hard deny (now:
+  every rule, the built-in blocks among them), deny and ask rules, grants and name-first decisions stay in
+  force; it is shown in the header and ends by itself, on the emergency stop and on restart (#69).
 - **Rootless package installs for the agent** (`tallygate install PKG…`): the agent can add Debian tools
   (`shellcheck`, `sqlite3`, `dnsutils`, …) in the middle of a task without the operator rebuilding the image.
   `apt` and `dpkg` run as uid 1000; the `.deb`s are downloaded through the proxy (held or allowed by the
@@ -222,6 +242,61 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   prefix (#116).
 
 ### Changed
+- **One ordered rule list, first match wins** ([ADR-0019](docs/adr/0019-one-ordered-rule-list.md), #208):
+  the policy is evaluated like other firewalls do it. A destination given as an IP address is decided by the
+  list from the top: the first rule for an address that contains it decides. A destination given by name
+  passes two checks: the first rule for a name that matches decides (deny and ask before the name is looked
+  up), and every address it resolves to must not be blocked. The most restrictive result over all addresses
+  wins; the mode is the last line. What this changes:
+  - **Local addresses are handled like any other address.** The built-in blocked ranges (private, loopback,
+    link-local/metadata, CGNAT, multicast, special ranges) and the `never` entries of `gateway.yaml` are
+    ordinary `deny` rules (`source: builtin` / `config`), seeded once at the bottom. They can be moved, edited
+    and deleted; *Restore built-in blocks* adds the missing ones back. To reach one device, add an allow rule
+    for its address and port: it is placed above the blocked range. To reach it by name, allow the name as
+    well. `hard_deny`, `floor_open` (ADR-0017) and the read-only `hard_deny_floor` are gone.
+  - **Restoring the built-in blocks does not close ranges that an address rule above them opens.** Restored
+    blocks are added at the bottom; the message and the log list what is still open (`opened` in the API).
+    A block takes no time limit (add an allow rule with a time limit above it instead), and a block whose
+    action is changed becomes an ordinary rule of yours.
+  - **Among address rules, position decides.** An address `allow` above a range block opens that address; a
+    CIDR `deny` no longer wins "wherever it stands" over an address `allow` above it (#119).
+  - **An address `allow` lets no name through by itself.** It opens the address for connections to the IP,
+    and for a name that is allowed by name; the name still needs a name rule or your approval (as since #10).
+    Address `ask` rules apply to IP destinations only.
+  - **A name rule cannot open a blocked range, and a name `deny` wins wherever it stands.** If an allowed name
+    resolves into a range that an address `deny` rule covers, the connection is denied. Where a name rule
+    stands relative to address rules does not matter. The reason says so and what to do, in the log, in
+    *Test a destination* and in the denial the agent gets; the Destinations table marks such a rule (*blocked
+    by a range rule*, with a warning that the name may have been redirected) and address rules that can never
+    decide (*never reached*).
+  - **Only the stack itself is locked**: the stack's own networks (`GW_INTERNAL_NETS`) and the gateway's own
+    listeners are denied before the list, whatever a rule, a grant or the API says. A listener bound to every
+    address is now locked on loopback too, and so is an IPv6 address that carries a locked IPv4 address
+    (NAT64, 6to4). An empty `GW_INTERNAL_NETS` is logged as a warning. They are shown as the last rows before
+    the default, with no actions.
+  - **Rules have an order you can change**: *Move up* / *Move down* in the table, `POST
+    /destinations/{id}/move` in the API. Approvals and shortcuts are still added at the top.
+  - **Grants are rules at the top of the list while active.** A target with an IP or a fixed `address` is an
+    address rule and may be local; a target that is only a name cannot open a blocked range, and saving one
+    that resolves into a blocked range is refused with the address to pin. A target that names an address is
+    not subject to the blocked ranges or to `deny` rules at all, only to the locked ranges: that includes
+    loopback, the cloud metadata address and your `never` entries, which were closed to grants before
+    ([threat model](docs/threat-model.md#residual-risks)). `grants_lan_allow`, `lan: true` and
+    the `never` scope `all+lan` are read from old files and ignored (logged once). The *Local-network device*
+    checkbox is gone; the Quick settings form is always available.
+  - **Names are still decided before they are resolved**, without exception: a name that is denied, or that
+    you have not answered yet, never reaches a resolver, whatever address rules exist.
+  - **Replacing a whole policy** (raw editor, `PUT /policy`, restore, import) records in the log which
+    built-in blocks are not in force afterwards; an import shows them as warnings first. *Allow* on a log
+    line for an IP address takes a second click, because the rule opens the address even inside a blocked
+    range.
+  - API: `GET /policy` returns `{default, ask_timeout, seeded, rules}`; `GET /model` returns `locked` instead
+    of `never` and the rules in evaluation order; `GET /never-reachable` lists only what is locked; `POST
+    /test` returns the deciding rule, its position and `shadow`; new `POST /destinations/{id}/move` and `POST
+    /destinations/restore-blocks` (`{added, opened}`); a rule's `source` is validated; `GET /grants` has no
+    `lan_allow_ui`. See [docs/api.md](docs/api.md).
+  - Unused built-in blocks are never offered by *Remove unused rules*.
+  - The isolation self-test also probes the management endpoints through the proxy (locked).
 - **One UX concept for the whole web UI** ([docs/ux-concept.md](docs/ux-concept.md), #202): every page is built
   from the same parts. Each tab has one title and at most one line of purpose; a card or form has at most one
   filled button, other actions are secondary, row actions (Edit, Delete, Undo, Test) are quiet "ghost" buttons.
@@ -249,28 +324,34 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
   and re-block it. The gateway's own networks (`GW_INTERNAL_NETS`) stay locked and are checked first, so
   opening a broad range can never expose the stack, and the grant path is unchanged (grants still cannot reach
   loopback/metadata/the stack). Secure by default: a fresh install blocks everything it did before. The
-  separate *Never reachable* card and the hard-deny textarea are retired.
+  separate *Never reachable* card and the hard-deny textarea are retired. *Replaced in this release by the
+  ordered rule list (ADR-0019 supersedes ADR-0017): no floor, no `floor_open`, no unblock action; the blocks
+  are rules.*
 - **Accessibility:** the filled buttons now meet WCAG AA contrast (the blue and red were 3.7:1 with white text; now 5.2:1 and 4.8:1), the Log tab shows an empty state instead of a bare table, the upgrade-command copy box is a labelled button for screen readers, the keyboard help matches the "Allow once" label, and "load the next page" reads *Load older* everywhere (#143).
 - **One `never` list in the gateway config** replaces `hard_deny_floor` and `grants_never`: a plain range is
   closed for every connection; `{range, scope: all+lan}` is closed for LAN grants too. The old keys still
   work and are read as `never` (`grants_never` entries now also close every connection, not only grants); the
   gateway logs once at start that they can be renamed, and `python -m egressgw.convert gateway.yaml` prints the
-  file in the new form (#122).
+  file in the new form (#122). *Replaced in part in this release: `never` entries are seeded once as `deny`
+  rules, and the scope `all+lan` no longer means anything (ADR-0019).*
 - **One evaluation path (ADR-0014, first part):** whether a connection is intercepted and what each request on
   it may do is now decided in one place (`gateway/egressgw/model.py`), for read-only hosts, credential
   injection, repository limits and grants alike. No behaviour change: the model ran next to the old code on
   every TLS handshake and request of the whole test suite without a difference before it took over (#122).
 - **First run:** the *Starting policy* step of the setup points to learning mode as the quickest way to a
   working set of rules (*Learn from a first task*). It opens *Rules → Learning mode*, where the time limit is
-  chosen and confirmed as before (#121).
+  chosen and confirmed as before (#121). *Replaced in this release: the setup has no Starting policy step;
+  learning mode is on Quick settings.*
 - **What the agent can reach:** a new table at the top of the *Rules* tab lists each destination once with
   everything that applies to it: the deciding rule, read-only, added credentials, repository limits, the grants
   defined for it and when it was last used. Until now that took three tabs and the config file. New read-only
-  route `GET /access` (#121).
+  route `GET /access` (#121). *Replaced in this release: the table is not in the UI any more (the
+  Destinations table and Test a destination took its place); the route remains.*
 - **One "Never reachable" list:** *Rules → Never reachable* shows every range that can never be reached in one
   table: the built-in list, `hard_deny_floor`, your additions, `grants_never`, the stack's own networks and the
   gateway's own listeners, each with where it comes from and where it is changed. It replaces the *Hard deny*
-  card; adding ranges works as before. New read-only route `GET /never-reachable` (#121).
+  card; adding ranges works as before. New read-only route `GET /never-reachable` (#121). *Replaced in this
+  release: there is no such list; the route returns only the locked ranges (ADR-0019).*
 - **Simple grant form:** *New grant* asks for a name, an address (host and port, or a URL), the type, read-only
   or full access, and a duration. The other settings are under *Advanced* with their defaults. Grants saved from
   the simple form use the chosen duration as default and maximum, and ask for approval each time (#121).
@@ -357,7 +438,8 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
    `--print-hash`), or remove it to use the stored password.
 4. **Static config:** if you changed `config/gateway.yaml`, mount it as described in
    [docs/operations.md](docs/operations.md#with-docker-compose-recommended).
-5. **Behaviour changes to check:** CIDR `allow` rules cover IP literals only (#10); UI grants with `inject` or
+5. **Behaviour changes to check:** CIDR `allow` rules cover IP literals only: they let no name through by
+   itself (#10; what they do for a name that is allowed by name: step 8); UI grants with `inject` or
    `tls_verify: false` are ignored, so move them to the config file (#12); the Hugging Face and registry
    hosts are read-only (#58).
 6. **UI address:** the UI is now published on all interfaces (`0.0.0.0:8080`). With a reverse proxy on the
@@ -365,6 +447,32 @@ coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you updat
    you only use HTTPS (the new default `auto` decides per connection) (#97).
 7. Start: `docker compose pull && docker compose up -d`, or `make up` from source. Then run the self-test or
    `bash bypass.sh`.
+8. **The policy is migrated to one ordered rule list at the first start** (ADR-0019, #208). Nothing to do, but
+   know what happens to `policy.yaml` and `grants.yaml` in the gateway's data volume:
+   - The old files are kept next to the new ones as `policy.yaml.pre-0019` and `grants.yaml.pre-0019`. A file
+     that cannot be translated stops the gateway with a message that names the entry, with the file untouched.
+   - Your CIDR `deny` rules move to the top, in their order: they won everywhere before and keep winning.
+   - `hard_deny` extras become `deny` rules below your rules. The built-in blocks and your `never` entries are
+     added as `deny` rules at the bottom, except ranges you had opened (`floor_open`): they stay open.
+   - **Nothing that was blocked opens by upgrading.** A CIDR `allow` or `ask` rule for an address inside a
+     blocked range did nothing before. The blocks such a rule overlaps are placed at the **top** of the list,
+     above it, so it still does nothing. The gateway log and the event log name the rules and the blocks
+     (`policy migration: NOTE … block(s) stay at the top of the list, above rule(s) …`). To open such an
+     address, move its rule above the block; otherwise delete the rule.
+   - **A CIDR `allow` and names.** It opens the address for connections to the IP and for names that are
+     allowed by name. It lets no name through by itself, and a `deny` or `ask` for a name is still acted on
+     before the name is resolved.
+   - **Grants for local devices need an address.** `lan: true` is dropped. A target with an IP or a fixed
+     `address` keeps working. A target that is only a name (`ha.lan`) no longer reaches a blocked range: set
+     its `address` (the log names each such target). `grants_lan_allow` can be removed from `gateway.yaml`.
+   - **Check grant targets that name a blocked address.** A target with an IP or a fixed `address` inside a
+     blocked range that did not have `lan: true` was always refused; now it is reachable while its grant is
+     active, loopback, metadata and `never` addresses included. The gateway log and the event log name each one at the
+     migration (`NOTE grant …`, with whether a level is approved automatically); delete those you do not want.
+   - `grants.yaml.pre-0019` is only written when a UI grant had `lan: true`.
+   - *Restore built-in blocks* does not close ranges that an address rule above the blocks opens.
+   - To go back to an older release, restore the `*.pre-0019` files
+     ([docs/operations.md](docs/operations.md#upgrade-to-the-ordered-rule-list)).
 
 ## [0.3.0] - 2026-11-11
 

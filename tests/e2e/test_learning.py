@@ -36,11 +36,14 @@ def test_learn_then_save_the_rules(stack, upstream):
     assert http_via_proxy(proxy, url)[0] == 200
     assert http_via_proxy(proxy, f"http://b.learn.test:{port}/")[0] == 200
     assert http_via_proxy(proxy, f"http://no.learn.test:{port}/")[0] != 200  # deny rule
-    assert http_via_proxy(proxy, f"http://lan.learn.test:{port}/")[0] != 200  # hard deny after resolving
+    assert http_via_proxy(proxy, f"http://lan.learn.test:{port}/")[0] != 200  # a blocked range, after resolving
     _, ev, _ = ui.call("GET", "/api/gw/events?kind=conn&limit=10")
     reasons = {e["host"]: e["reason"] for e in reversed(ev)}  # the newest per host
     assert reasons["a.learn.test"] == "learning mode" and reasons["no.learn.test"].startswith("rule no")
-    assert reasons["lan.learn.test"].startswith("hard-deny")
+    assert reasons["lan.learn.test"] == (
+        "resolves to 192.168.7.7, inside blocked range 192.168.0.0/16 "
+        "(rule block-192.168.0.0_16 (never (gateway config)))"
+    )
     sid = st["active"]["id"]
     assert ui.call("DELETE", "/api/gw/learning")[1]["active"] is None
     assert http_via_proxy(proxy, url)[0] != 200  # over: the mode decides again

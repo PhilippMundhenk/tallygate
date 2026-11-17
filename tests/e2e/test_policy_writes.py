@@ -41,7 +41,7 @@ def stack(make_gateway, tmp_path):
 
 
 def rule_ids(policy):
-    return [r["id"] for r in policy["rules"]]
+    return [r["id"] for r in policy["rules"] if r.get("source") != "config"]  # without the seeded block
 
 
 def test_mode_change_from_a_stale_copy_cannot_drop_or_revive_rules(stack):
@@ -80,7 +80,7 @@ def test_model_and_grouping_through_the_control_relay(stack):
     # #122/#142: the Destinations view reads GET /model and groups rules via POST /destinations/group, end to end.
     gw, ui = stack
     status, model, _ = ui.call("GET", "/api/gw/model")
-    assert status == 200 and set(model) == {"default", "destinations", "never"}
+    assert status == 200 and set(model) == {"default", "destinations", "locked"}
     hosts = {d["match"].get("host") for d in model["destinations"] if d.get("access")}
     assert {"keep.test", "old.test"} <= hosts
 

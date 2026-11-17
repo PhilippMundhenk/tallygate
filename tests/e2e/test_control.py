@@ -137,42 +137,66 @@ def test_what_the_agent_can_reach_is_one_table(ui):
     # the /api/gw/access view computes is to be folded into the one rules table (#177).
 
 
-def test_deny_floor_is_shown_and_editable_in_the_destinations_table(ui):
-    """ADR-0017: the never-reachable deny floor is shown as rows in the one Destinations table, each with its
-    reason and its edit state (removable/open); the separate "Never reachable" card and the hard-deny
-    textarea are retired."""
-    # /never-reachable still works (kept for compatibility) and now carries the edit state per row
-    status, rows, _ = ui.call("GET", "/api/gw/never-reachable")
-    assert status == 200 and all(set(r) == {"range", "source", "scope", "removable", "open"} for r in rows)
-    floor = next(r for r in rows if r["range"] == "169.254.0.0/16")  # the e2e config (grants_never)
-    assert floor["scope"] == "all+lan" and floor["removable"] is True and floor["open"] is False
-    assert any(r["removable"] and r["scope"] == "all" for r in rows)  # a removable scope-all floor range
-    # the one destination model carries the same floor list with removable/open
-    _, model, _ = ui.call("GET", "/api/gw/model")
-    assert model["never"] and all({"range", "scope", "reason", "removable", "open"} <= set(e) for e in model["never"])
-    # the retired card and textarea are gone from the page and the scripts; the table renders the floor instead
+def test_the_rule_list_with_blocks_locked_rows_and_order_through_the_control_plane(ui, gateway):
+    """ADR-0019: the blocked ranges are rules in the one Destinations table (moved, edited, deleted, restored
+    there); the stack's own networks are listed as locked; the floor card, the hard-deny textarea and the
+    unblock button are gone."""
+    status, model, _ = ui.call("GET", "/api/gw/model")
+    assert status == 200 and set(model) == {"default", "destinations", "locked"}
+    rules = [d for d in model["destinations"] if d.get("access") in ("allow", "ask", "deny")]
+    _, pol, _ = ui.call("GET", "/api/gw/policy")
+    assert [d["id"] for d in rules] == [r["id"] for r in pol["rules"]]  # evaluation order
+    blocks = [d for d in rules if d["source"] == "config"]
+    assert {d["match"]["cidr"] for d in blocks} >= {"192.168.0.0/16", "169.254.0.0/16"}  # the e2e config's never keys
+    assert all(set(row) == {"range", "source", "reason"} for row in model["locked"])
+    assert ui.call("GET", "/api/gw/never-reachable")[1] == model["locked"]
+    assert any(row["range"] == f"127.0.0.1:{gateway['ports']['api']}" for row in model["locked"])
+    # move, through the control relay: a rule id with a dot and a colon, then back
+    first, second = rules[0]["id"], rules[1]["id"]
+    status, moved, _ = ui.call("POST", f"/api/gw/destinations/{second}/move", {"before": first})
+    assert status == 200 and moved["order"][:2] == [second, first]
+    assert ui.call("POST", f"/api/gw/destinations/{first}/move", {"before": second})[1]["order"][:2] == [first, second]
+    assert ui.call("POST", f"/api/gw/destinations/{first}/move", {"before": "nope"})[0] == 400
+    assert ui.call("POST", "/api/gw/destinations/nope/move", {"before": first})[0] == 404
+    # a block is deleted and restored like any rule
+    block = next(d for d in blocks if d["match"]["cidr"] == "169.254.0.0/16")
+    assert ui.call("DELETE", f"/api/gw/destinations/{block['id']}")[0] == 200
+    status, restored, _ = ui.call("POST", "/api/gw/destinations/restore-blocks")
+    assert status == 200 and [r["cidr"] for r in restored["added"]] == ["169.254.0.0/16"]
+    assert "opened" in restored  # address rules above the blocks that keep part of a range open (amendment)
+    assert ui.call("POST", "/api/gw/destinations/restore-blocks")[1]["added"] == []
+    # the page and the scripts
     page = ui.call("GET", "/")[1]
     assert b'id="neverBody"' not in page and b'id="hardDeny"' not in page and b'id="neverCard"' not in page
     assert b"loadNever" not in ui.call("GET", "/static/app.js")[1]
     dest_js = ui.call("GET", "/static/destinations.js")[1]
-    # unblocking is confirmed, and the confirmation names the range and the consequence (docs/ux-concept.md)
-    assert b'mkbtn("Unblock range", null, `Unblock ${d.range}`, true)' in dest_js
-    assert b"confirmClick(b, `Unblock ${d.range}? The agent will be able to reach your local network.`" in dest_js
+    assert b"floor_open" not in dest_js and b"Unblock" not in dest_js and b"model.never" not in dest_js
+    assert b'mkbtn("Move up"' in dest_js and b'mkbtn("Move down"' in dest_js and b'id="dRestore"' in dest_js
+    assert b'<span class="status off">locked</span>' in dest_js and b"blocked by a range rule</div>" in dest_js
+    assert b"DNS rebinding" in dest_js and b"Still open by rules above the blocks" in dest_js
+    # deleting a block lowers security: confirmed, naming the range and the consequence (docs/ux-concept.md)
+    assert b"confirmClick(del, block ? `Delete the block of ${label}? The agent will be able to reach" in dest_js
 
 
 def test_grant_editor_has_the_simple_form_and_keeps_every_setting_under_advanced(ui):
-    """#121: name, address, type, access, duration and "local network"; the full editor is under Advanced."""
+    """#121: name, address, type, access and duration; the full editor is under Advanced. ADR-0019: no
+    "local network" checkbox - a target is local when it names a local address."""
     page = ui.call("GET", "/")[1].decode()
     simple = page.index('id="geSimple"')
     advanced = page.index('<details id="geAdvanced"')
     end = page.index('id="geSave"')
-    for field in ('id="geAddr"', 'id="geKind"', 'id="geAccess"', 'id="geDur"', 'id="geLan"'):
+    for field in ('id="geAddr"', 'id="geKind"', 'id="geAccess"', 'id="geDur"'):
         assert simple < page.index(field) < advanced, field
     for field in ('id="geRead"', 'id="geApprWrite"', 'id="geMaxTtl"', 'id="geTargets"', 'id="geAddTarget"'):
         assert advanced < page.index(field) < end, field
     assert page.index("</details>", advanced) < end  # Save stays outside the folded part
     app = ui.call("GET", "/static/app.js")[1]
     assert b"function grantSimpleToAdvanced()" in app and b"function grantAdvancedToSimple()" in app
+    assert (
+        'id="geLan"' not in page and b"t-lan" not in app and b"lan_allow" not in app and "grants_lan_allow" not in page
+    )
+    # Quick settings: the local-network form is always there, and has a place for the gateway's explanation
+    assert '<form id="qaLanForm" class="lan-form">' in page and 'id="qaLanError" class="alert bad hidden"' in page
 
 
 def test_console_page_is_served_by_control_not_the_agent(ui):

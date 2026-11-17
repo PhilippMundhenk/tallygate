@@ -18,16 +18,14 @@ max_pending: 10            # at most this many approvals open at once; more are 
 #                            # days = when a period starts; tz defaults to the gateway's TZ. The UI can change it.
 # digest_minutes: 30         # while away: a digest every N minutes (0 = only when you are back)
 
-# Never reachable (`never`, ADR-0014; the old keys hard_deny_floor and grants_never still work): CIDRs that
-# no rule can open (except service-port targets with allow_private).
-# The built-in list (RFC 1918, loopback, link-local, CGNAT, multicast, ULA, NAT64/6to4/Teredo, docs
-# ranges ...) always applies; entries here are ADDED to it, they cannot remove built-in ones. Only
-# this read-only file can change the floor; the API/UI can only add further entries. Add your Docker
-# host's public IP(s) here if it has any (e.g. a VPS), so the agent cannot reach host services via
-# the egress path. An invalid entry stops the gateway.
+# Blocked ranges (`never`, ADR-0019; the old keys hard_deny_floor and grants_never still work): CIDRs that are
+# seeded ONCE as ordinary `deny` rules at the bottom of the rule list, next to the built-in ones (RFC 1918,
+# loopback, link-local/metadata, CGNAT, multicast, ULA, NAT64/6to4/Teredo, docs ranges ...). Like every rule
+# they can then be moved, edited and deleted on the Destinations tab; a deleted one stays deleted, and an entry
+# added here later is seeded once. Add your Docker host's public IP(s) here if it has any (e.g. a VPS), so the
+# agent cannot reach host services via the egress path. An invalid entry stops the gateway.
+# What no rule can open is the stack itself: GW_INTERNAL_NETS and the gateway's own ports (compose.yaml).
 # never: [203.0.113.7/32]             # placeholder: put your host's public IP here
-# A plain range closes every connection; a grant with `lan: true` may still reach it. Closed for those too:
-# never: [{range: 192.168.1.1/32, scope: all+lan}]   # e.g. your router
 
 # Credential injection: TLS for these exact hosts is intercepted and the header is set.
 # The agent only ever holds a placeholder. Secrets are set via the control UI (stored in /data/secrets.json).
@@ -56,8 +54,8 @@ inject:
 # Read-only hosts: TLS is intercepted and PUT/PATCH/DELETE are refused (blocks e.g. `npm publish`
 # as an exfiltration path while installs keep working). Requires the agent to trust the gateway CA.
 # An entry is a host or `*.domain` (the domain and its subdomains), or a mapping: `post_is_write: true`
-# refuses POST too, except on the `read_posts` paths (glob patterns). The templates (Rules -> Templates)
-# for these registries are pull-only only as long as their hosts are listed here.
+# refuses POST too, except on the `read_posts` paths (glob patterns). The shortcuts for these registries
+# (Quick settings -> Tool ecosystems) are pull-only only as long as their hosts are listed here.
 readonly:
   - registry.npmjs.org           # npm publish is a PUT; POST stays allowed (npm audit is a POST)
   - registry.yarnpkg.com         # proxies npm: publishing works there too
@@ -82,10 +80,9 @@ services: []
 #  - name: postgres
 #    listen: 15432
 #    target: db.example.org:5432
-#    allow_private: false      # true = exempt this exact target from hard_deny (e.g. a LAN host)
+#    allow_private: false      # true = exempt this exact target from the built-in/config blocks (a LAN host)
 
 # Grants: named, time-limited access the agent can request and you approve (docs/grants.md).
-# grants_lan_allow: [192.168.1.0/24]   # LAN ranges that grants defined in the UI may reach (default: none)
 # grant_request_timeout: 300          # seconds a grant request waits for your decision
 # grant_max_pending: 3                # open grant requests at once
 # grant_api_rate: 30                  # requests per minute the agent may send to the grant API
@@ -94,14 +91,16 @@ services: []
 #   homeassistant:
 #     description: Home Assistant REST API
 #     targets:
-#       - {host: ha.lan, port: 8123, scheme: http, paths: ["/api/*"], lan: true}
+#       # a local device: the target must name the address (an IP as host, or a fixed `address`); a target that
+#       # is only a name cannot open a blocked range (ADR-0019)
+#       - {host: ha.lan, address: 192.168.1.20, port: 8123, scheme: http, paths: ["/api/*"]}
 #     levels: [read, write]
 #     approval: {read: auto, write: ask}
 #     default_ttl: 1h
 #     max_ttl: 4h
 #   nas-ssh:
 #     description: SSH to the NAS
-#     targets: [{host: nas.lan, port: 22, scheme: tcp, lan: true}]
+#     targets: [{host: 192.168.1.40, port: 22, scheme: tcp}]
 #     levels: [write]
 #     default_ttl: 30m
 #     max_ttl: 1h

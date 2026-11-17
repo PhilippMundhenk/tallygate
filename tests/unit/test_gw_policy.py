@@ -7,7 +7,17 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gateway"))
 
-from egressgw.policy import Policy, Rule, load_preset, parse_cidrs, port_matches, registrable_domain
+from egressgw.policy import (
+    Policy,
+    Rule,
+    builtin_blocks,
+    ip_addr,
+    load_preset,
+    parse_cidrs,
+    policy_from_any,
+    port_matches,
+    registrable_domain,
+)
 
 
 @pytest.mark.parametrize("values", ["10.0.0.0/8", None, 10, {"a": 1}])
@@ -60,51 +70,59 @@ def test_rule_validation_errors():
         Rule.from_dict({"action": "allow", "host": "a.example", "hosts": "typo"})
 
 
-def test_cidr_rule_never_matches_without_addresses():
-    for action in ("allow", "deny"):
-        assert not Rule(action=action, cidr="0.0.0.0/0").matches("x.example", 443, [])
+def test_address_and_name_rules_match_only_their_own_kind():
+    net, name = Rule(action="allow", cidr="1.2.3.0/24"), Rule(action="allow", host="*.example")
+    assert net.contains(ip_addr("1.2.3.4")) and not net.contains(ip_addr("1.2.4.4"))
+    assert not net.contains(ip_addr("2001:db8::1")) and not net.names("1.2.3.4")  # another family; never a name
+    assert name.names("x.example") and not name.names("x.test") and not name.contains(ip_addr("1.2.3.4"))
 
 
-def test_a_cidr_deny_wins_over_a_host_allow_wherever_it_stands():
-    # #119: approvals and shortcuts are added on top; they must not switch off a CIDR deny further down.
-    p = Policy.from_dict(
-        {
-            "default": "ask",
-            "rules": [
-                {"id": "open", "action": "allow", "host": "*", "port": [80, 443]},  # e.g. "Allow web for 15 min"
-                {"id": "ok", "action": "allow", "host": "evil.example"},  # e.g. an "Always allow" approval
-                {"id": "net", "action": "deny", "cidr": "93.184.0.0/16", "note": "never there"},
-                {"id": "old", "action": "deny", "cidr": "8.8.0.0/16", "expires": 1},
-                {"id": "p", "action": "deny", "cidr": "9.9.9.0/24", "port": 22},
-            ],
-        }
-    )
-    dec = p.evaluate("evil.example", 443, ["93.184.0.7"])
-    assert (dec.action, dec.rule_id, dec.reason) == ("deny", "net", "rule net (never there)")
-    assert p.evaluate("evil.example", 443, ["1.1.1.1", "93.184.255.1"]).rule_id == "net"  # any address inside
-    assert p.evaluate("evil.example", 443, ["1.1.1.1"]).rule_id == "open"  # outside: first match, as before
-    assert p.evaluate("x.example", 443, ["8.8.8.8"]).rule_id == "open"  # an expired deny decides nothing
-    assert p.evaluate("x.example", 443, ["9.9.9.9"]).rule_id == "open"  # another port
-    assert p.evaluate_name("evil.example", 443).action == "allow"  # the name alone: still resolved, then refused
-    # IP literals too: a CIDR deny wins over any allow above it (a host pattern, or a broader CIDR allow) (#137)
-    assert p.evaluate("93.184.0.7", 443, ["93.184.0.7"]).rule_id == "net"  # the `*` allow does not shadow it
+def test_what_119_protected_after_the_migration_and_how_position_decides_now():
+    """#119: approvals and shortcuts are added on top; they must not switch off a CIDR deny further down.
+    ADR-0019 keeps that differently: the shortcut and the approval are NAME rules, and a name rule never
+    overrides an address deny below it. A pre-0019 policy is migrated with its CIDR denies on top."""
+    old = {
+        "default": "ask",
+        "hard_deny": [],
+        "rules": [
+            {"id": "open", "action": "allow", "host": "*", "port": [80, 443]},  # e.g. "Allow web for 15 min"
+            {"id": "ok", "action": "allow", "host": "evil.example"},  # e.g. an "Always allow" approval
+            {"id": "net", "action": "deny", "cidr": "93.184.0.0/16", "note": "never there"},
+            {"id": "old", "action": "deny", "cidr": "8.8.0.0/16", "expires": 1},
+            {"id": "p", "action": "deny", "cidr": "9.9.9.0/24", "port": 22},
+        ],
+    }
+    for p in (
+        policy_from_any(old, builtin_blocks(), [])[0],  # migrated: the denies moved to the top
+        Policy.from_dict({"default": "ask", "seeded": [], "rules": old["rules"]}),  # the same order, unmigrated
+    ):
+        dec = p.evaluate("evil.example", 443, ["93.184.0.7"])
+        assert (dec.action, dec.rule_id) == ("deny", "net")
+        assert p.evaluate("evil.example", 443, ["1.1.1.1", "93.184.255.1"]).rule_id == "net"  # any address inside
+        assert p.evaluate("evil.example", 443, ["1.1.1.1"]).rule_id == "open"  # outside: first match, as before
+        assert p.evaluate("x.example", 443, ["8.8.8.8"]).rule_id == "open"  # an expired deny decides nothing
+        assert p.evaluate("x.example", 443, ["9.9.9.9"]).rule_id == "open"  # another port
+        assert p.evaluate_name("evil.example", 443).action == "allow"  # the name alone: resolved, then refused
+        assert p.evaluate("93.184.0.7", 443, ["93.184.0.7"]).rule_id == "net"  # literals too (#137)
+        # an approval added on top later is a name rule: it does not switch the deny off either
+        p.add_rule(Rule(action="allow", host="evil.example", id="again", source="approval"))
+        assert p.evaluate("evil.example", 443, ["93.184.0.7"]).rule_id == "net"
+    # an ADDRESS allow above an address deny is the first match: that is the new, intended meaning of order
     q = Policy.from_dict(
         {
+            "seeded": [],
             "rules": [
                 {"id": "a", "action": "allow", "cidr": "93.184.0.7/32"},  # a narrower allow above
                 {"id": "d", "action": "deny", "cidr": "93.184.0.0/16"},
-            ]
+            ],
         }
     )
-    assert q.evaluate("93.184.0.7", 443, ["93.184.0.7"]).rule_id == "d"  # the deny still wins
+    assert q.evaluate("93.184.0.7", 443, ["93.184.0.7"]).rule_id == "a"
     assert q.evaluate("93.184.0.8", 443, ["93.184.0.8"]).rule_id == "d"
-    assert q.evaluate("9.9.9.9", 443, ["9.9.9.9"]).reason == "default"  # outside the deny: the mode decides
-
-
-def test_cidr_allow_needs_every_address_inside_deny_any():
-    ips = ["1.2.3.4", "5.6.7.8"]
-    assert not Rule(action="allow", cidr="1.2.3.0/24").matches("1.2.3.4", 443, ips)
-    assert Rule(action="deny", cidr="1.2.3.0/24").matches("1.2.3.4", 443, ips)
+    assert q.evaluate("9.9.9.9", 443, ["9.9.9.9"]).reason == "default"  # outside both: the mode decides
+    # ... and the same two rules in a pre-0019 document keep their old meaning: the deny is moved up
+    m = policy_from_any({"rules": q.to_dict()["rules"]}, [], [])[0]
+    assert [r.id for r in m.rules] == ["d", "a"] and m.evaluate("93.184.0.7", 443, []).rule_id == "d"
 
 
 def test_rule_serialisation_keeps_only_set_fields():
@@ -191,8 +209,8 @@ def test_policy_from_dict_validation():
         Policy.from_dict(
             {"rules": [{"id": "x", "action": "allow", "host": "a.example"}, {"id": "x", "action": "deny", "host": "b"}]}
         )
-    # the read-only floor is echoed back by UIs and ignored, an empty document is the default policy
-    assert Policy.from_dict({"hard_deny_floor": ["1.0.0.0/8"]}).hard_deny_floor != ["1.0.0.0/8"]
+    # the floor that pre-0019 UIs echoed back is dropped by the migration, an empty document is the default policy
+    assert policy_from_any({"hard_deny_floor": ["1.0.0.0/8"]}, [], [])[0].to_dict() == Policy().to_dict()
     assert Policy.from_dict(None).default == "ask"
 
 

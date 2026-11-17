@@ -112,12 +112,13 @@ def test_service_exception_only_for_allow_private_services(make):
     )
     assert [(e.host, e.port) for e in gw.policy.exceptions] == [("192.168.1.10", 5432), ("fd00::5", 80)]
     ev = gw.policy.evaluate
-    assert ev("192.168.1.10", 5432, ["192.168.1.10"], "reverse").action == "deny"  # default deny, not hard deny
+    assert ev("192.168.1.10", 5432, ["192.168.1.10"], "reverse").action == "deny"  # default deny, not the block
     assert ev("192.168.1.10", 5432, ["192.168.1.10"], "reverse").reason == "default"
-    assert ev("192.168.1.10", 5432, ["192.168.1.10"], "regular").rule_id == "hard_deny"
-    assert ev("192.168.1.11", 22, ["192.168.1.11"], "reverse").rule_id == "hard_deny"
-    gw.adopt(core.Policy())  # a policy replaced via the API keeps the configured exceptions
+    assert ev("192.168.1.10", 5432, ["192.168.1.10"], "regular").rule_id == "block-192.168.0.0_16"
+    assert ev("192.168.1.11", 22, ["192.168.1.11"], "reverse").rule_id == "block-192.168.0.0_16"
+    gw.adopt(core.Policy())  # a policy replaced via the API keeps the configured exceptions ...
     assert len(gw.policy.exceptions) == 2
+    assert len(gw.policy.rules) == len(gw.blocks_builtin)  # ... and gets the blocks it does not remember
 
 
 # ------------------------------------------------------------------ housekeeping
@@ -163,7 +164,7 @@ def test_housekeeping_prunes_expired_rules_and_saves(make, tmp_path):
         policy={"default": "deny", "rules": [{"id": "old", "action": "allow", "host": "a.example", "expires": 1}]}
     )
     gw._housekeep()
-    assert gw.policy.rules == [] and "old" not in (tmp_path / "policy.yaml").read_text()
+    assert {r.source for r in gw.policy.rules} == {"builtin"} and "old" not in (tmp_path / "policy.yaml").read_text()
 
 
 # ------------------------------------------------------------------ resolve / approvals
@@ -289,7 +290,7 @@ def test_grant_dns_failure_is_refused(make, monkeypatch):
     assert data.server.id not in gw.verdicts
 
 
-def test_non_lan_grant_still_honours_the_hard_deny(make, monkeypatch):
+def test_a_grant_target_that_is_only_a_name_cannot_open_a_blocked_range(make, monkeypatch):
     gw = make({"grants": GRANTS})
     gw.grants.activate("nas", "read", 600, "", "t")
 
@@ -298,7 +299,11 @@ def test_non_lan_grant_still_honours_the_hard_deny(make, monkeypatch):
 
     monkeypatch.setattr(gw, "resolve", private)
     data = connect(gw, "nas.example")
-    assert "hard-deny 10.0.0.0/8" in data.server.error
+    assert data.server.error == (
+        "egress policy: blocked (grant nas: name allowed by the grant, but it resolves to 10.1.2.3, inside blocked "
+        "range 10.0.0.0/8 (rule block-10.0.0.0_8): set a fixed address on the grant target)"
+    )
+    assert data.server.id not in gw.verdicts
 
 
 # ------------------------------------------------------------------ TLS

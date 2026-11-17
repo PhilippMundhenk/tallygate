@@ -3,7 +3,7 @@ repeated temporary approvals. Pure functions over the policy and what the event 
 
 from __future__ import annotations
 
-from egressgw.policy import Policy, is_ip, registrable_domain
+from egressgw.policy import SEEDED_SOURCES, Policy, is_ip, registrable_domain
 
 TEMPORARY_SCOPES = ("once", "hour")
 
@@ -12,7 +12,8 @@ def rule_usage(
     policy: Policy, stored: dict[str, dict], unflushed: dict[str, list], now: float, stale_days: int
 ) -> list:
     """Every rule with hits, last match and whether it is stale: permanent, known for at least `stale_days`
-    and not matched in that time. Rules with a time limit are never stale (they end by themselves)."""
+    and not matched in that time. Rules with a time limit are never stale (they end by themselves), and
+    neither are the seeded blocks: a block that never matched has done its job, it is not clutter to clean up."""
     out = []
     limit = now - stale_days * 86400
     for pos, r in enumerate(policy.rules, 1):
@@ -20,6 +21,7 @@ def rule_usage(
         n, last = unflushed.get(r.id, (0, None))
         hits, last = s["hits"] + n, max(x for x in (s["last"], last, 0) if x is not None) or None
         stale = r.expires is None and s["since"] <= limit and (last is None or last < limit)
+        stale = stale and r.source not in SEEDED_SOURCES
         out.append({**r.to_dict(), "pos": pos, "hits": hits, "last": last, "since": s["since"], "stale": stale})
     return out
 

@@ -20,9 +20,10 @@ def test_old_keys_become_destinations_and_never(tmp_path, capsys):
                 "github_repos": ["me/app"],
                 "github_hosts": ["git.example"],
                 "log_keep_days": 7,  # an unrelated key is kept
-                "never": ["203.0.113.7/32"],
+                "never": ["203.0.113.7/32", {"range": "192.168.9.0/24", "scope": "all+lan"}],
                 "hard_deny_floor": ["198.51.100.0/24"],
                 "grants_never": ["192.168.1.1/32"],
+                "grants_lan_allow": ["192.168.1.0/24"],
             }
         )
     )
@@ -30,7 +31,9 @@ def test_old_keys_become_destinations_and_never(tmp_path, capsys):
     out, err = capsys.readouterr()
     got = yaml.safe_load(out)
     assert got["log_keep_days"] == 7
-    assert got["never"] == ["203.0.113.7/32", "198.51.100.0/24", {"range": "192.168.1.1/32", "scope": "all+lan"}]
+    # ADR-0019: one plain list - the scope all+lan and grants_lan_allow are gone
+    assert got["never"] == ["203.0.113.7/32", "192.168.9.0/24", "198.51.100.0/24", "192.168.1.1/32"]
+    assert "grants_lan_allow" not in got and "grants_lan_allow dropped" in err and "the scope all+lan is gone" in err
     assert {"match": {"host": "registry.npmjs.org"}, "methods": "no-writes"} in got["destinations"]
     assert {"match": {"host": "git.example"}, "repos": {"patterns": ["me/app"]}} in got["destinations"]
     assert any(

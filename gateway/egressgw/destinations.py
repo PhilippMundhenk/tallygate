@@ -6,9 +6,7 @@ agent may do at a destination, when, and how. A `Destination` is one entry with 
 the converter, the API and the UI can all speak one model.
 
 This module is **data only**. It defines the entries and reads a running `Gateway` into them; it decides
-nothing. The evaluation path still lives in `model.Access`, which reads the old split structures directly.
-A later step switches `Access` to read a `Model`; until then `translate` is exercised only by tests and the
-converter, so introducing it cannot change enforcement.
+nothing. The decision is `policy.Policy.evaluate` (one ordered rule list, ADR-0019), asked by `model.Access`.
 
 How today's mechanisms map (ADR-0014 §1):
 
@@ -16,11 +14,12 @@ How today's mechanisms map (ADR-0014 §1):
 |---|---|
 | rule `allow`/`ask`/`deny` (host or cidr, port) | `match`, `access` |
 | the mode | `Model.default` (the final `match: {host: "*"}` entry, kept as `default` for readability) |
-| grant | `access: request` plus `request` (name, levels, approval, durations) and the target's `scheme`/`paths`/`lan`/`address`/`tls` |
+| grant | `access: request` plus `request` (name, levels, approval, durations) and the target's `scheme`/`paths`/`address`/`tls` |
 | `readonly` entry, grant level `read` | `methods` (+ `read_paths` for POSTs that only read) |
 | `github_repos` | `repos` (the repository matcher of `github.RepoScope` applies to the host) |
 | `inject`, grant `inject` | `credentials` |
-| `never`, `grants_never`, `GW_INTERNAL_NETS` | `Model.never` (one additive list with a scope per entry) |
+| the built-in blocks, `never` in the gateway config | ordinary `deny` rules (`source: builtin` / `config`), seeded once at the bottom |
+| `GW_INTERNAL_NETS`, the gateway's own listeners | `Model.locked` (denied before the list, no actions) |
 
 One matcher is used for every entry: `*.example.com` means the domain and its subdomains, as in rules today.
 """
@@ -30,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from egressgw.policy import Rule, valid_port_spec
+from egressgw.policy import Rule, ip_addr, valid_port_spec
 
 if TYPE_CHECKING:
     from egressgw.core import Gateway
@@ -150,7 +149,7 @@ class Destination:
     repos: RepoScopeSpec | None = None  # repository scope (today: github_repos) applies to this host
     request: Request | None = None  # set iff access == "request"
     scheme: str | None = None  # a request target's scheme (http | https | tcp)
-    lan: bool = False  # exempt from the `all`-scope never floor, this target only
+    lan: bool = False  # pre-0019 files only: read so the migration can report it, never written or used
     address: str | None = None  # pinned IP of a request target
     tls_fingerprint: str | None = None
     tls_verify: bool = True
@@ -158,11 +157,14 @@ class Destination:
     expires: float | None = None  # unix ts, None = permanent
     group: str = ""  # a rule's named set (#142)
     id: str = ""
-    source: str = "file"  # file | user | approval | preset | grant | config
+    source: str = "file"  # file | user | approval | preset | grant | config | builtin
+    # Display only (GET /model), ignored on input (ADR-0019):
+    shadowed: dict | None = None  # a name rule that an address deny below it blocked: count, last, address, by
+    covered_by: str = ""  # an address rule that can never match: the id of the earlier rule that covers it
 
     # Properties that can hand out secrets or open the local network (ADR-0014 §4): only the read-only config
     # file may set them. The API/UI may add entries and narrow them, never set these.
-    FILE_ONLY = ("credentials", "lan", "tls_verify")
+    FILE_ONLY = ("credentials", "tls_verify")
 
     def validate(self) -> None:
         self.match.validate()
@@ -180,8 +182,6 @@ class Destination:
         out = []
         if self.credentials:
             out.append("credentials")
-        if self.lan:
-            out.append("lan")
         if not self.tls_verify:
             out.append("tls.verify: false")
         return out
@@ -204,8 +204,6 @@ class Destination:
             d["request"] = self.request.to_dict()
         if self.scheme is not None:
             d["scheme"] = self.scheme
-        if self.lan:
-            d["lan"] = True
         if self.address:
             d["address"] = self.address
         if self.tls_fingerprint or not self.tls_verify:
@@ -220,6 +218,10 @@ class Destination:
             d["id"] = self.id
         if self.source != "file":
             d["source"] = self.source
+        if self.shadowed:
+            d["shadowed"] = dict(self.shadowed)
+        if self.covered_by:
+            d["covered_by"] = self.covered_by
         return d
 
     @classmethod
@@ -227,6 +229,7 @@ class Destination:
         known = {
             "match", "access", "methods", "paths", "read_paths", "credentials", "repos",
             "request", "scheme", "lan", "address", "tls", "note", "expires", "group", "id", "source",
+            "shadowed", "covered_by",
         }  # fmt: skip
         unknown = set(d) - known
         if unknown:
@@ -263,18 +266,19 @@ class Destination:
 
 @dataclass
 class Model:
-    """A whole configuration as destinations: the ordered entries, the mode (the final `*` entry), and the
-    one never-reachable list."""
+    """A whole configuration as destinations, in the order it is evaluated (ADR-0019): the rules from top to
+    bottom (the seeded blocks are rules among them), then on-request and file-property entries, the locked
+    ranges, and the default (the mode) as the last line."""
 
     destinations: list[Destination] = field(default_factory=list)
     default: str = "ask"  # the mode
-    never: list[dict] = field(default_factory=list)  # [{range, scope}] with scope all | all+lan
+    locked: list[dict] = field(default_factory=list)  # [{range, reason}]: denied before the list, no actions
 
     def to_dict(self) -> dict:
         return {
             "default": self.default,
             "destinations": [d.to_dict() for d in self.destinations],
-            "never": list(self.never),
+            "locked": list(self.locked),
         }
 
 
@@ -285,24 +289,16 @@ def _readonly_methods(post_is_write: bool) -> str:
 def translate(gw: Gateway) -> Model:
     """List a running gateway's configuration and state as one ordered destination model (ADR-0014 §1).
 
-    Access entries (rules, grants) keep their order; property entries (read-only, credentials, repositories)
-    are listed after them, as they apply on top of whatever access matched - the same layering the current
-    `Access.host_limits` does. Nothing here decides; it only mirrors the live structures into the model."""
-    dests: list[Destination] = []
-
-    # Access: the rules, in order. Their source (user/approval/preset) is kept.
-    for r in gw.policy.rules:
-        dests.append(
-            Destination(
-                match=Match(host=r.host, cidr=r.cidr, port=r.port),
-                access=r.action,
-                note=r.note,
-                expires=r.expires,
-                group=r.group,
-                id=r.id,
-                source=r.source,
-            )
-        )
+    The rules come first, in evaluation order, each with what the operator has to see about it (ADR-0019): a
+    name rule that an address `deny` below it blocked (`shadowed`), an address rule that an earlier one covers
+    completely (`covered_by`). Grants and the file properties follow. Nothing here decides; it only mirrors
+    the live structures into the model."""
+    dests = from_rules(gw.policy.rules)
+    shadows = gw.shadow_stats()
+    for d, r in zip(dests, gw.policy.rules, strict=True):
+        d.shadowed = shadows.get(r.id)
+        cover = gw.policy.covered_by(r)
+        d.covered_by = cover.id if cover else ""
 
     # Access: grants become `access: request` destinations, one per target.
     dests += grant_destinations(gw.grants.defs)
@@ -310,7 +306,31 @@ def translate(gw: Gateway) -> Model:
     # Properties only, from the read-only config file: read-only hosts, repositories, credentials.
     dests += file_destinations(gw.readonly, gw.github, gw.inject)
 
-    return Model(destinations=dests, default=gw.policy.default, never=_never(gw))
+    return Model(destinations=dests, default=gw.policy.default, locked=locked_rows(gw))
+
+
+def locked_rows(gw: Gateway) -> list[dict]:
+    """The locked ranges for display: the stack's own networks and the gateway's own listeners. They are
+    denied before the rule list is walked and no rule, grant or API call changes that (ADR-0019)."""
+    rows = [
+        {"range": str(n), "source": "stack", "reason": "the tallygate stack's own network"} for n in gw.grants.internal
+    ]
+    seen = {r["range"] for r in rows}
+    for net, port in gw.grants.own:
+        label = f"{net.network_address if net.num_addresses == 1 else net}:{port}"
+        if label not in seen:
+            seen.add(label)
+            rows.append({"range": label, "source": "listener", "reason": "the gateway's own listener"})
+    return rows
+
+
+def is_local(value: str | None) -> bool:
+    """True for an IP literal that is not a public address (private, loopback, link-local, ...): shown as a
+    neutral "local" tag on grant targets. Names are never local here - what a name resolves to is not known."""
+    try:
+        return not ip_addr(str(value)).is_global
+    except ValueError:
+        return False
 
 
 def grant_destinations(defs) -> list[Destination]:
@@ -332,7 +352,6 @@ def grant_destinations(defs) -> list[Destination]:
                     paths=None if t.scheme == "tcp" else list(t.paths),
                     credentials=creds,
                     scheme=t.scheme,
-                    lan=t.lan,
                     address=t.address,
                     tls_fingerprint=t.tls_fingerprint,
                     tls_verify=t.tls_verify,
@@ -466,82 +485,33 @@ def destinations_to_config(dests: list[Destination]) -> dict:
     return out
 
 
-def _never(gw: Gateway) -> list[dict]:
-    """The never-reachable floor as one list shown in the Destinations table (ADR-0014 §3, ADR-0017). Each
-    entry has a `range`, a `scope` ("all" = every connection, a `lan: true` grant target may be exempt;
-    "all+lan" = closed for LAN grant targets too), a human `reason`, and the ADR-0017 edit state:
-
-      * `removable` - a scope-all floor range (`hard_deny_floor` + the policy `hard_deny`) the admin may open
-        from the UI behind a confirmation. The structural stack networks (`grants.internal`) are never
-        removable.
-      * `open` - the admin has opened this exact range in `floor_open`, so normal connections into it are no
-        longer hard-denied (the grant path still blocks `grants.never` / `grants.internal`, unchanged).
-
-    The scope-all floor now includes `hard_deny_floor` (previously only the policy `hard_deny` was listed).
-    A range that is also a structural lock (`grants.internal`) is shown once, as locked."""
-    never_lan = {str(n) for n in gw.grants.never}  # also closed for LAN grant targets
-    configured = set(gw.floor_configured)  # floor ranges that came from the gateway config file
-    open_set = set(gw.policy.floor_open)
-    out: list[dict] = []
-    seen: set[str] = set()
-    # Structural locks first: the stack's own networks, never removable here (ADR-0017).
-    for n in gw.grants.internal:
-        s = str(n)
-        if s in seen:
-            continue
-        seen.add(s)
-        out.append(
-            {
-                "range": s,
-                "scope": "all+lan",
-                "reason": "the tallygate stack's own network (locked)",
-                "removable": False,
-                "open": False,
-            }
-        )
-    # The scope-all floor the admin may edit: the built-in / config floor, then the operator's own additions.
-    floor = [
-        (c, "blocked by the gateway config" if c in configured else "built-in reserved or private range")
-        for c in gw.policy.hard_deny_floor
-    ]
-    floor += [(c, "a deny range you added") for c in gw.policy.hard_deny]
-    for c, reason in floor:
-        if c in seen:  # exact structural lock already shown as locked
-            continue
-        seen.add(c)
-        out.append(
-            {
-                "range": c,
-                "scope": "all+lan" if c in never_lan else "all",
-                "reason": reason,
-                "removable": True,
-                "open": c in open_set,
-            }
-        )
-    return out
-
-
 def policy_to_file(policy) -> dict:
-    """The gateway's `policy.yaml` in the destinations form (ADR-0014 §5): the mode, the approval timeout, the
-    operator's never additions (`hard_deny`, scope `all`) and the access rules as destinations. The read-only
-    floor is not stored."""
-    out: dict = {"default": policy.default, "ask_timeout": policy.ask_timeout}
-    if policy.hard_deny:
-        out["never"] = [{"range": c, "scope": "all"} for c in policy.hard_deny]
-    if policy.floor_open:  # ADR-0017: the scope-all floor ranges the admin has opened
-        out["floor_open"] = list(policy.floor_open)
-    out["destinations"] = [d.to_dict() for d in from_rules(policy.rules)]
-    return out
+    """The gateway's `policy.yaml` (ADR-0014 §5, ADR-0019): the mode, the approval timeout, which built-in and
+    config blocks were seeded, and the rules as destinations in evaluation order."""
+    return {
+        "default": policy.default,
+        "ask_timeout": policy.ask_timeout,
+        "seeded": list(policy.seeded),
+        "destinations": [d.to_dict() for d in from_rules(policy.rules)],
+    }
 
 
 def policy_from_file(data: dict | None) -> dict:
-    """Parse `policy.yaml` in either form into `Policy.from_dict` kwargs. The new form has `destinations`; the
-    old form ({default, ask_timeout, hard_deny, rules}) is passed through so pre-0014 files keep loading."""
+    """Parse `policy.yaml` in any form it ever had into a policy document for `policy.policy_from_any`.
+
+    The destinations form has `destinations`; the pre-0014 form ({default, ask_timeout, hard_deny, rules}) is
+    passed through. A file from before ADR-0019 has no `seeded` and may carry `never` (the operator's
+    `hard_deny` extras) and `floor_open`: they are handed on under their old names, for the migration."""
     data = data or {}
+    if not isinstance(data, dict):
+        raise ValueError("policy.yaml: expected a mapping")
     if "destinations" not in data:
         return data
+    unknown = set(data) - {"default", "ask_timeout", "seeded", "destinations", "never", "floor_open"}
+    if unknown:
+        raise ValueError(f"unknown policy keys: {sorted(unknown)}")
     rules = []
-    for e in data["destinations"]:
+    for e in data["destinations"] or []:
         d = Destination.from_dict(e)
         if d.access not in ("allow", "ask", "deny"):
             raise ValueError("a policy destination must be an access rule (allow/ask/deny), not a property or grant")
@@ -558,19 +528,16 @@ def policy_from_file(data: dict | None) -> dict:
         if d.source and d.source != "file":
             r["source"] = d.source
         rules.append(r)
-    never = data.get("never") or []
-    hard = [
-        (e if isinstance(e, str) else e.get("range"))
-        for e in never
-        if isinstance(e, str) or e.get("scope", "all") == "all"
-    ]
-    return {
-        "default": data.get("default", "ask"),
-        "ask_timeout": data.get("ask_timeout", 60),
-        "hard_deny": hard,
-        "floor_open": data.get("floor_open") or [],  # ADR-0017; validated as CIDRs by Policy.from_dict
-        "rules": rules,
-    }
+    out = {"default": data.get("default", "ask"), "ask_timeout": data.get("ask_timeout", 60), "rules": rules}
+    if "seeded" in data:
+        out["seeded"] = data.get("seeded") or []
+    if "seeded" not in data or data.get("never") or data.get("floor_open"):  # pre-0019: to be migrated
+        never = data.get("never") or []
+        if not isinstance(never, list):
+            raise ValueError("never: expected a list")
+        out["hard_deny"] = [e if isinstance(e, str) else (e or {}).get("range") for e in never]
+        out["floor_open"] = data.get("floor_open") or []
+    return out
 
 
 def grants_to_file(ui_defs: dict) -> dict:

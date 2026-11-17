@@ -1,11 +1,16 @@
 """Grants: named, scoped, time-limited bundles of access that the agent requests and a human approves.
 
 A grant definition (static config or UI) lists targets (host:port + scheme), optional HTTP path
-patterns, the access levels it offers (read = GET/HEAD/OPTIONS only, write = everything), whether
-targets may be on the LAN (exempt from the hard deny), credential injection and the approval mode per
-level. The agent can only *ask* for a defined grant; it can never define or widen one.
+patterns, the access levels it offers (read = GET/HEAD/OPTIONS only, write = everything), credential
+injection and the approval mode per level. The agent can only *ask* for a defined grant; it can never
+define or widen one.
 
-Enforcement lives in core.py: an active grant is checked before the normal policy, HTTP(S) targets
+An active grant behaves like rules at the top of the rule list for its targets (ADR-0019): a target with
+an IP literal or a fixed `address` is an address rule and may therefore be a local address; a target that
+is only a name is a name rule and cannot open a blocked range. The locked ranges (the stack's own networks,
+the gateway's own listeners) apply to grants as to everything else.
+
+Enforcement lives in core.py and model.py: an active grant is checked before the rule list, HTTP(S) targets
 are always intercepted so method, path and Host can be enforced on every request, and anything that is
 not HTTP on such a target is cut.
 """
@@ -26,7 +31,7 @@ from pathlib import Path
 import yaml
 
 from egressgw import destinations
-from egressgw.policy import ip_addr, is_ip, parse_never, valid_hostname
+from egressgw.policy import ip_addr, is_ip, locked_reason, valid_hostname
 from egressgw.store import atomic_write
 
 log = logging.getLogger("egressgw")
@@ -35,8 +40,6 @@ LEVELS = ("read", "write")
 READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 SCHEMES = ("https", "http", "tcp")
 APPROVALS = ("ask", "auto")
-# Never reachable, not even through a LAN grant: loopback/link-local/metadata/unspecified/multicast.
-DEFAULT_NEVER = ["0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "::/96", "fe80::/10", "ff00::/8"]
 MAX_TTL = 7 * 24 * 3600
 NAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,47}")
 # Path tricks that a server might normalise differently than our glob match does.
@@ -101,13 +104,14 @@ class Target:
     port: int
     scheme: str = "https"
     paths: list[str] = field(default_factory=lambda: ["/*"])
-    lan: bool = False
     address: str | None = None
     tls_fingerprint: str | None = None
     tls_verify: bool = True
 
     @classmethod
     def from_dict(cls, d: dict) -> Target:
+        # `lan` is read from pre-0019 files and ignored (ADR-0019): what a target may reach follows from
+        # whether it names an address, not from a flag.
         unknown = set(d) - {"host", "port", "scheme", "paths", "lan", "address", "tls_fingerprint", "tls_verify"}
         if unknown:
             raise ValueError(f"unknown target fields: {sorted(unknown)}")
@@ -116,7 +120,6 @@ class Target:
             port=int(d["port"]),
             scheme=str(d.get("scheme", "https")).lower(),
             paths=[str(p) for p in (d.get("paths") or ["/*"])],
-            lan=bool(d.get("lan", False)),
             address=str(d["address"]).strip() if d.get("address") else None,
             tls_fingerprint=(str(d["tls_fingerprint"]).replace(":", "").lower() if d.get("tls_fingerprint") else None),
             tls_verify=bool(d.get("tls_verify", True)),
@@ -146,12 +149,17 @@ class Target:
     def matches(self, host: str, port: int) -> bool:
         return port == self.port and host_match(self.host, host)
 
+    def fixed(self) -> str | None:
+        """The address of a target that is an address rule (a fixed `address` or an IP literal as host), or
+        None for a target that is only a name (ADR-0019)."""
+        if self.address:
+            return self.address
+        return self.host.strip("[]") if is_ip(self.host) else None
+
     def to_dict(self) -> dict:
         d = {"host": self.host, "port": self.port, "scheme": self.scheme}
         if self.scheme != "tcp":
             d["paths"] = self.paths
-        if self.lan:
-            d["lan"] = True
         if self.address:
             d["address"] = self.address
         if self.tls_fingerprint:
@@ -162,7 +170,7 @@ class Target:
 
     def label(self) -> str:
         paths = "" if self.scheme == "tcp" or self.paths == ["/*"] else " " + ",".join(self.paths)
-        return f"{self.scheme}://{self.host}:{self.port}{paths}{' (LAN)' if self.lan else ''}"
+        return f"{self.scheme}://{self.host}:{self.port}{paths}"
 
 
 @dataclass
@@ -321,16 +329,22 @@ def internal_nets(value: str) -> list:
     return nets
 
 
-def own_sockets(env) -> set:
-    """(address, port) of the gateway's own listeners: management API, grant API, HTTP and SOCKS proxy."""
-    own = set()
+def own_sockets(env) -> list:
+    """The gateway's own listeners (management API, grant API, HTTP and SOCKS proxy) as (network, port).
+    A listener bound to one address is that address. One bound to every address (or to a name) is reached
+    through any local address, so its port is locked on loopback and on the unspecified addresses; the
+    gateway's other addresses are inside the stack's own networks."""
+    own = []
     for host_var, ports in (
         ("GW_API_HOST", (("GW_API_PORT", "8081"),)),
         ("GW_LISTEN_HOST", (("GW_GRANTS_PORT", "8079"), ("GW_HTTP_PORT", "3128"), ("GW_SOCKS_PORT", "1080"))),
     ):
-        host = env.get(host_var, "")
-        if is_ip(host):
-            own.update((ip_addr(host), int(env.get(var, default))) for var, default in ports)
+        host = env.get(host_var) or "127.0.0.1"  # the default the listeners bind to
+        if is_ip(host) and not ip_addr(host).is_unspecified:
+            nets = [ipaddress.ip_network(str(ip_addr(host)))]
+        else:
+            nets = [ipaddress.ip_network(c) for c in ("127.0.0.0/8", "0.0.0.0/32", "::1/128", "::/128")]
+        own += [(n, int(env.get(var, default))) for var, default in ports for n in nets]
     return own
 
 
@@ -340,44 +354,88 @@ def clean_reason(text: str) -> str:
     return " ".join(text.split())[:300]
 
 
+def _lan_targets(defs: dict) -> list[tuple[str, dict]]:
+    """(grant name, target dict) of every target that still carries the pre-0019 `lan` flag."""
+    out = []
+    for name, d in (defs or {}).items():
+        for t in (d or {}).get("targets") or []:
+            if isinstance(t, dict) and t.get("lan"):
+                out.append((name, t))
+    return out
+
+
+def _target_key(name: str, t: dict) -> tuple:
+    """(grant, host, port) of a raw target as the parsed target spells them."""
+    port = t.get("port")
+    return name, str(t.get("host", "")).lower().rstrip("."), int(port) if str(port).isdigit() else port
+
+
+def _lan_notes(where: str, targets: list[tuple[str, dict]]) -> None:
+    """Log once what the dropped `lan` flag means for each target (ADR-0019, Migration)."""
+    for name, t in targets:
+        label = f"grant {name}, target {t.get('host')}:{t.get('port')}"
+        if t.get("address") or is_ip(str(t.get("host", ""))):
+            log.warning("%s: %s: `lan` is ignored now; the target names an address and keeps working", where, label)
+        else:
+            log.warning(
+                "%s: %s: `lan` is ignored now, and a target that is only a name cannot open a blocked range. "
+                "It keeps working for a local address only with a fixed `address`",
+                where,
+                label,
+            )
+
+
 class Grants:
     def __init__(self, config: dict, data_dir: Path) -> None:
         self.ui_path = data_dir / "grants.yaml"
-        # The built-in list always applies; `never` entries with scope all+lan (and the old `grants_never`) add to it.
-        # TEST ONLY: with GW_TEST_FLOOR_REPLACE a configured list replaces it (the e2e upstreams are on loopback).
-        configured = [ipaddress.ip_network(c, strict=False) for c in parse_never(config)[1]]
-        replace = os.environ.get("GW_TEST_FLOOR_REPLACE") == "1" and configured
-        builtin = [] if replace else [ipaddress.ip_network(c, strict=False) for c in DEFAULT_NEVER]
-        self.never_configured = [n for n in configured if n not in builtin]
-        self.never = [*builtin, *self.never_configured]
-        # The stack's own networks and the gateway's own listeners are never reachable through a grant,
-        # whatever `grants_never` and `lan: true` say: a LAN target skips the hard deny, which is what keeps
-        # the agent away from the management API and the control UI on the normal path (#112).
+        # Locked (ADR-0019): the stack's own networks and the gateway's own listeners are never reachable,
+        # through a grant or anything else. The Gateway attaches them to the policy, which checks them before
+        # the rule list; they are kept here because they come from the environment, as the grants do.
         self.internal = internal_nets(os.environ.get("GW_INTERNAL_NETS", ""))
+        if not self.internal:
+            # a warning, not an error: mitmproxy exits on an error logged at startup, and a gateway run
+            # outside the compose stack (development, tests) has no networks of a stack to lock
+            log.warning(
+                "GW_INTERNAL_NETS is empty: no network of the stack is locked. Only the built-in blocks keep the "
+                "agent away from the control plane and the gateway API, and those can be deleted. Set it to the "
+                "stack's networks (compose.yaml does)"
+            )
         self.own = own_sockets(os.environ)
-        # LAN ranges that grants defined in the UI may reach (config-file grants are not limited).
-        self.ui_lan_allow = [ipaddress.ip_network(c, strict=False) for c in config.get("grants_lan_allow") or []]
+        if config.get("grants_lan_allow"):
+            log.warning(
+                "gateway config: grants_lan_allow is ignored since ADR-0019: a grant target with an IP or a fixed "
+                "`address` may be a local address, one that is only a name may not"
+            )
         self.request_timeout = int(config.get("grant_request_timeout", 300))
         self.max_requests = int(config.get("grant_max_pending", 3))
         self.defs: dict[str, GrantDef] = {}
+        self._had_lan = {_target_key(n, t) for n, t in _lan_targets(config.get("grants") or {})}
+        _lan_notes("gateway config", _lan_targets(config.get("grants") or {}))
         for name, d in (config.get("grants") or {}).items():
             self.defs[name] = GrantDef.from_dict(name, d or {}, "config")
         if self.ui_path.exists():
-            raw = yaml.safe_load(self.ui_path.read_text()) or {}
+            text = self.ui_path.read_text()
+            raw = yaml.safe_load(text) or {}
             old_form = "destinations" not in raw and bool(raw)  # a pre-0014 {name: def} file
-            for name, d in destinations.grants_from_file(raw).items():
+            file_defs = destinations.grants_from_file(raw)  # a file that cannot be read stops the gateway
+            lan = _lan_targets(file_defs)
+            self._had_lan |= {_target_key(n, t) for n, t in lan}
+            for name, d in file_defs.items():
                 if name in self.defs:
                     continue  # config wins
                 try:
                     self.defs[name] = GrantDef.from_dict(name, d or {}, "ui")
                 except ValueError as e:  # e.g. saved by an older version that allowed inject in UI grants
                     log.error("UI grant %s ignored: %s", name, e)
-            if old_form:  # migrate once: back up as *.pre-0014 and rewrite in the destinations form (ADR-0014)
-                backup = self.ui_path.with_suffix(self.ui_path.suffix + ".pre-0014")
-                if not backup.exists():
-                    atomic_write(backup, self.ui_path.read_text())
+            for suffix, needed in ((".pre-0014", old_form), (".pre-0019", bool(lan))):
+                if needed:  # migrate once: keep the old file next to the new one, then rewrite it
+                    backup = self.ui_path.with_suffix(self.ui_path.suffix + suffix)
+                    if not backup.exists():
+                        atomic_write(backup, text)
+            if old_form or lan:
+                _lan_notes(str(self.ui_path), lan)
                 self.save_ui()
-                log.info("migrated %s to the destinations form (backup at %s)", self.ui_path, backup)
+                log.warning("migrated %s (the old file is kept next to it as *.pre-0014 / *.pre-0019)", self.ui_path)
         self.active: dict[str, Active] = {}
         self.requests: dict[str, GrantRequest] = {}
         # Set by the emergency stop, cleared by the next mode change: while set, "auto" levels need a human.
@@ -390,6 +448,34 @@ class Grants:
             except (OSError, yaml.YAMLError, AttributeError) as e:  # fail closed: keep auto-approval off
                 log.error("%s unreadable (%s): auto-approval stays suspended", self.state_path, e)
                 self.auto_suspended = {"since": 0, "by": "unreadable state file"}
+
+    def local_notes(self, policy, never: list[str] | tuple = ()) -> list[str]:
+        """For the upgrade to ADR-0019: grant targets that name an address which was refused before and is
+        reachable now while the grant is active. That is an address inside a blocked range without the old
+        `lan` flag, and - with or without it - an address in the old never list (`never`: the built-in one and
+        the entries of the gateway config), which no grant could reach. Locked addresses stay refused and are
+        not named. Nothing is changed here - the operator is told, once, in the log."""
+        out = []
+        nets = [ipaddress.ip_network(c, strict=False) for c in never]
+        for g in self.defs.values():
+            for t in g.targets:
+                ip = t.fixed()
+                if not ip or policy.locked(ip, t.port):
+                    continue
+                addr = ip_addr(ip)
+                if (g.name, t.host.lower().rstrip("."), t.port) in self._had_lan and not any(
+                    addr.version == n.version and addr in n for n in nets
+                ):
+                    continue
+                if block := policy.blocked_by(ip, t.port):
+                    auto = [lv for lv, how in g.approval.items() if how == "auto"]
+                    out.append(
+                        f"NOTE grant {g.name}: target {t.host}:{t.port} names the address {ip} inside blocked range "
+                        f"{block.cidr}. It was refused before; now it is reachable while the grant is active"
+                        + (f" (approval for {', '.join(auto)} is automatic)" if auto else "")
+                        + ". Delete the target if that is not wanted"
+                    )
+        return out
 
     # ---------------------------------------------------------------- auto-approval suspension
     def _save_state(self) -> None:
@@ -413,17 +499,15 @@ class Grants:
         atomic_write(self.ui_path, yaml.safe_dump(destinations.grants_to_file(ui), sort_keys=False))
 
     def check_ui(self, name: str, d: dict) -> GrantDef:
-        """Validate a UI grant definition without storing it."""
+        """Validate a UI grant definition without storing it. A target that names a locked address is refused
+        here already; whether a target that is only a name resolves into a blocked range is checked by the
+        Gateway (`check_grant`), which can resolve it."""
         if name in self.defs and self.defs[name].source == "config":
             raise ValueError(f"grant {name} is defined in the config file and cannot be changed in the UI")
         g = GrantDef.from_dict(name, d, "ui")
         for t in g.targets:
-            if t.address and self._in(t.address, self.internal):
-                raise ValueError(f"{t.address} belongs to the tallygate stack itself")
-            if t.lan and not self.ui_lan_allow:
-                raise ValueError("LAN targets in UI grants need grants_lan_allow in the gateway config file")
-            if t.lan and t.address and not self._in(t.address, self.ui_lan_allow):
-                raise ValueError(f"{t.address} is outside grants_lan_allow")
+            if (ip := t.fixed()) and (why := locked_reason(ip, t.port, self.internal, self.own)):
+                raise ValueError(f"grant {name}: {why}")
         return g
 
     def upsert_ui(self, name: str, d: dict) -> GrantDef:
@@ -447,11 +531,6 @@ class Grants:
         self.save_ui()
 
     # ---------------------------------------------------------------- matching
-    @staticmethod
-    def _in(ip: str, nets) -> bool:
-        a = ip_addr(ip)
-        return any(a in n for n in nets)
-
     def match(self, host: str, port: int) -> tuple[Active, GrantDef, Target] | None:
         """Best active grant covering host:port (write beats read)."""
         best = None
@@ -470,20 +549,6 @@ class Grants:
 
     def defined_for(self, host: str, port: int) -> list[str]:
         return sorted(g.name for g in self.defs.values() if any(t.matches(host, port) for t in g.targets))
-
-    def address_problem(self, g: GrantDef, t: Target, ips: list[str]) -> str | None:
-        """None if the resolved IPs are acceptable for this target (the hard deny is checked by the caller
-        for non-LAN targets)."""
-        for ip in ips:
-            if self._in(ip, self.never):
-                return f"grant {g.name}: {ip} is never reachable"
-            if self._in(ip, self.internal):
-                return f"grant {g.name}: {ip} belongs to the tallygate stack itself"
-            if (ip_addr(ip), t.port) in self.own:
-                return f"grant {g.name}: {ip}:{t.port} is the gateway itself"
-            if t.lan and g.source == "ui" and not self._in(ip, self.ui_lan_allow):
-                return f"grant {g.name}: {ip} is outside grants_lan_allow"
-        return None
 
     # ---------------------------------------------------------------- lifecycle
     def activate(self, name: str, level: str, ttl: int, reason: str, by: str) -> Active:

@@ -117,7 +117,7 @@ def approve(g, host, scope, by="web:admin"):
 def test_counting_is_a_dict_update_and_housekeeping_flushes_it(gw):  # noqa: F811
     gw._hit(Decision("allow", "rule ok", "ok"))
     gw._hit(Decision("allow", "rule ok", "ok"))
-    gw._hit(Decision("deny", "hard-deny", "hard_deny"))
+    gw._hit(Decision("deny", "locked: 172.31.11.2 belongs to the tallygate stack itself", "locked"))
     gw._hit(Decision("ask", "default"))
     assert list(gw.hits) == ["ok"] and gw.hits["ok"][0] == 2
     rules = admin(gw, "GET", "/rules/stats")[1]
@@ -135,7 +135,7 @@ def test_cleanup_removes_only_rules_that_are_still_unused(gw):  # noqa: F811
     gw._hit(Decision("allow", "rule ok", "ok"))  # ok is in use
     status, r = admin(gw, "POST", "/rules/cleanup", {"ids": [rid, "ok", rid, "nope"]})
     assert status == 200 and r == {"removed": [rid], "kept": ["ok", "nope"]}
-    assert [x.id for x in gw.policy.rules] == ["ok"] and gw.history.versions()[0][
+    assert [x.id for x in gw.policy.rules if x.source != "builtin"] == ["ok"] and gw.history.versions()[0][
         "what"
     ] == f"unused rules removed: {rid}"
     assert admin(gw, "POST", "/rules/cleanup", {"ids": ["ok"]})[1] == {"removed": [], "kept": ["ok"]}

@@ -72,12 +72,12 @@ def test_target_serialisation_and_label():
         "port": 8006,
         "scheme": "https",
         "paths": ["/*"],
-        "lan": True,
         "address": "10.0.0.9",
         "tls_verify": False,
     }
     assert Target.from_dict(t.to_dict()) == t
-    assert t.label() == "https://pve.example:8006 (LAN)"
+    assert t.label() == "https://pve.example:8006" and not hasattr(t, "lan")  # read from old files, ignored
+    assert t.fixed() == "10.0.0.9" and Target.from_dict({"host": "[fd00::5]", "port": 1}).fixed() == "fd00::5"
     tcp = Target.from_dict({"host": "db.example", "port": 5432, "scheme": "tcp"})
     assert "paths" not in tcp.to_dict() and tcp.label() == "tcp://db.example:5432"
     api = Target.from_dict({**T, "paths": ["/api/*", "/v2/*"], "tls_fingerprint": "AB" * 32})
@@ -132,14 +132,14 @@ def test_empty_ui_store_and_empty_config_entries(tmp_path):
         Grants({"grants": {"x": None}}, tmp_path)  # a broken config grant stops the gateway
 
 
-def test_ui_lan_target_address_must_be_inside_the_allowed_ranges(tmp_path):
-    g = Grants({"grants_lan_allow": ["192.168.1.0/24"]}, tmp_path)
-    lan = {"host": "cam.example", "port": 80, "scheme": "http", "lan": True}
-    with pytest.raises(ValueError, match="outside grants_lan_allow"):
-        g.upsert_ui("cam", {"targets": [{**lan, "address": "192.168.2.5"}]})
-    assert "cam" not in g.defs and not (tmp_path / "grants.yaml").exists()
-    g.upsert_ui("cam", {"targets": [{**lan, "address": "192.168.1.5"}]})
+def test_a_ui_target_with_a_fixed_local_address_is_stored_and_survives_a_restart(tmp_path):
+    g = Grants({}, tmp_path)
+    cam = {"host": "cam.example", "port": 80, "scheme": "http"}
+    g.upsert_ui("cam", {"targets": [{**cam, "address": "192.168.1.5"}]})
     assert Grants({}, tmp_path).defs["cam"].targets[0].address == "192.168.1.5"
+    with pytest.raises(ValueError, match="address must be an IP"):
+        g.upsert_ui("cam2", {"targets": [{**cam, "address": "cam.lan"}]})
+    assert "cam2" not in g.defs
 
 
 def test_delete_ui_grant_revokes_its_active_instance(tmp_path):

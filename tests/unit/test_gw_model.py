@@ -1,5 +1,6 @@
 """ADR-0014: one model for what applies to a connection and its requests (gateway/egressgw/model.py)."""
 
+import ipaddress
 import sys
 import time
 from pathlib import Path
@@ -205,7 +206,7 @@ def test_on_name_and_on_addresses(gw, monkeypatch):
     m = gw.access
     assert m.on_name("ok.example", 443).action == "allow" and m.on_name("x.example", 443).reason == "default"
     assert m.on_addresses("ok.example", 443, ["93.184.216.34"]).action == "allow"
-    assert m.on_addresses("ok.example", 443, ["10.0.0.1"]).rule_id == "hard_deny"  # the addresses decide too
+    assert m.on_addresses("ok.example", 443, ["10.0.0.1"]).rule_id == "block-10.0.0.0_8"  # the addresses decide too
     monkeypatch.setattr(gw.learning, "covers", lambda port: port == 443)
     assert m.on_name("x.example", 443).reason == "learning mode"  # no rule, no grant: learning mode decides
     assert m.on_name("x.example", 80).reason == "default"  # not on its ports
@@ -213,7 +214,8 @@ def test_on_name_and_on_addresses(gw, monkeypatch):
     assert m.on_name("ok.example", 443).rule_id == "ok"  # a rule still decides first
     assert m.on_addresses("x.example", 443, ["93.184.216.34"]).reason == "default"
     assert m.on_addresses("x.example", 443, ["93.184.216.34"], learning=True).reason == "learning mode"
-    assert m.on_addresses("x.example", 443, ["10.0.0.1"], learning=True).rule_id == "hard_deny"
+    assert m.on_addresses("x.example", 443, ["10.0.0.1"], learning=True).rule_id == "block-10.0.0.0_8"
+    assert m.on_addresses("x.example", 443, [], learning=True).action == "deny"  # nothing checked: never learned
 
 
 def test_grants_only_add_access(gw):
@@ -222,6 +224,9 @@ def test_grants_only_add_access(gw):
     gw.grants.activate("api", "write", 600, "", "t")
     gw.grants.activate("ha", "read", 600, "", "t")
     assert m.grant_for("api.example", 443) is None  # the rules allow the name already: the rules decide
+    gw.grants.defs["api"].targets[0].address = "10.0.0.9"  # ... unless the target names an address (ADR-0019)
+    assert m.grant_for("api.example", 443)[1].name == "api"
+    gw.grants.defs["api"].targets[0].address = None
     a, g, t = m.grant_for("ha.example", 443)
     assert g.name == "ha" and t.host == "ha.example" and a.level == "read"
     assert m.grant_hint("ha.example", 443) == "available via grant ha (agent: tallygate request ha)"
@@ -236,6 +241,18 @@ def test_grant_addresses_and_problems(gw):
     pinned = type(t)(host="ha.example", port=443, address="203.0.113.9")
     assert m.grant_addresses(pinned, "ha.example") == ["203.0.113.9"]
     assert m.grant_problem(g, t, "ha.example", 443, ["93.184.216.34"]) is None
-    assert m.grant_problem(g, t, "ha.example", 443, ["10.0.0.5"]).startswith("hard-deny")  # no `lan`: hard deny
-    assert "never reachable" in m.grant_problem(g, t, "ha.example", 443, ["127.0.0.1"])
+    # only a name: a name rule at the top of the list - any address deny rule below it wins (ADR-0019)
+    why = m.grant_problem(g, t, "ha.example", 443, ["93.184.216.34", "10.0.0.5"])
+    assert why.startswith("grant ha: name allowed by the grant, but it resolves to 10.0.0.5, inside blocked range")
+    assert "rule block-127.0.0.0_8" in m.grant_problem(g, t, "ha.example", 443, ["127.0.0.1"])
     assert m.grant_problem(g, t, "ha.example", 443, []) == "no address"
+    # a fixed address (or an IP literal): an address rule at the top - it may be local
+    assert m.grant_problem(g, pinned, "ha.example", 443, ["10.0.0.5"]) is None
+    lit = type(t)(host="10.0.0.5", port=443)
+    assert m.grant_problem(g, lit, "10.0.0.5", 443, ["10.0.0.5"]) is None
+    # locked ranges apply to every kind of target
+    gw.policy.locked_nets = [ipaddress.ip_network("10.0.0.0/24")]
+    for target in (t, pinned, lit):
+        assert "locked: 10.0.0.5 belongs to the tallygate stack itself" in m.grant_problem(
+            g, target, "x", 443, ["10.0.0.5"]
+        )

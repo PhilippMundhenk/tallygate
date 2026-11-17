@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from egressgw import history, learning, usage
-from egressgw.policy import ACTIONS, SCOPES, Decision, Policy, Rule, clamp_ttl, is_ip, load_preset, valid_hostname
+from egressgw.policy import ACTIONS, SCOPES, Decision, Rule, clamp_ttl, ip_addr, is_ip, load_preset, valid_hostname
 from egressgw.store import summarize
 
 if TYPE_CHECKING:
@@ -47,15 +47,21 @@ def build_app(gw: Gateway) -> web.Application:
 
     @routes.get("/policy")
     async def get_policy(_):
-        return _json(gw.policy.describe())
+        return _json(gw.policy.to_dict())
 
     @routes.put("/policy")
     async def put_policy(request):
+        """Replace the policy: mode, timeout and the whole rule list in its order (the seeded blocks are rules
+        in it; `seeded` says which blocks must not be added again). A document without `seeded`, or with
+        `hard_deny`/`floor_open`, is a pre-0019 one and is migrated. The locked ranges and the service
+        exceptions are not part of a policy and stay as they are."""
         old = gw.policy.default
-        gw.adopt(Policy.from_dict(await request.json()))  # floor + service exceptions stay as configured
+        new, notes = gw.read_policy(await request.json())
+        gw.adopt(new)
         gw.save_policy(_by(request), "policy replaced")
-        gw.record(kind="admin", action="policy", reason="policy replaced via API" + _mode_changed(gw, old))
-        return _json(gw.policy.describe())
+        note = _mode_changed(gw, old) + gw.adopted_note(notes)
+        gw.record(kind="admin", action="policy", reason="policy replaced via API" + note)
+        return _json(gw.policy.to_dict())
 
     @routes.patch("/policy")
     async def patch_policy(request):
@@ -77,7 +83,7 @@ def build_app(gw: Gateway) -> web.Application:
         gw.save_policy(_by(request), f"mode {default}, approval timeout {timeout} s")
         reason = f"mode {default}, approval timeout {timeout} s via API" + _mode_changed(gw, old)
         gw.record(kind="admin", action="policy", reason=reason)
-        return _json(gw.policy.describe())
+        return _json(gw.policy.to_dict())
 
     @routes.post("/emergency-stop")
     async def emergency_stop_route(request):
@@ -101,10 +107,22 @@ def build_app(gw: Gateway) -> web.Application:
     # routes (/rules*, PUT/DELETE /grants) are gone; properties come from the read-only config and are not
     # editable here. The approval flow and presets still add rules in-process (not through this surface).
     def _rule_from_destination(d) -> Rule:
+        host, cidr = d.match.host, d.match.cidr
+        if host and is_ip(host):  # an address typed as a host is an address rule: it names the address
+            host, cidr = None, str(ip_addr(host))
         return Rule(
-            action=d.access, host=d.match.host, cidr=d.match.cidr, port=d.match.port,
+            action=d.access, host=host, cidr=cidr, port=d.match.port,
             note=d.note, expires=d.expires, group=d.group, **({"id": d.id} if d.id else {}),
         )  # fmt: skip
+
+    async def _save_grant(name: str, defn: dict, what: str):
+        """Validate (incl. that a target that is only a name does not resolve into a blocked range, ADR-0019)
+        and store a UI grant definition."""
+        await gw.check_grant(name, defn)
+        g = gw.grants.upsert_ui(name, defn)
+        gw.record(kind="admin", action="grant", host=name, reason=f"grant {name} {what} via API")
+        gw.publish({"type": "grants"})
+        return g
 
     def _grant_from_destination(D, d):
         if d.access != "request" or not d.request:
@@ -126,9 +144,7 @@ def build_app(gw: Gateway) -> web.Application:
             return _json(D.from_rules([rule])[0].to_dict(), 201)
         if d.access == "request":
             name, defn = _grant_from_destination(D, d)
-            gw.grants.upsert_ui(name, defn)
-            gw.record(kind="admin", action="grant", host=name, reason=f"grant {name} defined via API")
-            gw.publish({"type": "grants"})
+            await _save_grant(name, defn, "defined")
             return _json({**d.to_dict(), "id": f"grant:{name}"}, 201)
         raise ValueError(
             "a destination added here needs access allow/ask/deny/request; file properties come from the config"
@@ -148,6 +164,37 @@ def build_app(gw: Gateway) -> web.Application:
         gw.record(kind="admin", action="rule~", reason=f"group {name!r}: {[r.id for r in changed]}")
         return _json({"group": name, "changed": [r.to_dict() for r in changed]})
 
+    @routes.post("/destinations/restore-blocks")
+    async def restore_blocks(request):
+        """Add the built-in and config blocks that are missing back at the bottom of the list (ADR-0019)."""
+        added = gw.restore_blocks()
+        if added:
+            gw.save_policy(_by(request), f"{len(added)} built-in block(s) restored")
+        # a restored block stands at the bottom: an address rule above it keeps part of the range open
+        opened = gw.opened_above()
+        still = "".join(f"; still open: {o['cidr']} ({o['action']} rule {o['rule']})" for o in opened)
+        gw.record(
+            kind="admin",
+            action="rule+",
+            reason=f"built-in blocks restored: {', '.join(r['cidr'] for r in added) or 'none missing'}" + still,
+        )
+        return _json({"added": added, "opened": opened})
+
+    @routes.post("/destinations/{did}/move")
+    async def move_destination(request):
+        """Move a rule in the evaluation order: in front of the rule `before`, or to the end with null."""
+        did, body = request.match_info["did"], await request.json()
+        if not isinstance(body, dict) or set(body) != {"before"}:
+            raise ValueError("expected {before: <rule id> | null}")
+        if did.startswith("grant:"):
+            raise ValueError("only rules have a position; a grant applies while it is active")
+        if not gw.policy.move_rule(did, body["before"]):
+            return _json({"error": "not found"}, 404)
+        where = f"before {body['before']}" if body["before"] is not None else "to the end"
+        gw.save_policy(_by(request), f"rule {did} moved {where}")
+        gw.record(kind="admin", action="rule~", reason=f"rule {did} moved {where}")
+        return _json({"order": [r.id for r in gw.policy.rules]})
+
     @routes.patch("/destinations/{did}")
     async def edit_destination(request):
         from egressgw import destinations as D
@@ -163,9 +210,7 @@ def build_app(gw: Gateway) -> web.Application:
             newname, defn = _grant_from_destination(D, D.Destination.from_dict(body))
             if newname != name:
                 raise ValueError("the on-request name cannot change here")
-            gw.grants.upsert_ui(name, defn)
-            gw.record(kind="admin", action="grant", host=name, reason=f"grant {name} changed via API")
-            gw.publish({"type": "grants"})
+            await _save_grant(name, defn, "changed")
             return _json({**D.Destination.from_dict(body).to_dict(), "id": did})
         changes = {k: body[k] for k in ("note", "group", "expires") if k in body}
         if "access" in body:
@@ -201,10 +246,7 @@ def build_app(gw: Gateway) -> web.Application:
     async def put_grant_destination(request):
         """Create or replace an on-request destination (a grant) from its full definition (targets, levels,
         approval, durations). This is the grant-definition half of the one destinations surface."""
-        name = request.match_info["name"]
-        g = gw.grants.upsert_ui(name, await request.json())
-        gw.record(kind="admin", action="grant", host=name, reason=f"grant {name} defined via API")
-        gw.publish({"type": "grants"})
+        g = await _save_grant(request.match_info["name"], await request.json(), "defined")
         return _json(g.to_dict())
 
     @routes.delete("/destinations/grant/{name}")
@@ -309,22 +351,37 @@ def build_app(gw: Gateway) -> web.Application:
 
     @routes.post("/test")
     async def test(request):
+        """What would happen to a connection now, decided as a connection is (name first where no address can
+        change the result, then with the resolved addresses), with the rule that decides: `rule` and its
+        position `pos` in the list, and `shadow` when a name rule was blocked by an address rule below it."""
         body = await request.json()
         host, port = str(body["host"]).strip(), int(body.get("port", 443))
+
+        def answer(d: Decision, ips: list, suffix: str = "") -> web.Response:
+            pos = next((i for i, r in enumerate(gw.policy.rules, 1) if r.id == d.rule_id), None)
+            return _json(
+                {
+                    "action": d.action,
+                    "reason": d.reason + suffix,
+                    "rule_id": d.rule_id,
+                    "rule": gw.policy.rules[pos - 1].to_dict() if pos else None,
+                    "pos": pos,
+                    "shadow": d.shadow,
+                    "ips": ips,
+                }
+            )
+
         if not is_ip(host):
             if not valid_hostname(host):
                 return _json({"action": "deny", "reason": "invalid hostname", "ips": []})
             pre = gw.policy.evaluate_name(host, port)
-            if pre.action != "allow":
-                return _json(
-                    {"action": pre.action, "reason": pre.reason + " (not resolved)", "rule_id": pre.rule_id, "ips": []}
-                )
+            if pre.early:
+                return answer(pre, [], " (not resolved)")
         try:
             ips = await gw.resolve(host, port)
         except OSError as e:
             return _json({"action": "deny", "reason": f"dns failure: {e}", "ips": []})
-        d = gw.policy.evaluate(host, port, ips)
-        return _json({"action": d.action, "reason": d.reason, "rule_id": d.rule_id, "ips": ips})
+        return answer(gw.policy.evaluate(host, port, ips), ips)
 
     @routes.get("/events")
     async def events(request):
@@ -458,6 +515,10 @@ def build_app(gw: Gateway) -> web.Application:
     @routes.get("/rules/stats")
     async def rule_stats(_):
         rules = usage.rule_usage(gw.policy, gw.events.hit_stats(), gw.hits, time.time(), gw.stale_days)
+        shadows = gw.shadow_stats()
+        for r in rules:
+            if r["id"] in shadows:
+                r["shadowed"] = shadows[r["id"]]
         return _json({"rules": rules, "stale_days": gw.stale_days})
 
     @routes.post("/rules/cleanup")
@@ -537,7 +598,8 @@ def build_app(gw: Gateway) -> web.Application:
             new = gw.policy.to_dict() if q.get("to", "current") == "current" else _version(q["to"])["policy"]
         except KeyError as e:
             return _json({"error": e.args[0]}, 404)
-        return _json(history.diff(old, new))
+        # each side as it would be in force if restored (a pre-0019 version is migrated, missing blocks seeded)
+        return _json(history.diff(gw.preview_policy(old).to_dict(), gw.preview_policy(new).to_dict()))
 
     @routes.post("/policy/history/{vid:[0-9]+}/restore")
     async def policy_restore(request):
@@ -547,10 +609,12 @@ def build_app(gw: Gateway) -> web.Application:
         except KeyError as e:
             return _json({"error": e.args[0]}, 404)
         old = gw.policy.default
-        gw.adopt(Policy.from_dict(v["policy"]))  # validated like PUT /policy; the floor stays as configured
+        new, notes = gw.read_policy(v["policy"])  # validated (and, if it is a pre-0019 version, migrated) like PUT
+        gw.adopt(new)
         gw.save_policy(_by(request), f"version {vid} restored")
-        gw.record(kind="admin", action="policy", reason=f"policy version {vid} restored" + _mode_changed(gw, old))
-        return _json(gw.policy.describe())
+        note = _mode_changed(gw, old) + gw.adopted_note(notes)
+        gw.record(kind="admin", action="policy", reason=f"policy version {vid} restored" + note)
+        return _json(gw.policy.to_dict())
 
     @routes.get("/policy/export")
     async def policy_export(_):
@@ -565,8 +629,12 @@ def build_app(gw: Gateway) -> web.Application:
         if not isinstance(body, dict):
             raise ValueError("expected {yaml, apply}")
         pol_d, grants_d, warnings = history.parse_import(body.get("yaml"))
-        new = Policy.from_dict(pol_d)
-        checked = {n: gw.grants.check_ui(n, d) for n, d in grants_d.items()}
+        new = gw.preview_policy(pol_d)  # as it will be in force: migrated if pre-0019, missing blocks seeded
+        _unused, notes = gw.read_policy(pol_d)
+        warnings = [*warnings, *notes]
+        if missing := new.blocks_missing(gw.blocks_builtin, gw.blocks_config):
+            warnings.append(f"built-in block(s) not in force in this policy: {', '.join(missing)}")
+        checked = {n: await gw.check_grant(n, d, new) for n, d in grants_d.items()}
         result = {
             "diff": history.diff(gw.policy.to_dict(), new.to_dict()),
             "grants": {
@@ -580,11 +648,11 @@ def build_app(gw: Gateway) -> web.Application:
         }
         if body.get("apply") is True:
             old = gw.policy.default
-            gw.adopt(new)
+            gw.adopt(gw.read_policy(pol_d)[0])
             gw.save_policy(_by(request), "policy imported")
             for n, d in grants_d.items():
                 gw.grants.upsert_ui(n, d)
-            note = _mode_changed(gw, old)
+            note = _mode_changed(gw, old) + gw.adopted_note(notes)
             gw.record(kind="admin", action="policy", reason=f"policy imported ({len(checked)} UI grants)" + note)
             if checked:
                 gw.publish({"type": "grants"})
@@ -600,12 +668,19 @@ def build_app(gw: Gateway) -> web.Application:
             missing = sorted({n for i in d.inject for n in _secret_names(i["value"])} - set(gw.secrets.names()))
             if missing:
                 needed[d.name] = missing
+        from egressgw.destinations import is_local
+
+        defs = []
+        for d in g.defs.values():
+            dd = d.to_dict()
+            for t, td in zip(d.targets, dd["targets"], strict=True):
+                td["local"] = is_local(t.fixed())  # display only: the target names an address that is not public
+            defs.append(dd)
         return _json(
             {
-                "defs": [d.to_dict() for d in g.defs.values()],
+                "defs": defs,
                 "active": [a.to_dict() for a in g.active.values() if a.expires > time.time()],
                 "requests": [r.to_dict() for r in g.pending()],
-                "lan_allow_ui": [str(n) for n in g.ui_lan_allow],
                 "missing_secrets": needed,
                 "auto_suspended": g.auto_suspended,
             }
@@ -693,8 +768,9 @@ def build_app(gw: Gateway) -> web.Application:
 
     @routes.get("/model")
     async def destination_model(_):
-        """The whole configuration as one destination model (ADR-0014): every destination with its properties,
-        the mode and the never list. The single source for the Destinations view."""
+        """The whole configuration as one destination model (ADR-0014, ADR-0019): the rules in evaluation order
+        (with `shadowed` / `covered_by` where a rule cannot do what it says), grants and file properties, the
+        locked ranges and the mode. The single source for the Destinations view."""
         from egressgw import destinations
 
         return _json(destinations.translate(gw).to_dict())

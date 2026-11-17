@@ -33,16 +33,17 @@ def test_plain_http_to_an_https_grant_target_is_refused(make_gateway, upstream):
 
 
 def test_lan_grant_works_while_a_rule_allows_the_name(make_gateway, upstream):
-    """With e.g. the `open` preset active the grant was skipped, and the connection was then hard-denied."""
+    """With e.g. the `open` preset active the grant was skipped, and the connection was then denied by the
+    block. A target with a fixed address is an address rule: it carries the connection (ADR-0019)."""
     port = upstream["lan"]
-    target = {"host": "lanecho.test", "port": port, "scheme": "http", "lan": True}
+    target = {"host": "lanecho.test", "port": port, "scheme": "http", "address": "127.0.0.2"}
     gw = grant_gateway(
         make_gateway,
         {"lan": {"targets": [target], "levels": ["read"], "approval": "auto"}},
         rules=[{"id": "open", "action": "allow", "host": "*", "port": port}],
         floor=["127.0.0.2/32"],
     )
-    assert proxy_request(gw["ports"]["http"], f"lanecho.test:{port}", "/")[0] == 502  # hard deny
+    assert proxy_request(gw["ports"]["http"], f"lanecho.test:{port}", "/")[0] == 502  # the block
     request_grant(gw, "lan", "read")
     status, body = proxy_request(gw["ports"]["http"], f"lanecho.test:{port}", "/")
     assert status == 200 and json.loads(body)["path"] == "/"
@@ -50,15 +51,21 @@ def test_lan_grant_works_while_a_rule_allows_the_name(make_gateway, upstream):
 
 
 def test_a_lan_grant_never_reaches_the_stack_itself(make_gateway, upstream):
-    """#112: a LAN target skips the hard deny. The stack's own networks (GW_INTERNAL_NETS) stay unreachable
-    through a grant, whatever `grants_never` says."""
+    """#112: a grant target that names an address is not stopped by the blocks. The stack's own networks
+    (GW_INTERNAL_NETS) stay unreachable through a grant, whatever its target says - a name, a fixed address
+    or the IP itself."""
     port = upstream["lan"]
-    target = {"host": "lanecho.test", "port": port, "scheme": "http", "lan": True}
+    target = {"host": "lanecho.test", "port": port, "scheme": "http"}
+    grant = {"levels": ["read"], "approval": "auto"}
     gw = make_gateway(
         {
             "hard_deny_floor": ["127.0.0.2/32"],
             "grants_never": ["169.254.0.0/16"],
-            "grants": {"lan": {"targets": [target], "levels": ["read"], "approval": "auto"}},
+            "grants": {
+                "lan": {"targets": [target], **grant},
+                "pin": {"targets": [{**target, "host": "pin.test", "address": "127.0.0.2"}], **grant},
+                "lit": {"targets": [{**target, "host": "127.0.0.2"}], **grant},
+            },
         },
         {"default": "ask", "ask_timeout": 5, "rules": []},
         GW_TEST_FLOOR_REPLACE="1",
@@ -69,7 +76,15 @@ def test_a_lan_grant_never_reaches_the_stack_itself(make_gateway, upstream):
     assert proxy_request(gw["ports"]["http"], f"lanecho.test:{port}", "/")[0] in (403, 502)
     _, events, _ = gw["api"].call("GET", "/events?limit=20")
     denied = next(e for e in events if e.get("host") == "lanecho.test" and e["action"] == "deny")
-    assert denied["reason"] == "grant lan: 127.0.0.2 belongs to the tallygate stack itself"
+    assert denied["reason"] == "grant lan: locked: 127.0.0.2 belongs to the tallygate stack itself (127.0.0.2/32)"
+    for name, host in (("pin", "pin.test"), ("lit", "127.0.0.2")):
+        request_grant(gw, name, "read")
+        assert proxy_request(gw["ports"]["http"], f"{host}:{port}", "/")[0] in (403, 502)
+        _, events, _ = gw["api"].call("GET", "/events?limit=20")
+        denied = next(e for e in events if e.get("host") == host and e["action"] == "deny")
+        assert (
+            denied["reason"] == f"grant {name}: locked: 127.0.0.2 belongs to the tallygate stack itself (127.0.0.2/32)"
+        )
 
 
 def _send(sock, host, path) -> int:

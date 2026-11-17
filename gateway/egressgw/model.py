@@ -11,7 +11,7 @@ what may the agent do at this destination, now? Here they are properties of one 
 What is answered here and nowhere else:
 
 - `Access.on_name` / `Access.on_addresses`: the decision for a connection, on the name before it is resolved
-  and again with its addresses (hard deny, rules, the mode, learning mode); `Access.grant_for` and
+  and with its addresses (locked ranges, the one rule list, the mode, learning mode); `Access.grant_for` and
   `Access.grant_problem` for a connection an active grant carries.
 - `Access.tls`: is the connection intercepted, passed through, or refused? It follows from the limits
   (anything with limits is intercepted), and a destination that has limits cannot be reached around them by
@@ -118,28 +118,32 @@ class Access:
         return host.lower().rstrip(".") if valid_hostname(host) else None
 
     def on_name(self, host: str, port: int) -> Decision:
-        """The decision on the name alone, before any lookup: denied and not-yet-approved names are never
-        resolved. Learning mode replaces the mode when no rule matched and no grant is defined for it."""
+        """What the rule list says about the name alone, before any lookup. `early` tells the caller whether
+        it may act on it without resolving (a denied or not-yet-approved name is then never resolved); it is
+        only set where no address can change the result (`Policy.evaluate_name`). Learning mode replaces the
+        mode when no rule matched and no grant is defined for the name; the name is then resolved and
+        `on_addresses` decides."""
         dec = self.gw.policy.evaluate_name(host, port)
         if dec.rule_id is None and not self.grant_hint(host, port) and self.gw.learning.covers(port):
             return Decision("allow", LEARNING)
         return dec
 
     def on_addresses(self, host: str, port: int, ips: list[str], proto: str = "", learning: bool = False) -> Decision:
-        """The decision with the addresses: hard deny, CIDR deny rules, the rules, the mode. With `learning`
-        (the name was let through by learning mode) learning mode replaces the mode again; the hard deny and
-        every rule still decide first."""
+        """The decision with the addresses: locked ranges, then the rule list for every address, then the
+        mode. With `learning` (the name was let through by learning mode) learning mode replaces the mode
+        again; the locked ranges and every rule - the seeded blocks among them - still decide first."""
         dec = self.gw.policy.evaluate(host, port, ips, proto)
-        if learning and dec.rule_id is None and self.gw.learning.covers(port):
+        if learning and dec.rule_id is None and dec.reason == "default" and self.gw.learning.covers(port):
             return Decision("allow", LEARNING)
         return dec
 
     def grant_for(self, host: str, port: int):
         """(active, definition, target) of the grant that carries a connection to host:port, or None.
-        Grants only ADD access: a name the rules already allow uses the rules, except for a LAN target, which
-        the rules can never reach (hard deny), e.g. with the `open` preset active. IP literals always use it."""
+        An active grant stands at the top of the rule list for its targets (ADR-0019). Grants only ADD access:
+        a name the rules already allow uses the rules, unless the target names a fixed address (an address
+        rule, which may open what the name alone cannot). IP literals always use the grant."""
         m = self.gw.grants.match(host, port)
-        if m and not m[2].lan and not is_ip(host) and self.gw.policy.evaluate_name(host, port).action == "allow":
+        if m and not m[2].fixed() and not is_ip(host) and self.gw.policy.evaluate_name(host, port).action == "allow":
             return None
         return m
 
@@ -171,14 +175,25 @@ class Access:
         return None
 
     def grant_problem(self, g, t: Target, host: str, port: int, ips: list[str]) -> str | None:
-        """Why a grant connection to these addresses is refused, or None: never-reachable ranges for grants,
-        `grants_lan_allow` for UI grants, and for a target without `lan` the hard deny as for any connection."""
-        problem = self.gw.grants.address_problem(g, t, ips)
-        if not problem and not t.lan:
-            problem = self.gw.policy.hard_denied(host, port, ips)
-        if not problem and not ips:
-            problem = "no address"
-        return problem
+        """Why a grant connection to these addresses is refused, or None (ADR-0019). The locked ranges apply to
+        grants as to everything else. A target with an IP literal or a fixed `address` is an address rule at
+        the top of the list: it is allowed, and may be a local address. A target that is only a name is a name
+        rule at the top: an address `deny` rule anywhere in the list that contains what it resolves to wins."""
+        if not ips:
+            return "no address"
+        policy = self.gw.policy
+        for ip in ips:
+            if why := policy.locked(ip, port):
+                return f"grant {g.name}: {why}"
+        if t.fixed():
+            return None
+        for ip in ips:
+            if block := policy.blocked_by(ip, port):
+                return (
+                    f"grant {g.name}: name allowed by the grant, but it resolves to {ip}, inside blocked range "
+                    f"{block.cidr} (rule {block.id}): set a fixed address on the grant target"
+                )
+        return None
 
     # ---------------------------------------------------------------- limits of a destination
     def host_limits(self, host: str) -> Limits:
