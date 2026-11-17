@@ -373,7 +373,8 @@ def test_move_api_and_its_validation(gw):
 
 
 def test_restore_blocks_api(gw):
-    assert admin(gw, "POST", "/destinations/restore-blocks")[1] == {"added": []}
+    assert admin(gw, "POST", "/destinations/restore-blocks")[1] == {"added": [], "opened": []}
+    assert gw.events.recent(1)[0]["reason"] == "built-in blocks restored: none missing"
     assert admin(gw, "DELETE", "/destinations/block-192.168.0.0_16")[0] == 200
     assert admin(gw, "PATCH", "/destinations/block-10.0.0.0_8", {"access": "allow"})[0] == 200
     assert gw.policy.evaluate("192.168.1.1", 80, []).reason == "default"
@@ -385,7 +386,18 @@ def test_restore_blocks_api(gw):
     assert [x.id for x in gw.policy.rules[-2:]] == ["block-10.0.0.0_8-2", "block-192.168.0.0_16"]  # at the bottom
     assert gw.policy.evaluate("192.168.1.1", 80, []).action == "deny"
     assert gw.history.versions()[0]["what"] == "2 built-in block(s) restored"
-    assert "10.0.0.0/8, 192.168.0.0/16" in gw.events.recent(1)[0]["reason"]
+    # the block that was edited into an allow still stands above the restored one: reported, and recorded
+    assert r["opened"] == [{"rule": "block-10.0.0.0_8", "action": "allow", "cidr": "10.0.0.0/8", "block": "10.0.0.0/8"}]
+    assert gw.events.recent(1)[0]["reason"] == (
+        "built-in blocks restored: 10.0.0.0/8, 192.168.0.0/16; still open: 10.0.0.0/8 (allow rule block-10.0.0.0_8)"
+    )
+    assert gw.policy.evaluate("10.1.2.3", 80, []).rule_id == "block-10.0.0.0_8"
+    # nothing is missing any more, but what is open is said every time
+    status, r = admin(gw, "POST", "/destinations/restore-blocks")
+    assert r["added"] == [] and [o["rule"] for o in r["opened"]] == ["block-10.0.0.0_8"]
+    assert gw.events.recent(1)[0]["reason"].startswith("built-in blocks restored: none missing; still open: 10.0.0.0/8")
+    assert admin(gw, "DELETE", "/destinations/block-10.0.0.0_8")[0] == 200
+    assert admin(gw, "POST", "/destinations/restore-blocks")[1] == {"added": [], "opened": []}
     assert admin(gw, "POST", "/destinations/restore-blocks", auth=False)[0] == 401
 
 
@@ -394,7 +406,12 @@ def test_an_address_typed_as_a_host_becomes_an_address_rule(gw):
     status, d = admin(gw, "POST", "/destinations", {"match": {"host": "192.168.1.5", "port": 8123}, "access": "allow"})
     assert status == 201 and d["match"] == {"cidr": "192.168.1.5/32", "port": 8123}
     assert gw.policy.evaluate("192.168.1.5", 8123, []).action == "allow"
+    # for a name it keeps the address open, and the name is decided by the name rules or the mode (amendment)
+    d = gw.policy.evaluate("ha.lan", 8123, ["192.168.1.5"])
+    assert (d.action, d.reason) == (gw.policy.default, "default")
+    assert admin(gw, "POST", "/destinations", {"match": {"host": "ha.lan"}, "access": "allow"})[0] == 201
     assert gw.policy.evaluate("ha.lan", 8123, ["192.168.1.5"]).action == "allow"
+    assert gw.policy.evaluate("ha.lan", 8123, ["192.168.1.6"]).rule_id == "block-192.168.0.0_16"
     status, d = admin(gw, "POST", "/destinations", {"match": {"host": "[FD00::5]"}, "access": "deny"})
     assert status == 201 and d["match"] == {"cidr": "fd00::5/128"}
     assert admin(gw, "POST", "/destinations", {"match": {"host": "x.example"}, "access": "allow", "id": "ok"})[0] == 400

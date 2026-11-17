@@ -169,7 +169,9 @@ def test_lan_flag_and_lan_allow_are_read_from_old_files_and_ignored(tmp_path, ca
     caplog.clear()
     with caplog.at_level(logging.WARNING, "egressgw"):
         again = Grants({}, tmp_path)
-    assert "lan" not in caplog.text.replace(".lan", "") and set(again.defs) == {"cam", "pin", "lit", "pub"}
+    # (the word itself would also match "plane" in the unrelated GW_INTERNAL_NETS message: look for the notes)
+    assert not any(w in caplog.text for w in ("`lan`", "grants_lan_allow", "migrated", ".lan:"))
+    assert set(again.defs) == {"cam", "pin", "lit", "pub"}
     assert (
         again.defs["pin"].targets[0].fixed() == "192.168.1.9" and again.defs["lit"].targets[0].fixed() == "192.168.1.7"
     )

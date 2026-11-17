@@ -125,8 +125,10 @@ def test_locked_with_an_allow_for_everything_at_the_top(make):
     assert [r.id for r in g.policy.rules][:5] == ["v4", "v6", "names", "ctl", "ok"]
     the_stack_is_closed(g)
     assert connect(g, "192.168.1.1")[0] is None  # the allow for everything does open the local network ...
-    assert connect(g, "x.example", ips=("10.0.0.1",))[0] is None  # ... also behind a name: an address rule did it
     assert g.events.recent(1, action=["allow"])[0]["reason"] == "rule v4"
+    # ... also behind a name - one that is allowed by name: the address rule keeps the address open, no more
+    assert connect(g, "x.example", ips=("10.0.0.1",))[0] is None
+    assert g.events.recent(1, action=["allow"])[0]["reason"] == "rule names"
 
 
 def test_locked_after_deleting_every_built_in_block(make):
@@ -263,13 +265,18 @@ def test_a_fresh_install_has_every_block_and_a_deleted_one_stays_deleted_across_
     cidrs = [r.cidr for r in g2.policy.rules if r.cidr]
     assert "192.168.0.0/16" not in cidrs and "203.0.113.7/32" not in cidrs
     ten = next(r for r in g2.policy.rules if r.id == "block-10.0.0.0_8")
-    assert (ten.action, ten.note, ten.source) == ("ask", "my lab", "builtin")
+    assert (ten.action, ten.note, ten.source) == ("ask", "my lab", "user")  # no longer the block: your rule
     assert g2.policy.to_dict() == g.policy.to_dict() and g2.seeded_now == []
     assert len(g2.history.versions()) == len(g.history.versions())  # a restart is not a change
     # restore: what is missing, or no longer a block, comes back at the bottom
     g2.api_token = TOKEN
-    added = admin(g2, "POST", "/destinations/restore-blocks")[1]["added"]
+    restored = admin(g2, "POST", "/destinations/restore-blocks")[1]
+    added = restored["added"]
     assert [r["cidr"] for r in added] == ["10.0.0.0/8", "192.168.0.0/16", "203.0.113.7/32"]
+    # the edited rule still stands above the restored block and keeps the range open for an IP literal: said
+    assert restored["opened"] == [
+        {"rule": "block-10.0.0.0_8", "action": "ask", "cidr": "10.0.0.0/8", "block": "10.0.0.0/8"}
+    ]
     assert [r.cidr for r in core.Gateway().policy.rules[-3:]] == ["10.0.0.0/8", "192.168.0.0/16", "203.0.113.7/32"]
     assert connect(core.Gateway(), "192.168.1.1")[0] is not None
 
@@ -314,33 +321,45 @@ def test_a_pre_0019_policy_file_is_migrated_once_with_a_backup_and_a_log(make, t
         g = make(config={"never": ["198.18.7.0/24"]}, text=text)
     # the old file is kept, byte for byte
     assert (tmp_path / "policy.yaml.pre-0019").read_text() == text and not (tmp_path / "policy.yaml.pre-0014").exists()
-    # CIDR denies on top; the hard_deny extra below the rules; every block at the bottom except the opened range
+    # CIDR denies on top, then the block an old address allow reaches into (10/8, for `dead`); the hard_deny
+    # extra below the rules; every other block at the bottom except the opened range
     ids = [r.id for r in g.policy.rules]
-    assert ids[:5] == ["net", "ok", "ha", "dead", "block-203.0.113.7_32"]
-    blocks = [r.cidr for r in g.policy.rules[5:]]
-    assert blocks == [c for c in [*g.blocks_builtin, "198.18.7.0/24"] if c != "192.168.0.0/16"]
+    assert ids[:6] == ["net", "block-10.0.0.0_8", "ok", "ha", "dead", "block-203.0.113.7_32"]
+    assert g.policy.rules[1].source == "builtin"
+    blocks = [r.cidr for r in g.policy.rules[6:]]
+    assert blocks == [c for c in [*g.blocks_builtin, "198.18.7.0/24"] if c not in ("192.168.0.0/16", "10.0.0.0/8")]
     saved = yaml.safe_load((tmp_path / "policy.yaml").read_text())
     assert set(saved) == {"default", "ask_timeout", "seeded", "destinations"} and saved["ask_timeout"] == 30
-    assert saved["seeded"][0] == "192.168.0.0/16" and set(saved["seeded"]) == {*g.blocks_builtin, "198.18.7.0/24"}
+    assert saved["seeded"][:2] == ["192.168.0.0/16", "10.0.0.0/8"]
+    assert set(saved["seeded"]) == {*g.blocks_builtin, "198.18.7.0/24"} and len(saved["seeded"]) == len(blocks) + 2
     assert [d["id"] for d in saved["destinations"]] == ids
     # what was decided before is decided now
-    assert connect(g, "x.example", ips=("8.8.8.8",))[0] == "egress policy: blocked (rule net (no dns))"
+    assert connect(g, "8.8.8.8")[0] == "egress policy: blocked (rule net (no dns))"
+    assert "inside blocked range 8.8.8.0/24 (rule net)" in connect(g, "ok.example", ips=("8.8.8.8",))[0]
     assert connect(g, "192.168.1.10", 8123)[0] is None  # the range was open and the rule allowed it
-    assert connect(g, "x.example", ips=("203.0.113.7",))[0] is not None
+    assert "(rule block-203.0.113.7_32)" in connect(g, "ok.example", ips=("203.0.113.7",))[0]
     assert "rule block-10.0.0.0_8" in connect(g, "ok.example", ips=("10.9.9.9",))[0]
+    # the old allow inside the blocked range opened nothing before and opens nothing now
+    assert connect(g, "10.0.0.5")[0] == "egress policy: blocked (rule block-10.0.0.0_8 (built-in block))"
+    assert "rule block-10.0.0.0_8" in connect(g, "ok.example", ips=("10.0.0.5",))[0]
+    assert g.opened_above() == []  # nothing is open inside a block in force (192.168/16 is not in force)
     # the log says what changed - in the container log and in the event log the operator reads
     log = caplog.text
     assert "migrated" in log and "to one ordered rule list (ADR-0019); the old file is kept as *.pre-0019" in log
     assert "policy migration: moved 1 CIDR deny rule(s) to the top: net" in log
     assert "policy migration: hard_deny 203.0.113.7/32 is now deny rule block-203.0.113.7_32" in log
     assert "policy migration: not blocked, as before (floor_open): 192.168.0.0/16" in log
-    assert (
-        "policy migration: NOTE rule dead (allow 10.0.0.5/32) had no effect inside the blocked range 10.0.0.0/8" in log
+    note = (
+        "NOTE 1 block(s) stay at the top of the list, above rule(s) dead: these address rules had no effect inside "
+        "the blocked ranges and still have none. To open an address, move its rule above the block. "
+        "Blocks: 10.0.0.0/8"
     )
+    assert f"policy migration: {note}" in log and "it now decides" not in log
     ev = g.events.recent(1, kind=["admin"])[0]
     assert (
         ev["action"] == "policy"
         and "policy.yaml migrated to one ordered rule list (ADR-0019): moved 1 CIDR" in ev["reason"]
+        and note in ev["reason"]
     )
     assert g.history.versions()[0]["what"] == "policy migrated to one ordered rule list (ADR-0019)"
     # the second start: nothing to do, the backup is not touched, no second version
@@ -367,7 +386,12 @@ def test_a_pre_0014_file_goes_through_both_migrations(make, tmp_path):
     assert (tmp_path / "policy.yaml.pre-0014").exists() and (tmp_path / "policy.yaml.pre-0019").exists()
     assert [r.id for r in g.policy.rules][:3] == ["d", "gh", "block-203.0.113.7_32"]
     assert [r.cidr for r in g.policy.rules[3:]] == g.blocks_builtin
-    assert connect(g, "api.github.com", ips=("140.82.112.3",))[0] == "egress policy: blocked (rule d)"
+    # the CIDR deny wins against the name allow as before; the reason now names both rules
+    assert connect(g, "api.github.com", ips=("140.82.112.3",))[0] == (
+        "egress policy: blocked (name allowed by rule gh, but it resolves to 140.82.112.3, inside blocked range "
+        "140.82.112.0/20 (rule d): add an allow for the address above that rule)"
+    )
+    assert connect(g, "140.82.112.3")[0] == "egress policy: blocked (rule d)"
 
 
 @pytest.mark.parametrize(
@@ -425,9 +449,18 @@ def test_grants_with_ip_pinned_and_name_only_local_targets(make):
     )
     assert connect(g, "printer.example", 631, ips=(PUBLIC,))[0] is None  # a public address: fine
     assert connect(g, "printer.example", 631, ips=(PUBLIC, "10.0.0.1"))[0] is not None  # one blocked address is enough
-    # ... unless the operator opens that address with a rule: then no address deny matches first? No - the walk
-    # below a name rule looks only at address denies, so the block still wins; the way out is the fixed address
-    g.policy.add_rule(Rule(action="allow", cidr="192.168.1.50/32", id="p"))
+    # an address ask above the block opens nothing for a name (it is a question about the IP literal) ...
+    g.policy.add_rule(Rule(action="ask", cidr="192.168.1.50/32", id="q"))
+    assert "rule block-192.168.0.0_16" in connect(g, "printer.example", 631, ips=("192.168.1.50",))[0]
+    # ... an address allow above the block does: the first address rule with allow or deny says the address is
+    # open, for a name-only grant target as for a name rule
+    g.policy.add_rule(Rule(action="allow", cidr="192.168.1.50/32", port=631, id="p"), top=False)
+    assert connect(g, "printer.example", 631, ips=("192.168.1.50",))[0] is None
+    assert "rule block-192.168.0.0_16" in connect(g, "printer.example", 631, ips=("192.168.1.50", "192.168.1.51"))[0]
+    # a block ABOVE that allow closes it again: the first of the two decides
+    g.policy.add_rule(Rule(action="deny", cidr="192.168.1.48/29", id="cam"))
+    assert "(rule cam)" in connect(g, "printer.example", 631, ips=("192.168.1.50",))[0]
+    assert g.policy.remove_rule("cam") and g.policy.remove_rule("p")
     assert connect(g, "printer.example", 631, ips=("192.168.1.50",))[0] is not None
     # deleting the block opens it for the name too
     g.policy.remove_rule("block-192.168.0.0_16")
@@ -517,22 +550,92 @@ def test_denied_and_unapproved_names_are_not_resolved_and_allowed_ones_are_check
     ev = g.events.recent(1)[0]
     assert ev["action"] == "deny" and ev["reason"] == err[len("egress policy: blocked (") : -1]  # in the log too
     assert g.shadow_stats()["ok"]["count"] == 1 and g.hits["block-192.168.0.0_16"][0] == 1
-    # doing what it says: the address is allowed for that port, and now names on that port must be resolved
-    # before they can be decided - one of them might be that address
+    # doing what it says: the address is allowed for that port. That opens the address for the name that is
+    # allowed by name - and for no other name: those are still decided before they are resolved (amendment)
     assert (
         admin(g, "POST", "/destinations", {"match": {"cidr": "192.168.1.10/32", "port": 443}, "access": "allow"})[0]
         == 201
     )
     assert connect(g, "ok.example", ips=("192.168.1.10",))[0] is None
+    assert g.events.recent(1, action=["allow"])[0]["reason"] == "rule ok"
+    assert connect(g, "192.168.1.10")[0] is None  # ... and for the IP literal
     err, resolved, _ = connect(g, "new.example", ips=("192.168.1.10",))
-    assert err is None and resolved == ["new.example"]
-    err, resolved, _ = connect(g, "new.example", ips=(PUBLIC,))
-    assert err == "egress policy: blocked (default)" and resolved == ["new.example"]
-    err, resolved, _ = connect(g, "x.evil.example", ips=(PUBLIC,))
-    assert err == "egress policy: blocked (rule bad)" and resolved == ["x.evil.example"]
-    assert connect(g, "new.example", 8443)[1] == []  # on other ports nothing changed
-    assert connect(g, "new.example", ips=OSError("nxdomain"))[0] == "egress policy: blocked (dns failure: nxdomain)"
-    assert connect(g, "new.example", ips=())[0] == "egress policy: blocked (no address)"
+    assert err == "egress policy: blocked (default (not resolved))" and resolved == []
+    err, resolved, _ = connect(g, "x.evil.example", ips=("192.168.1.10",))
+    assert err == "egress policy: blocked (rule bad (not resolved))" and resolved == []
+    assert connect(g, "new.example", 8443)[1] == []  # on other ports nothing changed either
+    assert connect(g, "ok.example", ips=OSError("nxdomain"))[0] == "egress policy: blocked (dns failure: nxdomain)"
+    assert connect(g, "ok.example", ips=())[0] == "egress policy: blocked (no address)"
+
+
+def test_after_an_ip_literal_was_approved_denied_and_unknown_names_are_still_not_resolved(make):
+    """ADR-0011, the finding of the security review: one address allow for a port at the top must not make the
+    gateway resolve every name the agent asks for on that port (DNS exfiltration)."""
+    g = make(config={}, policy={
+        "default": "ask", "ask_timeout": 5, "seeded": [],
+        "rules": [{"id": "bad", "action": "deny", "host": "*.evil.example"}],
+    })  # fmt: skip
+    err, _, seen = connect_and_answer(g, "140.82.112.3")  # the operator approves one IP literal on 443
+    top = g.policy.rules[0]
+    assert err is None and seen[0]["ips"] == ["140.82.112.3"]
+    assert (top.action, top.cidr, top.port, top.source) == ("allow", "140.82.112.3/32", 443, "approval")
+    # a denied name: refused on the name, never resolved - also when it would resolve to the approved address
+    err, resolved, _ = connect(g, "secret-data.evil.example", ips=("140.82.112.3",))
+    assert err == "egress policy: blocked (rule bad (not resolved))" and resolved == []
+    # an unknown name: asked about on the name alone, and not resolved when the answer is no
+    err, resolved, seen = connect_and_answer(g, "secret-data.unknown.example", ips=("140.82.112.3",), scope="deny")
+    assert seen[0]["ips"] == [] and resolved == []
+    assert err == "egress policy: blocked (deny by web:admin (not resolved))"
+    # in deny mode nobody is asked, and nothing is resolved
+    assert admin(g, "PATCH", "/policy", {"default": "deny"})[0] == 200
+    err, resolved, _ = connect(g, "other.unknown.example", ips=("140.82.112.3",))
+    assert err == "egress policy: blocked (default (not resolved))" and resolved == [] and g.pending == {}
+    # the same with an allow for every address on every port at the top
+    g.policy.add_rule(Rule(action="allow", cidr="0.0.0.0/0", id="v4"))
+    for name, reason in (("a.evil.example", "rule bad"), ("b.unknown.example", "default")):
+        err, resolved, _ = connect(g, name, 8443)
+        assert err == f"egress policy: blocked ({reason} (not resolved))" and resolved == [], name
+    r = admin(g, "POST", "/test", {"host": "b.unknown.example"})[1]  # "Test a destination" agrees
+    assert (r["action"], r["reason"], r["ips"]) == ("deny", "default (not resolved)", [])
+
+
+def test_a_name_that_resolves_into_an_address_allow_is_decided_by_its_name(make):
+    """ADR-0013: an approved address is not an approval of every name that resolves to it."""
+    g = make(config={}, policy={
+        "default": "ask", "ask_timeout": 5, "seeded": [],
+        "rules": [
+            {"id": "ip", "action": "allow", "cidr": f"{PUBLIC}/32"},
+            {"id": "ha", "action": "allow", "cidr": "192.168.1.10/32"},  # above the block: opens the address
+            {"id": "q", "action": "ask", "cidr": "192.168.1.20/32"},  # a question about the literal only
+            {"id": "ok", "action": "allow", "host": "ok.example"},
+            {"id": "bad", "action": "deny", "host": "bad.example"},  # below the address allow: wins anyway
+        ],
+    })  # fmt: skip
+    assert connect(g, PUBLIC)[0] is None and g.events.recent(1)[0]["reason"] == "rule ip"
+    # default ask: the name is asked about (on the name, not resolved); the address allow answered nothing
+    err, resolved, seen = connect_and_answer(g, "other-site.example", scope="deny")
+    assert len(seen) == 1 and seen[0]["ips"] == [] and resolved == [] and "deny by web:admin" in err
+    # a name deny below the address allow wins
+    err, resolved, _ = connect(g, "bad.example")
+    assert err == "egress policy: blocked (rule bad (not resolved))" and resolved == []
+    assert g.policy.evaluate("bad.example", 443, [PUBLIC]).rule_id == "bad"  # ... also with the address known
+    # an allowed name + an address allow above a block: allowed, by the name rule
+    err, resolved, addr = connect(g, "ok.example", ips=("192.168.1.10",))
+    assert err is None and resolved == ["ok.example"] and addr == ("192.168.1.10", 443)
+    assert g.events.recent(1)[0]["reason"] == "rule ok"
+    # an allowed name + an address ASK above a block: still blocked, and nobody is asked
+    err, _, _ = connect(g, "ok.example", ips=("192.168.1.20",))
+    assert err == (
+        "egress policy: blocked (name allowed by rule ok, but it resolves to 192.168.1.20, inside blocked range "
+        "192.168.0.0/16 (rule block-192.168.0.0_16): add an allow for the address above that rule)"
+    )
+    assert g.pending == {}
+    err, _, seen = connect_and_answer(g, "192.168.1.20", scope="once")  # the literal is asked about
+    assert err is None and seen[0]["ips"] == ["192.168.1.20"]
+    # deny mode: the address allow lets no name through
+    assert admin(g, "PATCH", "/policy", {"default": "deny"})[0] == 200
+    err, resolved, _ = connect(g, "third-site.example")
+    assert err == "egress policy: blocked (default (not resolved))" and resolved == []
 
 
 def approve_when_asked(g, scope="always"):
@@ -594,41 +697,54 @@ def test_an_approval_never_opens_a_blocked_range(make):
     assert err == "egress policy: blocked (rule block-192.168.0.0_16 (built-in block))" and seen == []
 
 
-def test_an_approval_given_after_resolving_is_checked_against_the_addresses_again(make):
-    """With an address allow for the port, a name is resolved before you are asked. Your answer adds a name
-    rule at the top; what it means for THESE addresses is decided by the list again - not assumed."""
+def test_an_approval_is_given_on_the_name_and_checked_against_the_addresses_afterwards(make):
+    """Also with address rules for the port, a name is asked about before it is resolved (amendment). Your
+    answer adds a name rule at the top; what it means for the addresses is decided by the list - not assumed."""
     g = make(config={}, policy={
         "default": "ask", "ask_timeout": 5, "seeded": [],
         "rules": [
-            {"id": "ipq", "action": "ask", "cidr": "8.8.8.0/24"},  # ask about this range ...
-            {"id": "blk", "action": "deny", "cidr": "8.8.8.8/32"},  # ... (a block below it, covered for literals)
+            {"id": "ipq", "action": "ask", "cidr": "8.8.8.0/24"},  # ask about this range (IP literals) ...
+            {"id": "blk", "action": "deny", "cidr": "8.8.8.8/32"},  # ... a block below it: still blocks for a name
             {"id": "one", "action": "allow", "cidr": "9.9.9.9/32"},
         ],
     })  # fmt: skip
     err, resolved, seen = connect_and_answer(g, "dns.example", ips=("8.8.8.8",))
-    assert resolved == ["dns.example"] and seen[0]["ips"] == ["8.8.8.8"]  # resolved first, then asked
+    assert seen[0]["ips"] == [] and resolved == ["dns.example"]  # asked on the name, resolved after the answer
     rule = g.policy.rules[0]
     assert rule.host == "dns.example" and f"name allowed by rule {rule.id}, but it resolves to 8.8.8.8" in err
     assert "(rule blk)" in err and "s1" not in g.verdicts
-    # where nothing blocks the address the approval is the decision
+    # where nothing blocks the address the approval is the decision: one question, the address ask adds none
     err, _, seen = connect_and_answer(g, "dns2.example", ips=("8.8.8.9",))
-    assert err is None and seen and g.events.recent(1)[0]["reason"] == "always by web:admin"
-    # a denial is a denial
-    err, _, _ = connect_and_answer(g, "dns3.example", ips=("8.8.8.9",), scope="deny_always")
-    assert err == "egress policy: blocked (deny_always by web:admin)"
+    rule = g.policy.rules[0]
+    assert err is None and len(seen) == 1 and rule.host == "dns2.example" and g.pending == {}
+    assert g.events.recent(1)[0]["reason"] == f"rule {rule.id} (approved via always)"
+    # a denial is a denial, and the name is not resolved
+    err, resolved, _ = connect_and_answer(g, "dns3.example", ips=("8.8.8.9",), scope="deny_always")
+    assert err == "egress policy: blocked (deny_always by web:admin (not resolved))" and resolved == []
+    # an IP literal in the asked range: asked with its address, and the approval (an address rule at the top)
+    # is checked against the list again
+    err, _, seen = connect_and_answer(g, "8.8.8.9")
+    assert err is None and seen[0]["ips"] == ["8.8.8.9"] and g.policy.rules[0].cidr == "8.8.8.9/32"
+    assert g.events.recent(1)[0]["reason"] == "always by web:admin"
 
 
 def test_a_grant_hint_refuses_without_asking_also_when_the_name_had_to_be_resolved(make):
     g = make(policy={"default": "ask", "ask_timeout": 5, "seeded": [], "rules": []})
     err, resolved, _ = connect(g, "printer.example", 631)  # a grant is defined, not active: use it, no prompt
     assert err.startswith("egress policy: blocked (default; available via grant lanname") and resolved == []
+    # an address allow for the port changes nothing: the name is not allowed, and it is not resolved
     g.policy.add_rule(Rule(action="allow", cidr="192.168.1.50/32", port=631, id="p"))
-    err, resolved, _ = connect(g, "printer.example", 631, ips=(PUBLIC,))  # must be resolved now; still no prompt
-    assert err.startswith("egress policy: blocked (default; available via grant lanname") and resolved == [
-        "printer.example"
-    ]
+    for ips in ((PUBLIC,), ("192.168.1.50",)):
+        err, resolved, _ = connect(g, "printer.example", 631, ips=ips)
+        assert err.startswith("egress policy: blocked (default; available via grant lanname") and resolved == []
     assert g.pending == {}
-    assert connect(g, "printer.example", 631, ips=("192.168.1.50",))[0] is None  # the address rule allows it
+    # a name the rules allow is resolved; where its address is blocked the hint is given too, without a prompt
+    g.policy.add_rule(Rule(action="allow", host="printer.example", id="n"))
+    err, resolved, _ = connect(g, "printer.example", 631, ips=("192.168.1.51",))
+    assert resolved == ["printer.example"] and g.pending == {}
+    assert "name allowed by rule n, but it resolves to 192.168.1.51" in err
+    assert err.endswith("; available via grant lanname (agent: tallygate request lanname))")
+    assert connect(g, "printer.example", 631, ips=("192.168.1.50",))[0] is None  # name allowed, address open
 
 
 def test_service_exceptions_in_the_gateway(make):
@@ -672,10 +788,12 @@ def test_test_a_destination_shows_the_deciding_rule_and_the_shadowing(make):
         None,
     )
     g.policy.add_rule(Rule(action="allow", cidr="192.168.1.10/32", id="dev"))
-    r = admin(g, "POST", "/test", {"host": "nas.example"})[1]
-    assert (r["action"], r["rule_id"], r["pos"], r["shadow"]) == ("allow", "dev", 1, None)
-    r = admin(g, "POST", "/test", {"host": "new.example"})[1]  # resolved now: an address rule could decide
-    assert (r["action"], r["reason"], r["ips"]) == ("ask", "default", [PUBLIC])
+    r = admin(g, "POST", "/test", {"host": "nas.example"})[1]  # the address is open now: the name rule decides
+    assert (r["action"], r["rule_id"], r["pos"], r["shadow"]) == ("allow", "nas", 2, None)
+    r = admin(g, "POST", "/test", {"host": "new.example"})[1]  # still not resolved: no address rule lets a name in
+    assert (r["action"], r["reason"], r["ips"]) == ("ask", "default (not resolved)", [])
+    r = admin(g, "POST", "/test", {"host": "192.168.1.10"})[1]  # the literal is decided by the address rule
+    assert (r["action"], r["rule_id"], r["pos"]) == ("allow", "dev", 1)
     r = admin(g, "POST", "/test", {"host": CONTROL, "port": 8080})[1]
     assert (r["action"], r["rule_id"], r["rule"], r["pos"]) == ("deny", LOCKED, None, None) and "locked: " in r[
         "reason"

@@ -185,6 +185,12 @@ def test_a_pre_0019_version_is_migrated_when_it_is_compared_or_restored(gw):  # 
     assert gw.policy.evaluate("x.example", 443, ["192.168.1.1"]).action == "allow"  # as that version decided
     assert gw.policy.evaluate("x.example", 443, ["10.0.0.1"]).rule_id == "block-10.0.0.0_8"
     assert admin(gw, "GET", f"/policy/diff?from={vid}")[1] == {"identical": True}
+    # the record says what the migration did and which built-in block is not in force in that version
+    assert gw.events.recent(1)[0]["reason"] == (
+        f"policy version {vid} restored; moved 1 CIDR deny rule(s) to the top: net; "
+        "hard_deny 203.0.113.7/32 is now deny rule block-203.0.113.7_32; "
+        "not blocked, as before (floor_open): 192.168.0.0/16; built-in block(s) not in force: 192.168.0.0/16"
+    )
     # a version that cannot be translated is refused, the policy in force stays
     bad = gw.history.record({"default": "ask", "hard_deny": ["nope"], "rules": []}, "x", "broken")
     status, err = admin(gw, "POST", f"/policy/history/{bad}/restore")
@@ -255,7 +261,15 @@ def test_import_of_a_pre_0019_export_is_migrated_and_previewed_as_it_will_be(gw)
     }
     text = yaml.safe_dump(old)
     status, prev = admin(gw, "POST", "/policy/import", {"yaml": text})
-    assert status == 200 and len(prev["warnings"]) == 2 and not prev["applied"]
+    assert status == 200 and not prev["applied"]
+    # what the file is (2, from the parser), what the migration does with it, and what is not blocked in it
+    assert len(prev["warnings"]) == 6 and prev["warnings"][0].startswith("export from before ADR-0019")
+    assert prev["warnings"][2:] == [
+        "moved 1 CIDR deny rule(s) to the top: net",
+        "hard_deny 203.0.113.7/32 is now deny rule block-203.0.113.7_32",
+        "not blocked, as before (floor_open): 10.0.0.0/8",
+        "built-in block(s) not in force in this policy: 10.0.0.0/8",
+    ]
     assert [r["id"] for r in prev["diff"]["rules"]["added"]] == ["net", "block-203.0.113.7_32"]
     assert [r["id"] for r in prev["diff"]["rules"]["removed"]] == ["block-10.0.0.0_8"]
     assert "block-10.0.0.0_8" in [r.id for r in gw.policy.rules]  # a preview changes nothing
@@ -264,6 +278,9 @@ def test_import_of_a_pre_0019_export_is_migrated_and_previewed_as_it_will_be(gw)
     ids = [r.id for r in gw.policy.rules]
     assert ids[:3] == ["net", "ok", "block-203.0.113.7_32"] and "block-10.0.0.0_8" not in ids
     assert set(gw.policy.seeded) == set(gw.blocks_builtin)  # 10/8 is remembered: it stays open after a restart
+    reason = gw.events.recent(1, kind=["admin"])[0]["reason"]
+    assert reason.startswith("policy imported (1 UI grants); moved 1 CIDR deny rule(s) to the top: net; ")
+    assert reason.endswith("; built-in block(s) not in force: 10.0.0.0/8")
     assert [r.id for r in core.Gateway().policy.rules] == ids
     assert gw.grants.defs["cam"].targets[0].fixed() == "192.168.1.9" and not hasattr(
         gw.grants.defs["cam"].targets[0], "lan"
@@ -272,6 +289,112 @@ def test_import_of_a_pre_0019_export_is_migrated_and_previewed_as_it_will_be(gw)
         doc = yaml.safe_dump({"tallygate_export": 1, "policy": broken})
         assert admin(gw, "POST", "/policy/import", {"yaml": doc, "apply": True})[0] == 400
     assert [r.id for r in gw.policy.rules] == ids
+
+
+# A pre-0019 policy with an address allow inside a blocked range: the rule was inert (the blocks were checked
+# first) and must stay inert however the document comes back - restored from the history or imported.
+INERT = {
+    "default": "allow",
+    "ask_timeout": 60,
+    "hard_deny": ["9.9.9.0/24"],
+    "rules": [
+        {"id": "ok", "action": "allow", "host": "ok.example"},
+        {"id": "nas", "action": "allow", "cidr": "192.168.1.10/32", "port": 445},
+        {"id": "lab", "action": "ask", "cidr": "9.9.9.9/32"},
+        {"id": "net", "action": "deny", "cidr": "8.8.8.0/24"},
+    ],
+}
+INERT_NOTE = (
+    "NOTE 2 block(s) stay at the top of the list, above rule(s) lab, nas: these address rules had no effect inside "
+    "the blocked ranges and still have none. To open an address, move its rule above the block. "
+    "Blocks: 9.9.9.0/24, 192.168.0.0/16"
+)
+
+
+def inert_stays_inert(gw):  # noqa: F811
+    ids = [r.id for r in gw.policy.rules]
+    assert ids[:6] == ["net", "block-9.9.9.0_24", "block-192.168.0.0_16", "ok", "nas", "lab"]
+    assert ids.count("block-192.168.0.0_16") == 1 and len(ids) == 5 + len(gw.blocks_builtin)
+    assert gw.policy.blocks_missing(gw.blocks_builtin, gw.blocks_config) == [] and gw.opened_above() == []
+    for host, ips, rule in (
+        ("192.168.1.10", [], "block-192.168.0.0_16"),  # the literal the old rule names
+        ("ok.example", ["192.168.1.10"], "block-192.168.0.0_16"),  # an allowed name that resolves to it
+        ("9.9.9.9", [], "block-9.9.9.0_24"),  # the old ask asks nobody: hard_deny was final
+        ("ok.example", ["9.9.9.9"], "block-9.9.9.0_24"),
+    ):
+        d = gw.policy.evaluate(host, 445, ips)
+        assert (d.action, d.rule_id) == ("deny", rule), (host, d)
+
+
+def test_restoring_a_pre_0019_version_keeps_an_inert_local_allow_inert_and_says_so(gw):  # noqa: F811
+    vid = gw.history.record(INERT, "web:admin", "an old version")
+    gw.history.record(gw.policy.to_dict(), "gateway", "back to now")
+    d = admin(gw, "GET", f"/policy/diff?from={vid}")[1]  # the comparison shows the same order
+    assert {r["id"] for r in d["rules"]["removed"]} == {"nas", "lab", "net", "block-9.9.9.0_24"} and d["reordered"]
+    status, pol = admin(gw, "POST", f"/policy/history/{vid}/restore")
+    assert status == 200 and pol["seeded"][:1] == ["192.168.0.0/16"]
+    inert_stays_inert(gw)
+    reason = gw.events.recent(1)[0]["reason"]
+    assert reason.startswith(f"policy version {vid} restored; moved 1 CIDR deny rule(s) to the top: net; hard_deny ")
+    assert reason.endswith("; " + INERT_NOTE) and "not in force" not in reason
+    assert [r.id for r in core.Gateway().policy.rules] == [r.id for r in gw.policy.rules]  # and after a restart
+    # the way the note names: moved above its block the rule opens its address, and only then
+    assert admin(gw, "POST", "/destinations/nas/move", {"before": "block-192.168.0.0_16"})[0] == 200
+    assert gw.policy.evaluate("192.168.1.10", 445, []).rule_id == "nas"
+    assert gw.policy.evaluate("ok.example", 445, ["192.168.1.10"]).rule_id == "ok"
+    assert [o["rule"] for o in gw.opened_above()] == ["nas"]
+
+
+def test_importing_an_old_export_keeps_an_inert_local_allow_inert_and_the_preview_says_so(gw):  # noqa: F811
+    text = yaml.safe_dump({"tallygate_export": 1, "policy": INERT})
+    status, prev = admin(gw, "POST", "/policy/import", {"yaml": text})
+    assert status == 200 and not prev["applied"]
+    assert INERT_NOTE in prev["warnings"] and "moved 1 CIDR deny rule(s) to the top: net" in prev["warnings"]
+    assert not any("not in force" in w for w in prev["warnings"])  # every block is in force in it
+    assert [r.id for r in gw.policy.rules][:1] == ["ok"]  # a preview changes nothing
+    status, done = admin(gw, "POST", "/policy/import", {"yaml": text, "apply": True})
+    assert status == 200 and done["applied"] and INERT_NOTE in done["warnings"]
+    inert_stays_inert(gw)
+    reason = gw.events.recent(1, kind=["admin"])[0]["reason"]
+    assert reason.startswith("policy imported (0 UI grants); moved 1 CIDR ") and reason.endswith(INERT_NOTE)
+    # the same document through PUT /policy (the raw editor, the control relay)
+    assert admin(gw, "PUT", "/policy", {"default": "ask", "seeded": [], "rules": []})[0] == 200
+    assert admin(gw, "PUT", "/policy", INERT)[0] == 200
+    inert_stays_inert(gw)
+    assert gw.events.recent(1)[0]["reason"].endswith(INERT_NOTE)
+
+
+def test_replacing_the_whole_policy_records_the_blocks_that_are_not_in_force(gw):  # noqa: F811
+    """A document can leave blocks out without anyone deleting them one by one: `seeded` names every block
+    (so none is added) and the rule list has none."""
+    doc = {
+        "default": "ask",
+        "seeded": list(gw.blocks_builtin),
+        "rules": [{"id": "ok", "action": "allow", "host": "ok.example"}],
+    }
+    every = ", ".join(gw.blocks_builtin)
+    status, pol = admin(gw, "PUT", "/policy", doc)
+    assert status == 200 and [r["id"] for r in pol["rules"]] == ["ok"]
+    assert gw.events.recent(1)[0]["reason"] == f"policy replaced via API; built-in block(s) not in force: {every}"
+    assert gw.policy.evaluate("192.168.1.1", 80, []).reason == "default"  # indeed
+    # the import preview warns before it is applied, and the import and a restore record it too
+    text = yaml.safe_dump({"tallygate_export": 1, "policy": doc})
+    assert admin(gw, "PUT", "/policy", {"default": "ask", "seeded": [], "rules": []})[0] == 200
+    assert "not in force" not in gw.events.recent(1)[0]["reason"]  # every block was seeded: nothing to say
+    status, prev = admin(gw, "POST", "/policy/import", {"yaml": text})
+    assert prev["warnings"] == [f"built-in block(s) not in force in this policy: {every}"]
+    assert admin(gw, "POST", "/policy/import", {"yaml": text, "apply": True})[0] == 200
+    assert gw.events.recent(1)[0]["reason"] == f"policy imported (0 UI grants); built-in block(s) not in force: {every}"
+    vid = gw.history.versions()[0]["id"]
+    assert admin(gw, "PUT", "/policy", {"default": "ask", "seeded": [], "rules": []})[0] == 200
+    assert admin(gw, "POST", f"/policy/history/{vid}/restore")[0] == 200
+    assert gw.events.recent(1)[0]["reason"] == f"policy version {vid} restored; built-in block(s) not in force: {every}"
+    # one block edited into something else is named alone
+    assert admin(gw, "POST", "/destinations/restore-blocks")[0] == 200
+    doc = gw.policy.to_dict()
+    doc["rules"] = [{**r, "port": 80} if r["id"] == "block-10.0.0.0_8" else r for r in doc["rules"]]
+    assert admin(gw, "PUT", "/policy", doc)[0] == 200
+    assert gw.events.recent(1)[0]["reason"] == "policy replaced via API; built-in block(s) not in force: 10.0.0.0/8"
 
 
 def test_approvals_expiry_and_emergency_stop_are_attributed(gw, monkeypatch):  # noqa: F811
