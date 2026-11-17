@@ -238,9 +238,15 @@ function logRow(e) {
     for (const [action, label] of [["allow", "Allow"], ["deny", "Deny"]]) {
       const b = document.createElement("button"); b.textContent = label; b.className = "small ghost";
       b.setAttribute("aria-label", `${label} ${dest}`);
-      b.onclick = guard(async () => {
+      const add = async () => {
         await gw("POST", "/destinations", { access: action, match: { host: e.host, port: e.port }, note: "from log" }); toast(`Rule added: ${action} ${dest}`);
-      });
+      };
+      // An allow for an address goes to the top of the list and opens the address even inside a blocked range
+      // (your local network, metadata): the agent chose it, so this takes a second click.
+      const address = /^[\d.]+$/.test(e.host) || e.host.includes(":");
+      b.onclick = action === "allow" && address
+        ? confirmClick(b, `Allow the address ${dest}? The rule is added at the top and opens it even if it is inside a blocked range.`, add)
+        : guard(add);
       cell.appendChild(b);
     }
   }
@@ -346,7 +352,8 @@ function explainTest(r) {
   else if (/^default/.test(r.reason || "")) lines.push(`No rule matched, so the default decided (${policy ? policy.default : "default"}).`);
   if (r.shadow) {
     lines.push(`Rule ${r.shadow.rule} matches the name, but a name rule cannot open a blocked range: ${r.shadow.address} is inside ${r.shadow.range} (rule ${r.shadow.by}).`,
-      `To reach it, add an allow rule for the address ${r.shadow.address} on Destinations: it is added at the top, above the blocked range.`);
+      "If you did not expect this name to point there, somebody may be redirecting it (DNS rebinding): leave it blocked.",
+      `If the address is right, add an allow rule for the address ${r.shadow.address} on Destinations: it is added at the top, above the blocked range.`);
   }
   return lines.join("\n");
 }

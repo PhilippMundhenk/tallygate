@@ -1,23 +1,31 @@
 """Policy engine: pure logic, no I/O besides YAML load/save.
 
-One ordered rule list, first match wins (ADR-0019). For a connection to (host, port) resolving to ips, the
-list is walked top to bottom for EACH address, and the connection gets the most restrictive result over all
-addresses (deny > ask > allow):
+One ordered rule list, first match wins (ADR-0019). For a connection to (host, port) resolving to ips, every
+address is checked, and the connection gets the most restrictive result over all addresses (deny > ask > allow):
 
   0. locked ranges (the stack's own networks and the gateway's own listeners): deny, before the list and
      whatever the list says.
+
+  A destination given as an IP literal: the list top to bottom.
   1. an address rule (IP or CIDR) that contains the address (and matches the port) is final: allow, ask, deny.
-  2. a name rule (host pattern) that matches the name (and the port): `deny` is final; `allow` / `ask` is
-     provisional - the walk continues below it, looking only at address rules with `deny`. If one matches,
-     the result is `deny` (a name can never open a blocked range: names are chosen by whoever controls DNS).
+  2. a name rule whose pattern matches the literal (`*`): `deny` is final; `allow` / `ask` is provisional -
+     the walk continues below it, looking only at address rules with `deny`.
   3. nothing matched: the default action (allow | deny | ask).
+
+  A destination given by name must pass two checks (ADR-0019, amendment):
+  1. the name: the first matching name rule, else the default. `deny` is final, wherever the rule stands.
+  2. each address: the first address rule with `allow` or `deny` that contains it. `deny` blocks the address
+     (a name can never open a blocked range: names are chosen by whoever controls DNS); `allow`, or no such
+     rule, leaves the result of the name. An address `allow` therefore opens a blocked range below it for a
+     name that is allowed by name, but never lets a name through by itself (ADR-0013: an approved address is
+     not an approval of every name that resolves to it). Address `ask` rules speak about IP literals only.
 
 The built-in blocks (private, loopback, link-local/metadata, ... ranges) and the `never` entries of the gateway
 config are ordinary `deny` rules, seeded once at the bottom of the list (`source: builtin` / `config`).
 
 Hostnames are first evaluated *without* resolving them (`evaluate_name`), so names the policy denies or still
-has to ask about never reach a DNS resolver (no DNS exfiltration). That decision is only acted on where the
-result cannot depend on the addresses (`Decision.early`).
+has to ask about never reach a DNS resolver (no DNS exfiltration, ADR-0011): no address can turn the `deny`
+or `ask` of a name into `allow` (`Decision.early`).
 """
 
 from __future__ import annotations
@@ -41,6 +49,8 @@ RANK = {"allow": 0, "ask": 1, "deny": 2}  # most restrictive wins over the addre
 LOCKED = "locked"  # Decision.rule_id of a locked range: not a rule, never editable
 # Sources of the seeded blocks (ADR-0019): ordinary deny rules, added once at the bottom of the list.
 SEEDED_SOURCES = ("builtin", "config")
+# Where a rule came from. Shown in the UI and used to tell the seeded blocks from the rest, so it is checked.
+_SOURCE = re.compile(r"user|approval|learning|suggestion|builtin|config|preset:[A-Za-z0-9._-]{1,64}")
 
 DEFAULT_HARD_DENY = [
     "0.0.0.0/8",
@@ -102,6 +112,20 @@ def ip_addr(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
     if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
         return addr.ipv4_mapped
     return addr
+
+
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+_COMPAT = ipaddress.ip_network("::/96")
+
+
+def embedded_v4(addr) -> ipaddress.IPv4Address | None:
+    """The IPv4 address an IPv6 address stands for on a host with a translator or tunnel: NAT64
+    (64:ff9b::/96), 6to4 (2002::/16) and the old IPv4-compatible form (::a.b.c.d) - or None."""
+    if not isinstance(addr, ipaddress.IPv6Address):
+        return None
+    if addr in _NAT64 or (addr in _COMPAT and int(addr) > 1):
+        return ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF)
+    return addr.sixtofour
 
 
 _PORT = re.compile(r"(\d{1,5})(?:-(\d{1,5}))?")
@@ -243,12 +267,14 @@ def locked_reason(ip: str, port: int, nets, socks) -> str | None:
     """Why ip:port is locked, or None: inside one of the stack's own networks (`nets`, ip_network objects), or
     one of the gateway's own listeners (`socks`, (ip_network, port))."""
     addr = ip_addr(ip)
-    for n in nets:
-        if in_net(addr, n):
-            return f"locked: {ip} belongs to the tallygate stack itself ({n})"
-    for n, p in socks:
-        if p == port and in_net(addr, n):
-            return f"locked: {ip}:{port} is the gateway itself"
+    # also the IPv4 address an IPv6 address carries (NAT64, 6to4): no rule can remove this check
+    for a in filter(None, (addr, embedded_v4(addr))):
+        for n in nets:
+            if in_net(a, n):
+                return f"locked: {ip} belongs to the tallygate stack itself ({n})"
+        for n, p in socks:
+            if p == port and in_net(a, n):
+                return f"locked: {ip}:{port} is the gateway itself"
     return None
 
 
@@ -281,6 +307,19 @@ class Rule:
         items = self.port if isinstance(self.port, (list, tuple)) else [self.port]
         if not items or not all(valid_port_spec(p) for p in items):
             raise ValueError(f'rule {self.id}: invalid port {self.port!r} (use 443, [80, 443], "8000-8100" or "*")')
+        if self.expires is not None and (isinstance(self.expires, bool) or not isinstance(self.expires, (int, float))):
+            raise ValueError(f"rule {self.id}: expires must be a unix time or null")
+        if not isinstance(self.source, str) or not _SOURCE.fullmatch(self.source):
+            raise ValueError(f"rule {self.id}: invalid source {self.source!r}")
+        if self.source in SEEDED_SOURCES:
+            if self.action != "deny" or not self.cidr:
+                self.source = "user"  # no longer the block that was seeded: listed and counted as your rule
+            elif self.expires is not None:
+                # it would be pruned when the time is over and, being remembered as seeded, never come back
+                raise ValueError(
+                    f"rule {self.id}: a built-in block takes no time limit. To open the range for a while, add "
+                    "an allow rule with a time limit above it"
+                )
 
     def expired(self, now: float | None = None) -> bool:
         return self.expires is not None and (now or time.time()) >= self.expires
@@ -377,32 +416,21 @@ class Policy:
 
     def evaluate_name(self, host: str, port: int) -> Decision:
         """What the list says about the *name* alone, before any DNS lookup: the first matching name rule,
-        else the default. Address rules cannot be checked yet, so the result is provisional.
+        else the default. Address rules are not looked at: they cannot let a name through.
 
-        `early` says whether it may be acted on without resolving the name (ADR-0011, ADR-0019):
-          * `deny` is early if no address `allow`/`ask` rule for this port stands above what decided: then
-            every address ends in `deny` as well (an address rule above is `deny`, the name rule is final).
-          * `ask` is early if no address `allow` rule for this port stands above what decided: then no address
-            can allow the connection without you, and after your answer the addresses are still checked.
-          * `allow` is never early: the name is resolved and `evaluate` decides."""
-        now = time.time()
-        name = host.lower().rstrip(".")
-        opened = asked = False  # an address allow / ask rule for this port seen so far
+        `early` says whether the result may be acted on without resolving the name (ADR-0011): `deny` and `ask`
+        always, because no address can turn them into `allow` (after your answer to an `ask` the addresses are
+        still checked). `allow` never: the name is resolved and `evaluate` checks every address."""
+        r = self._named(host.lower().rstrip("."), port, time.time())
+        action = r.action if r else self.default
+        return Decision(action, _why(r) if r else "default", r.id if r else None, early=action != "allow")
+
+    def _named(self, name: str, port: int, now: float) -> Rule | None:
+        """The first name rule that matches this name and port."""
         for r in self.rules:
-            if r.expired(now) or not port_matches(r.port, port):
-                continue
-            if r.cidr:
-                opened = opened or r.action == "allow"
-                asked = asked or r.action == "ask"
-            elif r.names(name):
-                return Decision(r.action, _why(r), r.id, early=self._early(r.action, opened, asked))
-        return Decision(self.default, "default", early=self._early(self.default, opened, asked))
-
-    @staticmethod
-    def _early(action: str, opened: bool, asked: bool) -> bool:
-        if action == "deny":
-            return not opened and not asked
-        return action == "ask" and not opened
+            if r.host and not r.expired(now) and port_matches(r.port, port) and r.names(name):
+                return r
+        return None
 
     def evaluate(self, host: str, port: int, ips: list[str], mode: str | None = None) -> Decision:
         """The decision for a destination with its addresses: the list is walked for each address (the literal
@@ -420,20 +448,44 @@ class Policy:
         now = time.time()
         worst: Decision | None = None
         for ip in dict.fromkeys(candidates):
-            dec = self._walk(name, ip, port, now, excepted, literal=is_ip(host))
+            walk = self._walk if is_ip(host) else self._walk_name
+            dec = walk(name, ip, port, now, excepted)
             if worst is None or RANK[dec.action] > RANK[worst.action]:
                 worst = dec
             if worst.action == "deny":
                 break
         return worst
 
-    def _walk(self, name: str, ip: str, port: int, now: float, excepted: bool, literal: bool) -> Decision:
-        """The list for ONE address. See the module docstring; this is the whole evaluation."""
+    def _walk_name(self, name: str, ip: str, port: int, now: float, excepted: bool) -> Decision:
+        """A destination given by name, for ONE of its addresses: the name must be let through by a name rule
+        or the default, and the address must not be blocked. See the module docstring."""
+        if why := self.locked(ip, port):
+            return Decision("deny", why, LOCKED)
+        named = self._named(name, port, now)
+        if named is not None and named.action == "deny":
+            return Decision("deny", _why(named), named.id)  # a name `deny` is final, wherever it stands
+        addr = ip_addr(ip)
+        for r in self.rules:
+            # An address `ask` is a question about an IP-literal destination; for a name it says nothing.
+            if not r.cidr or r.action == "ask" or r.expired(now) or not port_matches(r.port, port):
+                continue
+            if not r.contains(addr) or (excepted and r.action == "deny" and r.source in SEEDED_SOURCES):
+                continue
+            if r.action == "deny":
+                if named is None:
+                    return Decision("deny", f"resolves to {ip}, inside blocked range {r.cidr} ({_why(r)})", r.id)
+                return self._shadowed(named, r, ip, literal=False)
+            break  # an address `allow`: the address is open, the name decides
+        if named is not None:
+            return Decision(named.action, _why(named), named.id)
+        return Decision(self.default, "default")
+
+    def _walk(self, name: str, ip: str, port: int, now: float, excepted: bool) -> Decision:
+        """The list for an IP-literal destination, top to bottom. See the module docstring."""
         if why := self.locked(ip, port):
             return Decision("deny", why, LOCKED)
         addr = ip_addr(ip)
-        held: Rule | None = None  # the name rule that matched with allow/ask: provisional
-        below: Rule | None = None  # an address allow/ask rule for this address that stands below `held`
+        held: Rule | None = None  # the name rule (`*`) that matched with allow/ask: provisional
         for r in self.rules:
             if r.expired(now) or not port_matches(r.port, port):
                 continue
@@ -445,8 +497,8 @@ class Policy:
                 if held is None:
                     return Decision(r.action, _why(r), r.id)  # an address rule: the first match is final
                 if r.action == "deny":
-                    return self._shadowed(held, r, ip, below, literal)
-                below = below or r  # below a name rule only an address `deny` counts
+                    return self._shadowed(held, r, ip, literal=True)
+                # below a name rule only an address `deny` counts
             elif held is None and r.names(name):
                 if r.action == "deny":
                     return Decision("deny", _why(r), r.id)  # a name `deny` is final
@@ -456,23 +508,21 @@ class Policy:
         return Decision(self.default, "default")
 
     @staticmethod
-    def _shadowed(held: Rule, block: Rule, ip: str, below: Rule | None, literal: bool) -> Decision:
+    def _shadowed(held: Rule, block: Rule, ip: str, literal: bool) -> Decision:
         """A name rule cannot open a blocked range: say so, with the way out (ADR-0019)."""
         verb = "allowed" if held.action == "allow" else "matched"
         what = f"the address {ip} is" if literal else f"it resolves to {ip},"
-        way = (
-            f"the {below.action} for the address (rule {below.id}) stands below rule {held.id}: move it above"
-            if below is not None
-            else "add an allow for the address above that rule"
+        reason = (
+            f"name {verb} by rule {held.id}, but {what} inside blocked range {block.cidr} (rule {block.id}): "
+            "add an allow for the address above that rule"
         )
-        reason = f"name {verb} by rule {held.id}, but {what} inside blocked range {block.cidr} (rule {block.id}): {way}"
         shadow = {"rule": held.id, "address": ip, "by": block.id, "range": block.cidr}
         return Decision("deny", reason, block.id, shadow=shadow)
 
     def covered_by(self, rule: Rule) -> Rule | None:
         """The earlier permanent address rule that covers this address rule completely, so that it can never
-        decide anything - or None. A `deny` that is only covered by an `allow`/`ask` is not reported: it still
-        blocks the address for a name rule above both."""
+        decide anything - or None. An `allow` or `deny` that is only covered by an `ask` is not reported: the
+        `ask` speaks about IP literals only, so for a name the rule below it still opens or blocks the address."""
         if not rule.cidr:
             return None
         net = _net(rule.cidr)
@@ -484,7 +534,7 @@ class Policy:
             wide = _net(r.cidr)
             if wide.version != net.version or not net.subnet_of(wide) or not ports_within(rule.port, r.port):
                 continue
-            if r.action == "deny" or rule.action != "deny":
+            if r.action != "ask" or rule.action == "ask":
                 return r
         return None
 
@@ -578,15 +628,38 @@ class Policy:
         a permanent `deny` for exactly that range on every port. Returns the rules added."""
         added = []
         for cidr in dict.fromkeys([*builtin, *config]):
-            present = any(
-                r.cidr == cidr and r.action == "deny" and r.expires is None and r.port in (None, "*", "any")
-                for r in self.rules
-            )
-            if not present:
+            if not any(self._is_block(r, cidr) for r in self.rules):
                 added.append(self._append_block(cidr, "builtin" if cidr in builtin else "config"))
             if cidr not in self.seeded:
                 self.seeded.append(cidr)
         return added
+
+    @staticmethod
+    def _is_block(r: Rule, cidr: str) -> bool:
+        return r.cidr == cidr and r.action == "deny" and r.expires is None and r.port in (None, "*", "any")
+
+    def blocks_missing(self, builtin: list[str], config: list[str]) -> list[str]:
+        """The built-in and config ranges that no rule blocks as they were seeded (deleted, or changed)."""
+        return [c for c in dict.fromkeys([*builtin, *config]) if not any(self._is_block(r, c) for r in self.rules)]
+
+    def opened_above(self, builtin: list[str], config: list[str]) -> list[dict]:
+        """Address `allow`/`ask` rules that stand above a built-in or config block and reach into it: what is
+        open inside the blocked ranges. [{"rule", "action", "cidr", "block"}], in list order."""
+        out, now = [], time.time()
+        wanted = set([*builtin, *config])
+        above: list[Rule] = []
+        for r in self.rules:
+            if not r.cidr or r.expired(now):
+                continue
+            if r.action != "deny":
+                above.append(r)
+            elif r.cidr in wanted and self._is_block(r, r.cidr):
+                net = _net(r.cidr)
+                for a in above:
+                    n = _net(a.cidr)
+                    if n.version == net.version and n.overlaps(net):
+                        out.append({"rule": a.id, "action": a.action, "cidr": a.cidr, "block": r.cidr})
+        return out
 
     def _append_block(self, cidr: str, source: str) -> Rule:
         ids = {r.id for r in self.rules}
@@ -667,6 +740,8 @@ def migrate(d: dict | None, builtin: list[str], config: list[str]) -> tuple[dict
 
       * CIDR `deny` rules move to the top, in their order: they won wherever they stood, and keep winning.
       * `hard_deny` extras become address `deny` rules below the other rules (above the built-in blocks).
+      * A block in force that an address `allow`/`ask` rule overlaps is placed at the top instead, after the
+        CIDR `deny` rules: such a rule had no effect inside the block, and must not get one by the upgrade.
       * Ranges in `floor_open` were opened by the operator: they are remembered as seeded without a rule, so
         `Policy.seed_blocks` adds every other built-in and config block at the bottom and leaves these out.
       * `hard_deny`, `floor_open` and the echoed `hard_deny_floor` are dropped."""
@@ -683,6 +758,7 @@ def migrate(d: dict | None, builtin: list[str], config: list[str]) -> tuple[dict
     opened = parse_cidrs(d.get("floor_open") or [], "floor_open")
     blocks = [*dict.fromkeys([*builtin, *config])]
     ids = {r.get("id") for r in rules}
+    extras: list[dict] = []  # `hard_deny` entries that are not a built-in or config block
     for cidr in parse_cidrs(d.get("hard_deny") or [], "hard_deny"):
         if cidr in blocks:
             continue  # the same range is a built-in or config block: seeded as that (unless it was opened)
@@ -693,27 +769,48 @@ def migrate(d: dict | None, builtin: list[str], config: list[str]) -> tuple[dict
         while rid in ids:
             rid += "-x"
         ids.add(rid)
-        rules.append({"id": rid, "action": "deny", "cidr": cidr, "note": "was hard_deny"})
+        extras.append({"id": rid, "action": "deny", "cidr": cidr, "note": "was hard_deny"})
         notes.append(f"hard_deny {cidr} is now deny rule {rid}")
     seeded = [c for c in blocks if c in opened]
     if seeded:
         notes.append(f"not blocked, as before (floor_open): {', '.join(seeded)}")
     seeded = [*dict.fromkeys([*parse_cidrs(d.get("seeded") or [], "seeded"), *seeded])]
+    # An address allow/ask rule never had any effect inside a blocked range (the blocks were checked first).
+    # Seeded at the bottom, the blocks would now stand BELOW such a rule and lose against it. So every block
+    # in force that such a rule overlaps is placed above the rules instead: nothing opens by upgrading.
+    loose = []
     for r in others:
-        if not r.get("cidr") or r.get("action") not in ("allow", "ask"):
+        if r.get("cidr") and r.get("action") in ("allow", "ask"):
+            try:
+                loose.append((r, ipaddress.ip_network(str(r["cidr"]), strict=False)))
+            except ValueError:
+                pass  # reported with the rule's id by Rule.validate
+
+    def hit_by(cidr: str) -> list[str]:
+        net = _net(cidr)
+        return [str(r.get("id")) for r, n in loose if n.version == net.version and n.overlaps(net)]
+
+    guards = [r for r in extras if hit_by(r["cidr"])]
+    rules += [r for r in extras if not hit_by(r["cidr"])]  # below the other rules, above the built-in blocks
+    for cidr in blocks:
+        if cidr in seeded or not hit_by(cidr):
             continue
-        try:
-            net = ipaddress.ip_network(str(r["cidr"]), strict=False)
-        except ValueError:
-            continue  # reported with the rule's id by Rule.validate
-        hit = next(
-            (c for c in blocks if c not in opened and _net(c).version == net.version and _net(c).overlaps(net)), None
+        rid = block_id(cidr)
+        while rid in ids:
+            rid += "-x"
+        ids.add(rid)
+        source = "builtin" if cidr in builtin else "config"
+        note = "built-in block" if source == "builtin" else "never (gateway config)"
+        guards.append({"id": rid, "action": "deny", "cidr": cidr, "source": source, "note": note})
+        seeded.append(cidr)
+    if guards:
+        rules = [*denies, *guards, *rules[len(denies) :]]
+        touched = sorted({i for g in guards for i in hit_by(g["cidr"])})
+        notes.append(
+            f"NOTE {len(guards)} block(s) stay at the top of the list, above rule(s) {', '.join(touched)}: these "
+            "address rules had no effect inside the blocked ranges and still have none. To open an address, move "
+            f"its rule above the block. Blocks: {', '.join(g['cidr'] for g in guards)}"
         )
-        if hit:
-            notes.append(
-                f"NOTE rule {r.get('id')} ({r['action']} {r['cidr']}) had no effect inside the blocked range {hit}; "
-                "it now decides for these addresses (first match wins). Delete it if that is not wanted"
-            )
     out = {k: v for k, v in d.items() if k not in OLD_KEYS}
     out["rules"], out["seeded"] = rules, seeded
     return out, notes

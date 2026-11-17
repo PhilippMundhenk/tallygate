@@ -59,8 +59,8 @@ def build_app(gw: Gateway) -> web.Application:
         new, notes = gw.read_policy(await request.json())
         gw.adopt(new)
         gw.save_policy(_by(request), "policy replaced")
-        note = "".join(f"; {n}" for n in notes)
-        gw.record(kind="admin", action="policy", reason="policy replaced via API" + _mode_changed(gw, old) + note)
+        note = _mode_changed(gw, old) + gw.adopted_note(notes)
+        gw.record(kind="admin", action="policy", reason="policy replaced via API" + note)
         return _json(gw.policy.to_dict())
 
     @routes.patch("/policy")
@@ -170,12 +170,15 @@ def build_app(gw: Gateway) -> web.Application:
         added = gw.restore_blocks()
         if added:
             gw.save_policy(_by(request), f"{len(added)} built-in block(s) restored")
+        # a restored block stands at the bottom: an address rule above it keeps part of the range open
+        opened = gw.opened_above()
+        still = "".join(f"; still open: {o['cidr']} ({o['action']} rule {o['rule']})" for o in opened)
         gw.record(
             kind="admin",
             action="rule+",
-            reason=f"built-in blocks restored: {', '.join(r['cidr'] for r in added) or 'none missing'}",
+            reason=f"built-in blocks restored: {', '.join(r['cidr'] for r in added) or 'none missing'}" + still,
         )
-        return _json({"added": added})
+        return _json({"added": added, "opened": opened})
 
     @routes.post("/destinations/{did}/move")
     async def move_destination(request):
@@ -606,10 +609,11 @@ def build_app(gw: Gateway) -> web.Application:
         except KeyError as e:
             return _json({"error": e.args[0]}, 404)
         old = gw.policy.default
-        new, _notes = gw.read_policy(v["policy"])  # validated (and, if it is a pre-0019 version, migrated) like PUT
+        new, notes = gw.read_policy(v["policy"])  # validated (and, if it is a pre-0019 version, migrated) like PUT
         gw.adopt(new)
         gw.save_policy(_by(request), f"version {vid} restored")
-        gw.record(kind="admin", action="policy", reason=f"policy version {vid} restored" + _mode_changed(gw, old))
+        note = _mode_changed(gw, old) + gw.adopted_note(notes)
+        gw.record(kind="admin", action="policy", reason=f"policy version {vid} restored" + note)
         return _json(gw.policy.to_dict())
 
     @routes.get("/policy/export")
@@ -626,6 +630,10 @@ def build_app(gw: Gateway) -> web.Application:
             raise ValueError("expected {yaml, apply}")
         pol_d, grants_d, warnings = history.parse_import(body.get("yaml"))
         new = gw.preview_policy(pol_d)  # as it will be in force: migrated if pre-0019, missing blocks seeded
+        _unused, notes = gw.read_policy(pol_d)
+        warnings = [*warnings, *notes]
+        if missing := new.blocks_missing(gw.blocks_builtin, gw.blocks_config):
+            warnings.append(f"built-in block(s) not in force in this policy: {', '.join(missing)}")
         checked = {n: await gw.check_grant(n, d, new) for n, d in grants_d.items()}
         result = {
             "diff": history.diff(gw.policy.to_dict(), new.to_dict()),
@@ -644,7 +652,7 @@ def build_app(gw: Gateway) -> web.Application:
             gw.save_policy(_by(request), "policy imported")
             for n, d in grants_d.items():
                 gw.grants.upsert_ui(n, d)
-            note = _mode_changed(gw, old)
+            note = _mode_changed(gw, old) + gw.adopted_note(notes)
             gw.record(kind="admin", action="policy", reason=f"policy imported ({len(checked)} UI grants)" + note)
             if checked:
                 gw.publish({"type": "grants"})

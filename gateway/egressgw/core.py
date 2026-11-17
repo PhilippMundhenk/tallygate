@@ -260,7 +260,8 @@ class Gateway:
             self.record(
                 kind="admin",
                 action="policy",
-                reason="policy.yaml migrated to one ordered rule list (ADR-0019): " + ("; ".join(migration) or "ok"),
+                reason="policy.yaml migrated to one ordered rule list (ADR-0019): "
+                + ("; ".join([*migration, *self.grants.local_notes(self.policy)]) or "ok"),
             )
 
     def _write_policy_file(self) -> None:
@@ -350,6 +351,19 @@ class Gateway:
     def restore_blocks(self) -> list[dict]:
         """Add the built-in and config blocks that are missing back at the bottom (ADR-0019)."""
         return [r.to_dict() for r in self.policy.restore_blocks(self.blocks_builtin, self.blocks_config)]
+
+    def opened_above(self) -> list[dict]:
+        """Address rules above a built-in or config block that open part of it (`Policy.opened_above`)."""
+        return self.policy.opened_above(self.blocks_builtin, self.blocks_config)
+
+    def adopted_note(self, notes: list[str] | None = None) -> str:
+        """For the admin event after a whole policy was put in force (PUT, restore, import): what a migration
+        changed, and which built-in or config blocks are NOT in force in it. A document can leave blocks out
+        without anyone deleting them one by one, so the record says it."""
+        parts = list(notes or [])
+        if missing := self.policy.blocks_missing(self.blocks_builtin, self.blocks_config):
+            parts.append(f"built-in block(s) not in force: {', '.join(missing)}")
+        return "".join(f"; {p}" for p in parts)
 
     def never_reachable(self) -> list[dict]:
         """What no rule, grant or API call can open: the locked ranges (the stack's own networks and the

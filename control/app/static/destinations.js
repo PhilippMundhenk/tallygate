@@ -16,15 +16,20 @@
   let model = null;
 
   box.innerHTML = `<h3>Rules and blocked ranges</h3>
-    <p class="hint">One list, checked from the top: the first matching rule decides. New rules are added at the top.</p>
+    <p class="hint">One list, checked from the top: the first matching rule decides. A name must also resolve to addresses that are not blocked. New rules are added at the top.</p>
     <details class="help"><summary>How is a connection decided?</summary>
-      <p>The list is checked from top to bottom for every address a destination resolves to; the first rule that
-        matches decides, and the default at the end applies when none does. A rule for an <b>address</b> (an IP or
-        a range) is final. A rule for a <b>name</b> that says deny is final too.</p>
-      <p>A name rule that says allow or ask <b>cannot open a blocked range</b>: if the name resolves to an address
-        that a deny rule for a range further down covers, the connection is denied. Names are chosen by whoever
-        controls DNS, so only a rule that names the address opens it. To reach one device on your local network,
-        add an allow rule for its address (and port): it is added at the top, above the blocked range.</p>
+      <p>A destination given as an <b>IP address</b>: the list is checked from top to bottom, the first rule for
+        an address (an IP or a range) that contains it decides, and the default at the end applies when none does.</p>
+      <p>A destination given by <b>name</b> passes two checks. First the name: the first rule for a name that
+        matches decides, else the default. Deny and ask are acted on before the name is looked up. Then every
+        address the name resolves to: the first allow or deny rule for an address that contains it says whether
+        the address is open.</p>
+      <p>So a name rule <b>cannot open a blocked range</b>: if the name resolves into a range that a deny rule
+        covers, the connection is denied. Names are chosen by whoever controls DNS, so only a rule that names the
+        address opens it. And an allow rule for an address lets no name through by itself: the name still needs
+        its own rule or your approval. To reach one device on your local network by its address, add an allow
+        rule for the address (and port): it is added at the top, above the blocked range. To reach it by name,
+        add the name as well.</p>
       <p>The built-in blocked ranges (your local network, loopback, cloud metadata and other special addresses) and
         the <code>never</code> entries of the gateway config are ordinary deny rules at the bottom: they can be
         edited, moved and deleted, and <i>Restore built-in blocks</i> adds the missing ones back. The tallygate
@@ -76,14 +81,16 @@
   const isRule = (d) => RULE_ACTIONS.includes(d.access) && d.id;
   const SOURCE = { builtin: "built-in block", config: "never (config file)" };
   // What the operator has to see about a rule that cannot do what it says (ADR-0019), as status lines:
-  // a name rule that a blocked range below it stopped, and an address rule an earlier one covers completely.
+  // a name rule that a blocked range stopped, and an address rule an earlier one covers completely.
   function ruleNotes(d) {
     const out = [];
     if (d.shadowed) {
       const s = d.shadowed;
-      out.push(`<div class="status warn">blocked by a range rule below</div>
+      out.push(`<div class="status warn">blocked by a range rule</div>
         <div class="muted small-text">last: <code>${esc(s.address)}</code> in <code>${esc(s.range)}</code> (rule <code>${esc(s.by)}</code>),
-          ${esc(fmtDate(s.last))}, ${Number(s.count)}&times;. A name cannot open a blocked range: add an allow rule for the address.</div>`);
+          ${esc(fmtDate(s.last))}, ${Number(s.count)}&times;. A name cannot open a blocked range. If you did not expect this name
+          to point into that range, somebody may be redirecting it (DNS rebinding): leave it blocked. If the address is
+          right, add an allow rule for the address.</div>`);
     }
     if (d.covered_by) {
       out.push(`<div class="status off">never reached</div>
@@ -233,8 +240,9 @@
   $("#dFilter").oninput = () => { if (model) render(); };
   $("#dRestore").onclick = guard(async () => {
     const r = await gw("POST", "/destinations/restore-blocks", {});
-    const n = (r.added || []).length;
-    toast(n ? `${n} built-in block${n === 1 ? "" : "s"} restored` : "No built-in block is missing"); await load();
+    const n = (r.added || []).length, open = (r.opened || []).map((o) => o.cidr);
+    toast((n ? `${n} built-in block${n === 1 ? "" : "s"} restored` : "No built-in block is missing")
+      + (open.length ? `. Still open by rules above the blocks: ${[...new Set(open)].join(", ")}` : "")); await load();
   });
 
   async function load() {
