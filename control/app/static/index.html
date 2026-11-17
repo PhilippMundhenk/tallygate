@@ -372,6 +372,19 @@
           <p><a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#notification-channels-in-the-web-ui" target="_blank" rel="noopener">User guide: notification channels</a></p></details>
         <p id="notifyReadonly" class="alert warn hidden" role="note"></p>
         <div id="notifyChannels"></div>
+        <h4 id="notifyActionsTitle">Notification buttons</h4>
+        <p class="hint">Choose the decisions a connection request offers in a notification, in the order they are shown.</p>
+        <details class="help"><summary>Which buttons does a notification show?</summary>
+          <p><b>Web Push</b> shows exactly the buttons you choose. Most phones and browsers have room for two,
+            so a device shows the first ones in your order and leaves out the rest; tapping the notification
+            opens the approvals with every choice. <b>Telegram</b> and <b>Matrix</b> show your buttons first and
+            keep the others behind <i>More</i>. ntfy, Gotify and Pushover have no buttons.</p>
+          <p>A button that allows permanently decides from the lock screen what otherwise needs the UI: put it
+            first only if you read every request. <i>Allow *.domain permanently</i> names the pattern on the
+            button and is left out when a name has no domain of its own. A request for an IP address can only
+            be denied from a Web Push notification. Grant requests keep their own buttons.</p>
+          <p><a href="https://github.com/PhilippMundhenk/tallygate/blob/main/docs/user-guide.md#notification-buttons" target="_blank" rel="noopener">User guide: notification buttons</a></p></details>
+        <form id="notifyActions" class="notify-actions" autocomplete="off" aria-labelledby="notifyActionsTitle"></form>
         <h4>Browser notifications</h4>
         <div class="row notify-browser">
           <button id="notifyBtn" class="secondary notify-btn">Request notification permission</button>

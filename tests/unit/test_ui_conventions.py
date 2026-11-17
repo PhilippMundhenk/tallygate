@@ -184,3 +184,18 @@ def test_the_stylesheet_has_the_shared_vocabulary():
         sizes = set(re.findall(r"font-size:([\d.]+px)", path.read_text(encoding="utf-8")))
         assert sizes <= {"20px", "15px", "13px", "12px"}, f"{path.name}: {sorted(sizes)}"
     assert "min-height:32px" in css and "outline:2px solid" in css  # control height and the focus ring
+
+
+def test_the_service_worker_shows_the_buttons_the_server_sends():
+    """Notification buttons are configured on the server (#212). The worker knows no action by name: it shows
+    the first ones the device has room for and reports the server's text after a tap."""
+    sw = (STATIC / "sw.js").read_text(encoding="utf-8")
+    assert "Notification.maxActions" in sw and ".slice(0, max)" in sw and ".slice(0, 2)" not in sw
+    assert not re.search(r'"(once|hour|always|domain|deny|deny_always|approve|read)"', sw)
+    assert "data.message" in sw
+    assert "body: JSON.stringify({ token })" in sw  # the token alone says what to decide
+    # the Setup tab has the setting, with help in the usual place; the phone help names the buttons in use
+    assert '<form id="notifyActions"' in INDEX and "Which buttons does a notification show?" in INDEX
+    assert 'class="notify-actions-text"' in (STATIC / "push.js").read_text(encoding="utf-8")
+    wizard = (STATIC / "wizard.js").read_text(encoding="utf-8")
+    assert '"/api/notify/actions"' in wizard and "confirmClick(save" in wizard
