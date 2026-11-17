@@ -4,8 +4,11 @@ The control UI is the operator's cockpit: approve connections, watch traffic, ed
 consoles into the agent, and run the setup wizard. Remote Control itself is used from the
 [Claude app](https://claude.ai/download) or [claude.ai/code](https://claude.ai/code) as usual.
 
-New here? [How access works](access.md) explains the model on one page: what is never reachable, what the
-agent has to ask for, what rules do, and where each is changed.
+New here? [How access works](access.md) explains the model on one page: the one rule list that decides
+every connection, what the agent has to ask for, and where each is changed.
+
+The menu, in order: Overview, Approvals, Setup, Quick settings, Destinations, Grants, Log, Console, Files,
+Settings.
 
 - [Overview](#overview)
 - [Approvals](#approvals)
@@ -13,6 +16,8 @@ agent has to ask for, what rules do, and where each is changed.
 - [Grants](#grants)
 - [Log](#log)
 - [Destinations](#destinations)
+- [Quick settings](#quick-settings)
+- [Settings](#settings)
 - [Console](#console)
 - [Files](#files)
 - [Setup wizard](#setup-wizard)
@@ -36,7 +41,26 @@ while it is open and at once when a request arrives or is decided.
 | Needs attention | Waiting connection and grant requests; rules and grants that end within the hour; a missing GitHub token, one GitHub refuses, or one that expires within 7 days (checked once per page load through the agent, so it appears in the log). |
 | Last hour | Connections allowed, denied and asked; the 10 most frequent destinations; destinations seen for the first time in the kept log (`log_keep_days`). |
 | Versions | tallygate (the release the gateway runs) and Claude Code, and the latest tallygate release. When a newer one exists, the header shows **Update: X.Y.Z**; the card links to the changelog and the release and shows the upgrade command (click to copy). Claude Code has no auto-updater in the agent: new versions come with tallygate releases. Control asks GitHub itself, at most every 6 hours; `UPDATE_CHECK=0` switches it off ([configuration](configuration.md)). |
+| Rule usage | How often each rule matched, unused rules to clean up, and permanent rules suggested for destinations you keep approving for a limited time. See [Rule usage](#rule-usage). |
 | Shortcuts | *Emergency stop* (click twice), *Allow web for 15 min* (the `open` preset), *Open rc console*. |
+
+### Rule usage
+
+*Overview → Rule usage* shows, for every rule, how many connections it decided and when it last
+matched. The counts are kept in the gateway's memory and written to the event log every 15 seconds, so they
+cost nothing noticeable per connection. Click a column header to sort (again to reverse), type to filter, or
+show only unused or only matched rules.
+
+- **Suggested permanent rules.** When you allowed the same destination for a limited time at least
+  `suggest_min_approvals` (3) times in `suggest_window_days` (7) days, and no permanent rule covers it, the card
+  offers a permanent allow rule. Several hosts of one domain on the same port become one `*.domain` rule (the
+  domain comes from the Public Suffix List, like *Allow \*.domain permanently*). *Dismiss* hides a suggestion
+  for `log_keep_days`.
+- **Unused rules**: permanent rules that did not match anything for `rule_stale_days` (30) days, counted from
+  when the gateway first saw the rule. Rules with a time limit are never offered, they end by themselves, and
+  neither are the built-in and config blocks: a block that never matched is doing its job. Tick the ones to
+  remove and click *Delete selected rules*; the gateway checks again that each one is still unused, and the
+  policy history keeps them in case you need one back.
 
 ## Approvals
 
@@ -72,12 +96,16 @@ agent, unverified*: a prompt injection can lie here like anywhere else. Judge th
 The activity appears in the UI, in Web Push notifications (end-to-end encrypted) and in the log, never in
 Telegram, Matrix, ntfy, Gotify or Pushover.
 
-Every decision becomes a normal rule (tagged `[approval]`) that you can review or delete under **Rules**.
+Every decision becomes a normal rule (source `approval`), added at the top of the list, that you can review,
+move or delete under **Destinations**.
 Before you click, check the **domain** line: the host is chosen by the agent, so `github.com.evil.example`
 has the domain `evil.example`. Punycode names (`xn--…`) are flagged. Names are not resolved before your
-approval, so IPs show as "not resolved yet". A destination you approve can still be refused by the hard
-deny (LAN, host, metadata…). At most `max_pending` (10) requests wait at once; further unknown destinations
-are denied immediately until you have answered.
+approval, so IPs show as "not resolved yet". A name you approve can still be refused afterwards: approving a
+name adds a rule for the name, and a rule for a name never opens a blocked range (the local network, the
+host, metadata…). The log then says which address and which range
+([why, and what to do](rules.md#why-a-name-rule-cannot-open-a-blocked-range)). An IP address inside a blocked
+range is denied without a prompt. At most `max_pending` (10) requests wait at once; further unknown
+destinations are denied immediately until you have answered.
 
 ### Keyboard shortcuts, compact list and sound
 
@@ -125,8 +153,8 @@ Quiet hours use the gateway's time zone: set `TZ` (e.g. `TZ=Europe/Berlin` in `.
 
 ## Grants
 
-For access the normal rules would refuse, especially services on your home network, define **grants**:
-named bundles with targets, read/write levels, LAN access, credentials and a duration. The agent requests
+For access the agent should ask for each time, especially services on your home network, define **grants**:
+named bundles of destinations with read/write levels, paths, credentials and a duration. The agent requests
 them (`tallygate request homeassistant --write --reason "…"`). Grant requests appear at the top of
 **Approvals** and in Telegram/Matrix, where you can approve, approve read-only, or deny. The **Grants** tab
 lists definitions and active grants (with *Revoke*), has an editor for UI-defined grants, and holds the
@@ -157,96 +185,137 @@ searches the whole event log on the gateway, which keeps `log_keep_days` (30) da
   *Admin changes (7 days)*. *Save filter* keeps the current one in this browser (under the text or host you
   searched for); ✕ deletes it.
 - **A destination** (click it) shows what the policy decides for it now and which rule decides, its counts
-  and its latest events. The decision is made on the name, without resolving it: the hard deny on the
-  resolved address still applies when the agent connects.
+  and its latest events. The decision is made on the name, without resolving it: when the agent connects,
+  the list is checked again with the resolved addresses, and a blocked range still applies to them.
 - **Export CSV / JSON** downloads every matching row (up to 50,000 events) for an audit. Cells that a
   spreadsheet would run as a formula are prefixed with `'`.
+
+### History and rollback
+
+Every change to the policy is kept as a version, whoever made it: the UI (`web:<user>`), the API (`api`),
+an approval on Telegram or Matrix (`telegram:<user>`), a shortcut, the emergency stop, or the gateway itself
+when temporary rules expire (`gateway`). *Log → Policy history, export and import* lists the versions with
+time, author and what changed. The built-in blocks are rules, so they are part of every version, in their
+place in the list.
+
+- **Show changes** shows what changed from that version to the current policy: the default and the timeout,
+  rules added, removed or changed (compared by rule id), and whether the order of the rules changed. Pick any
+  two versions with *From* and *To* and *Compare versions*.
+- **Restore version** replaces the current policy with that version (it asks for confirmation). The restore is
+  a new version itself, so it can be undone the same way. Rules of an old version whose time limit has passed
+  are ignored and removed, as always. A restore replaces the whole list, blocks included: a version in which
+  a built-in block was deleted brings the policy back without it.
+- **Export policy** downloads the policy and the grants defined in the UI as one file, for a new host or as a
+  template to share. Secrets are not in it (they cannot be read back at all), and neither are grants from the
+  gateway config file.
+- **Import policy…** checks the file like a normal policy change and every grant like the grant editor,
+  then shows what would change. *Import* replaces the policy and adds or replaces the UI grants in the file;
+  grants that are not in the file stay.
+- A version or an export from before the ordered rule list is translated when it is restored or imported, as
+  at an upgrade ([operations](operations.md#upgrade-to-the-ordered-rule-list)); the preview shows the policy
+  as it will be in force.
+
+The gateway keeps the last `policy_history_keep` (500) versions in `policy-history.db` in its data volume.
 
 ## Destinations
 
 ![Destinations](images/destinations.png)
 
-One tab for everything about a destination — access rules, on-request grants, read-only hosts, credentials and repository scope. The former *Rules* tab was folded in here; grant *definitions* are edited here too, while the *Grants* tab keeps the active grants and secrets.
+The rule list, in the order the gateway checks it. How the list decides (the first matching rule wins, what
+a rule for a name and a rule for an address do, the built-in blocks, the locked ranges) is explained in one
+place, [Rules by example](rules.md). This section is the tour of the tab.
 
-- **Mode**: what happens to unmatched destinations: `ask` (human in the loop), `deny` (strict allowlist) or
-  `allow` (blocklist).
-- **What the agent can reach** (top of the tab): each destination once, with everything that applies to it:
-  allowed, asks you, blocked or only on request (and by which rule), read-only, credentials that are added,
-  repository limits, the grants defined for it (and whether one is active), and when it was last used. The
-  last line is what happens with everything else. It is a read-only summary; each part is changed where it is
-  defined (the destinations table and the grant editor on this tab, or the read-only gateway config file).
-- **Shortcuts**, see below.
-- **Learning mode**: record what a new task needs for a limited time, then save the rules in one go. See
-  [Learning mode](#learning-mode).
-- **Test a destination**: dry run against the current policy. A name that the rules allow is also resolved
-  and checked against the hard deny; a name that would be denied or asked is decided without resolving it, as
-  for a real connection.
-- **Add rule**: host glob or CIDR, ports, note and optional TTL. New rules go to the top (first match wins).
-- **Deny floor**: the ranges that are closed by default are listed as blocked rows in the *Destinations*
-  table, each with its reason: the built-in private/reserved ranges, `never` from the gateway config file,
-  your own deny additions, and the tallygate stack's own networks. A removable range (your LAN, the cloud
-  metadata address, your own additions) has an **Unblock range** action behind a confirmation (ADR-0017) —
-  after which normal connections into it are allowed and the row shows an **Undo unblock** action; the stack's own
-  networks are marked locked and cannot be opened here. Grants are unaffected: they still cannot reach the
-  metadata/loopback/stack ranges whatever you unblock for normal connections.
-- **Advanced: raw policy JSON**: edit everything at once (validated server-side).
-- **Rule usage and suggestions**: how often each rule matched and when it last did (sortable, filterable),
-  unused rules to clean up, and permanent rules for destinations you keep approving for a limited time. See
-  [Rule usage](#rule-usage).
-- **History, export and import**: every version of the policy, a diff between any two, *Restore*, and the
-  policy with your UI grants as one YAML file. See [History and rollback](#history-and-rollback).
+**Test a destination** (top of the tab) is a dry run. Enter a host or an IP and a port; the answer is the
+decision (`ALLOW`, `DENY`, `ASK`) with the reason in the words of the log, what decided it (`Decided by rule
+#4 (…)`, the default, or a locked range) and the resolved IPs. When a rule allows the name but the address
+is inside a blocked range, it names both rules and says what to do. A name that would be denied or asked
+about is decided without resolving it, as for a real connection
+([details](rules.md#checking-a-rule-before-relying-on-it)).
 
-### Shortcuts
+**Rules and blocked ranges** is one table, read from the top:
 
-The shortcuts, the per-ecosystem templates and learning mode are on the **Quick settings** tab:
+| Rows | What they are | Actions |
+|---|---|---|
+| Rules | Your rules, approvals, shortcut rules and rules saved from learning mode, each with its access (*allow*, *ask*, *deny*), ports, time limit, group and source | **Move up**, **Move down**, **Edit**, **Delete** |
+| Built-in blocks | `deny` rules for your local network, loopback, cloud metadata and other special ranges (source *built-in block*), and the `never` entries of the gateway config (source *never (config file)*). They start at the bottom of the list | the same: they are ordinary rules. Deleting one asks for confirmation and names the range |
+| Read-only hosts, credentials, repository limits | Limits from the gateway config file, tagged *config file* | none here |
+| Locked ranges | The tallygate stack's own networks and the gateway's own ports, marked *locked*: checked before the list | none: nothing opens them |
+| Everything else | The default: *ask*, *deny* or *allow* | changed under [Settings](#settings) |
+
+- **Add rule** (above the table): *allow*, *deny* or *ask*; a host pattern or a CIDR; ports; a note; an
+  optional time limit in seconds. A new rule is added **at the top**, so it decides before everything below
+  it. An IP address in the host field is stored as a rule for that address.
+- **Move up / Move down** change the place of a rule by one. The order is the only precedence there is.
+- **Edit** changes the access, ports, note, time limit and group of a rule in place. What a rule matches is
+  not editable: add a new rule and delete the old one.
+- **Group selected / Ungroup selected** put ticked rules in a named set, to keep related rules together.
+- **Filter** narrows the table to rows whose host or range contains the text.
+- **Restore built-in blocks** adds back the built-in and config blocks that are missing from the list, at
+  the bottom ([operations](operations.md#restoring-the-built-in-blocks)).
+- The line under the table counts the built-in and config blocks in the list and the locked ranges.
+
+Two marks tell you when a rule cannot do what it says: **blocked by a range rule below** on a rule for a
+name whose address was inside a blocked range (with the last address, the range and what to do), and
+**never reached** on an address rule that an earlier one covers completely
+([rules.md](rules.md#marks-in-the-table)).
+
+**To let the agent reach one device on your local network**, add an allow rule for its address and port
+here (it lands above the block of its range), or create a grant when the agent should ask each time
+([worked examples](rules.md#the-local-network-worked-examples)). Do not delete the block of the whole range
+for it.
+
+Grants are defined and edited on the **Grants** tab. The policy's versions are under
+[Log](#history-and-rollback), how often each rule matched under [Overview](#rule-usage).
+
+## Quick settings
 
 ![Quick settings](images/quickstart.png)
 
-| Action | What it does | Undo |
-|---|---|---|
-| Allow web (HTTP/HTTPS) for 15 min / Allow web for 1 h | Adds the `open` preset (any public host, ports 80 and 443) with that time limit | *Active → Undo*, or wait |
-| Allow all ports for 15 min | Adds the `internet` preset (any public host and port: SSH, databases, ...) | same |
-| Unknown destinations: ask me / block / allow | Sets the mode (`ask`, `deny`, `allow`); changes nothing else | click another mode |
-| Emergency stop | Revokes all active grants, denies everything waiting for approval (connections and grant requests), undoes the internet shortcuts, ends learning mode, sets the mode `deny` and suspends automatic grant approval | set the mode again |
-| Allow a device on the local network | Opens the grant editor with a LAN target (see below) | delete the grant |
-| Tool ecosystems | One shortcut for what a tool ecosystem needs: Python, Node.js, Go, Rust, Debian/Ubuntu apt, container registries, Hugging Face. Until undone, for 1 h or for 1 day | *Undo* on the shortcut |
+Learning mode and the shortcuts: the fast ways to a working rule set. Everything here ends up as normal
+rules or grants that you see on *Destinations* and *Grants*. The tab can be hidden under
+*Settings → Menu*.
 
-Actions that are hard to take back (*allow (log only)*, *Emergency stop*, deleting a grant or a secret) ask
-for confirmation in the page: the first click arms the button (*Confirm: …*) and says what will happen, a
-second click within 8 seconds runs it. Escape or moving the focus elsewhere cancels. The panel updates in
-place when the policy changes elsewhere, so a duration you picked and the keyboard focus stay where they were.
+| Card | What it does | Undo |
+|---|---|---|
+| Learning mode | Records what a new task needs for a limited time, then saves the rules in one go. See [Learning mode](#learning-mode). | *Stop learning mode* |
+| Internet: *Allow web for 15 min* / *for 1 h* / *permanently* | Adds the `open` preset (any public host, ports 80 and 443), with that time limit | *Undo* in the list of active shortcuts, or wait |
+| Internet: *Allow all ports for 15 min* | Adds the `internet` preset (any public host and port: SSH, databases, ...) | the same |
+| Internet: *Emergency stop* | Revokes all active grants, denies everything waiting for approval (connections and grant requests), undoes the internet shortcuts, ends learning mode, sets the default to `deny` and suspends automatic grant approval | set the default again under *Settings → Mode* |
+| Local network | A form for one device: name, IP address, port, type, read-only or full access, duration. *Create grant* defines a [grant](grants.md#in-the-ui) for exactly that address and port; you approve each use | edit or delete the grant on the *Grants* tab |
+| Tool ecosystems | One shortcut for what a tool ecosystem needs: Python, Node.js, Go, Rust, Debian/Ubuntu apt, container registries, Hugging Face. *Until undone*, *For 1 h* or *For 1 day* | *Undo* on the shortcut |
+
+Actions that are hard to take back (*Start learning mode*, *Emergency stop*, deleting a rule, a grant or a
+secret) ask for confirmation in the page: the first click arms the button (*Confirm: …*) and says what will
+happen, a second click within 8 seconds runs it. Escape or moving the focus elsewhere cancels.
 
 The **emergency stop** runs on the gateway, most important step first, and carries on when a step fails.
-The panel lists every step with a ✔ or ✖, so you can see what did not work. Until you change the mode again,
-grants with automatic approval need your approval like any other: the agent cannot switch its access back on
-right after the stop. The Grants tab shows when this is in effect.
+The card lists every step with a ✔ or ✖, so you can see what did not work. Until you change the default
+again, grants with automatic approval need your approval like any other: the agent cannot switch its access
+back on right after the stop. The Grants tab shows when this is in effect.
 
-*Save mode* in the Mode card change only the mode and the approval timeout, never the rules.
-*Save additional hard deny* starts from the policy as it is on the gateway. *Save policy* (raw JSON) refuses
-to save when the policy was changed elsewhere after the text was loaded (another tab, a Telegram approval): it
-keeps your text and marks it; *Reload policy* fetches the current policy, a second *Save policy*
-overwrites on purpose.
+Shortcuts create normal rules at the top of the list, with ids like `python:pypi` and tagged
+`preset:<name>` in the table, so you can see what a shortcut added. *Undo* removes exactly those rules; rules
+you added yourself are never touched. Because they stand at the top, **shortcut rules win over your own
+rules while they are active, `deny` rules for a name included**: a shortcut that allows `*.quay.io` opens it
+even if you deny that name further down. What they cannot do is open a blocked range: they are rules for
+names ([rules.md](rules.md#order-of-the-list)). Undo them, or pick a time limit. *Allow … again* replaces the
+shortcut's rules with the new time limit; the message shows the time the gateway actually set.
 
-All of them create normal rules at the top of the list, with ids like `python:pypi` and tagged `preset:<name>` in
-the table, so you can see what a shortcut added. *Undo* removes exactly those rules. Rules you added yourself are
-never touched. Because they sit at the top, **shortcut rules win over your own rules while they are
-active, deny rules included**: a shortcut that allows `*.quay.io` opens it even if you deny that name further down. The exception is a `deny` rule on a CIDR: it refuses names that resolve into its range wherever it stands. Undo
-them, or pick a time limit. *Allow … again* replaces the shortcut's rules with the new time limit; the message shows
-the time the gateway actually set.
-
-**The local network** (private ranges, the Docker host, cloud metadata) is always blocked by the hard deny, and
-no rule or shortcut can open it. This is deliberate: an agent with broad access to your network is the main
-risk tallygate exists for. To let the agent reach one device, define a [grant](grants.md): exact host and port,
-read or write, a time limit, and your approval each time. Grants created in the UI may only reach addresses
-inside `grants_lan_allow` in the gateway config; the button explains what to add when that list is empty.
+**The local network** (private ranges, the Docker host, cloud metadata) is closed by the built-in blocks, and
+no shortcut, approval of a name or learning mode opens it. An agent with broad access to your network is the
+main risk tallygate exists for. The *Local network* card gives the agent one device on request: enter the
+device's **IP address**. A name such as `ha.lan` is refused when it resolves to a local address, with the
+address to enter instead, because a name can be pointed anywhere
+([grants.md](grants.md#local-targets-and-name-only-targets)). To allow a device without a request each time,
+add an allow rule for its address on *Destinations*.
 
 ### Learning mode
 
-Building an allowlist one prompt at a time is slow when you start a new kind of task. *Rules → Learning mode*
-lets the task run for a while and shows afterwards what it used:
+Building an allowlist one prompt at a time is slow when you start a new kind of task. *Quick settings →
+Learning mode* lets the task run for a while and shows afterwards what it used:
 
 1. Pick a duration (up to `learning_max_minutes`, 120) and the ports (`443`, or `80 and 443`; the choice comes
-   from `learning_ports` in the gateway config) and click *Start learning mode* twice (it asks for
+   from `learning_ports`) and click *Start learning mode* twice (it asks for
    confirmation). The header shows **Learning mode · N min left** on every tab while it runs; click it to come
    back here.
 2. While it runs, a connection to a host name on those ports that **no rule matches** is allowed instead of
@@ -259,56 +328,31 @@ lets the task run for a while and shows afterwards what it used:
 
 What stays in force while learning mode runs:
 
-- the **hard deny**, also on the resolved addresses: the local network, the Docker host and metadata stay
-  unreachable;
-- your **deny and ask rules** and **grants** (a name that a grant is defined for is not learned);
-- **name-first decisions**: a name is resolved only after it was allowed; IP literals are not covered at all;
+- **every rule**, the built-in blocks among them, checked on the resolved addresses: the local network, the
+  Docker host and metadata stay unreachable, and a name that resolves there is denied;
+- the **locked ranges** and **grants** (a name that a grant is defined for is not learned);
+- **name-first decisions**: a name your rules deny or ask about is not resolved first; IP literals are not
+  covered at all;
 - the **SNI/Host binding** and the read-only and credential checks.
 
 Learning mode is never stored in the policy. It ends when its time is up, when you stop it, on the
-**emergency stop**, and when the gateway restarts. Saved rules are added at the **bottom** of the list, so a
-deny or ask rule you already have keeps winning over a learned `*.domain` rule. The rules you save are tagged
-`[learning]` and are permanent; check them in the table like any other rule.
+**emergency stop**, and when the gateway restarts. Saved rules are added **below your rules** (above the
+built-in blocks), so a deny or ask rule you already have keeps winning over a learned `*.domain` rule. The
+rules you save are tagged `learning` and are permanent; check them in the table like any other rule.
 
-### Rule usage
+## Settings
 
-*Rules → Rule usage and suggestions* shows, for every rule, how many connections it decided and when it last
-matched. The counts are kept in the gateway's memory and written to the event log every 15 seconds, so they
-cost nothing noticeable per connection. Click a column header to sort (again to reverse), type to filter, or
-show only unused or only matched rules.
+![Settings](images/settings.png)
 
-- **Suggested permanent rules.** When you allowed the same destination for 2 minutes or 1 hour at least
-  `suggest_min_approvals` (3) times in `suggest_window_days` (7) days, and no permanent rule covers it, the card
-  offers a permanent allow rule. Several hosts of one domain on the same port become one `*.domain` rule (the
-  domain comes from the Public Suffix List, like *Always (*.domain)*). *Dismiss* hides a suggestion for
-  `log_keep_days`.
-- **Unused rules**: permanent rules that did not match anything for `rule_stale_days` (30) days, counted from
-  when the gateway first saw the rule. Rules with a time limit are never offered, they end by themselves. Tick
-  the ones to remove and click *Delete selected rules*; the gateway checks again that each one is still unused, and
-  the policy history keeps them in case you need one back.
+| Card | What it holds |
+|---|---|
+| Mode | The **default action** for destinations no rule matches: `ask` (you decide each time), `deny` (strict allowlist) or `allow` (blocklist; the built-in blocks still apply), and the approval timeout. *Save mode* changes only these two, never the rules. |
+| Menu | Hide **Setup** and **Quick settings** in the menu once you no longer need them. Kept in this browser; hidden pages stay reachable from links on *Overview*. |
+| Behaviour settings | Log retention, learning mode, rule suggestions and request limits ([configuration](configuration.md#configgatewayyaml)). Saved without a restart, except where marked. |
+| Raw policy (JSON) | The whole policy as the gateway API returns it: the default, the timeout and every rule in order, the built-in blocks among them. Validated by the gateway. *Save policy* replaces every rule **and their order**. It refuses to save when the policy was changed elsewhere after the text was loaded (another tab, a Telegram approval): it keeps your text and marks it; *Reload policy* fetches the current policy, a second *Save policy* overwrites on purpose. |
 
-### History and rollback
-
-Every change to the policy is kept as a version, whoever made it: the UI (`web:<user>`), the API (`api`),
-an approval on Telegram or Matrix (`telegram:<user>`), a shortcut, the emergency stop, or the gateway itself
-when temporary rules expire (`gateway`). *Rules → History, export and import* lists the versions with time,
-author and what changed.
-
-- **Changes** shows what changed from that version to the current policy: mode and timeout, additional
-  hard-deny ranges, and rules added, removed or changed (compared by rule id). Pick any two versions with
-  *From* and *To* to compare them.
-- **Restore** replaces the current policy with that version (it asks for confirmation). The restore is a new
-  version itself, so it can be undone the same way. Rules of an old version whose time limit has passed are
-  ignored and removed, as always.
-- **Export policy** downloads the policy and the grants defined in the UI as one file, for a new host or as a
-  template to share. Secrets are not in it (they cannot be read back at all), and neither are grants from the
-  gateway config file.
-- **Import policy…** checks the file like a normal policy change and every grant like the grant editor,
-  then shows what would change. *Import* replaces the policy and adds or replaces the UI grants in the file;
-  grants that are not in the file stay. A `hard_deny_floor` or `never` in the file is ignored: the floor comes only from
-  the gateway config file.
-
-The gateway keeps the last `policy_history_keep` (500) versions in `policy-history.db` in its data volume.
+Settings that could hand out secrets (which hosts get credentials, switching off certificate checks) are not
+here: they stay in the gateway config file ([why](access.md#why-some-settings-are-only-in-a-file)).
 
 ## Console
 
@@ -357,7 +401,6 @@ password change runs on the Docker host.
 | Log in to Claude | *Start login* runs `claude auth login` in the agent (tmux session `tg-login`) and shows the link to Anthropic's login page. Sign in there and paste the code it shows. Only links to Anthropic's login pages are shown. Once logged in, the button reads *Log in again*. |
 | Git identity | *Use my GitHub identity* asks GitHub, through the gateway with the stored token, who you are (`gh api user`) and shows the name and the noreply address `<id>+<login>@users.noreply.github.com`; *Save identity* sets them. Without a stored token, or when GitHub refuses it or cannot be reached, it says so and links to the token step. *Enter it yourself* is the fallback. Empty values are never written; a name or address that is set but empty (for example from a `git config` whose `$(…)` failed) is reported as such. |
 | Remote Control | *Enable Remote Control* answers Claude Code's one-time question `Enable Remote Control? (y/n)` with yes, trusts `/workspace` and restarts Remote Control. The step is done when it runs; it also tells you when Remote Control waits for an answer in the *rc* console. Switched off with `RC_ENABLE=0`. |
-| Starting policy | *Ask me* or *Strict* sets what happens with unknown destinations; *Shortcuts* opens them in the Destinations tab. *Learn from a first task* takes you to [learning mode](#learning-mode), the quickest way to a working set of rules: run one task, then keep what it used. |
 | Notifications | One section for every channel (Telegram, Matrix, ntfy, Gotify, Pushover, Web Push). Each row says whether the channel is active, where its settings come from (*web UI* or *environment*) and, when it is off, why. **Configure** on a bot channel opens its settings ([details](#notification-channels-in-the-web-ui)); a **Test** button on each active channel sends a sample notification through just that channel and reports the result. Web Push devices and the [browser-notification permission](#browser-notifications) are set up in the same section. |
 | Isolation self-test | Runs the in-agent self-test. |
 
@@ -443,7 +486,7 @@ notifications on this device**. Each request arrives as a notification:
 Tapping the notification itself opens the approvals. After a decision (from anywhere) the notification is
 replaced by the outcome. The buttons work for at most 10 minutes and once, only on the device they were sent
 to; they need no login, but they cannot do anything except that one decision (see the
-[threat model](threat-model.md), T37). *Remove* stops a device, and a device whose subscription expired is
+[threat model](threat-model.md), T41). *Remove* stops a device, and a device whose subscription expired is
 removed automatically.
 
 Every channel in the **Notifications** section has a **Test** button: it sends a short "tallygate test"
@@ -467,13 +510,16 @@ destinations in plain text, like Telegram does.
 
 | Goal | Rule / setting |
 |---|---|
-| Strict allowlist, no prompts | Mode `deny`; add allow rules for what you need |
-| Everything public allowed, but log it | Mode `allow` (hard deny still protects the LAN) |
-| Allow a package ecosystem | *Rules → Shortcuts → Tool ecosystems* (Python, Node.js, Go, Rust, apt, container registries, Hugging Face) |
-| Allow docs browsing for an hour | *Rules → Shortcuts → Allow web for 1 h* (preset file `open` with TTL `3600`) |
-| Let the agent install Go modules today | *Shortcuts → Tool ecosystems → Go modules → for 1 day → Apply* |
+| Strict allowlist, no prompts | *Settings → Mode*: `deny`; add allow rules for what you need |
+| Everything public allowed, but log it | *Settings → Mode*: `allow` (the built-in blocks still keep the local network closed) |
+| Allow a package ecosystem | *Quick settings → Tool ecosystems* (Python, Node.js, Go, Rust, apt, container registries, Hugging Face) |
+| Allow docs browsing for an hour | *Quick settings → Internet → Allow web for 1 h* (preset file `open` with TTL `3600`) |
+| Let the agent install Go modules today | *Quick settings → Tool ecosystems → Go modules → For 1 day → Allow* |
 | Block a noisy telemetry host quietly | `deny` rule for the host (no more prompts) |
-| Reach a LAN database | `services:` entry with `allow_private: true` in the gateway config (`gateway.yaml`, see [operations](operations.md#with-docker-compose-recommended)) |
+| Always allow one device on the local network | *Destinations → Add rule*: `allow`, *CIDR*, its address, its port ([example](rules.md#a-allow-one-local-device)) |
+| Let the agent use a local device on request | *Quick settings → Local network*, or a grant with paths and levels ([grants.md](grants.md)) |
+| Reach a LAN database from a client that cannot use a proxy | `services:` entry with `allow_private: true` in the gateway config (`gateway.yaml`, see [operations](operations.md#with-docker-compose-recommended)) |
+| Find out why something is blocked | *Destinations → Test a destination*, or the reason in the *Log* |
 | SSH to one external host | Allow `host:22`; add `openssh-client netcat-openbsd` to the agent image (see *Toolchains* below); then `ssh -o ProxyCommand='nc -X connect -x 172.31.10.2:3128 %h %p' host` |
 
 ## Working with the agent

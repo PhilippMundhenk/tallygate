@@ -17,7 +17,7 @@ tallygate puts an AI coding agent (Claude Code with [Remote Control](https://cod
 into a container that has **no route to anything** except a gateway. The gateway decides every outbound
 connection against your policy, **holds unknown connections until you approve them** (in the web UI, on
 Telegram or in Matrix), keeps your GitHub token out of the agent, and logs everything. A control plane gives
-you a web UI with live log, rule editor, browser consoles and a setup wizard.
+you a web UI with live log, the rule list, browser consoles and a setup wizard.
 
 **Why "tallygate"?** On a livestock farm, the tally gate is the narrow gate where animals pass one at a time
 to be counted and inspected before they are let through or sorted out. tallygate does the same with your
@@ -32,10 +32,18 @@ only then let through, turned back, or held for you to decide.
   iptables, no capabilities. Anything that bypasses the proxy simply can't connect.
 - **One policy for every protocol.** HTTP(S) proxy, SOCKS5 and TCP service ports all pass through a single
   enforcement hook. Rules work on domains, globs, CIDRs and ports, with TTLs and one-click shortcuts.
-- **Human in the loop.** `ask` holds the connection while you decide: allow 2 min / 1 h / always / whole
-  domain, deny, or block forever. Concurrent attempts share one prompt.
-- **LAN protection.** A hard deny on resolved IPs (RFC1918, loopback, link-local/metadata, CGNAT, ULA …) that
-  can't be approved away, plus DNS-rebinding protection by pinning to the checked IP.
+- **One ordered rule list, as in other firewalls.** Checked from the top, the first matching rule decides, a
+  default at the end. You can move every rule, and *Test a destination* shows which one decides.
+  [How it decides](docs/rules.md)
+- **Human in the loop.** `ask` holds the connection while you decide: allow for 5 minutes, for a time you
+  choose, or permanently (the host or the whole domain), or deny for a while or permanently. Concurrent
+  attempts share one prompt.
+- **Your local network is closed by default, and you open exactly what you need.** Built-in blocks cover the
+  private ranges, loopback, link-local/metadata, CGNAT and the other special ranges, checked on every address
+  a name resolves to. To reach one device, add an allow rule for its address and port. A rule for a *name*
+  never opens a blocked range, so a public name pointed at your LAN (DNS rebinding) is denied, and the
+  connection is pinned to the address that was checked. The blocks are ordinary rules that you can change;
+  the stack's own networks are locked and cannot be opened by any rule.
 - **Grants for your home network.** Named, time-limited bundles of access, such as "Home Assistant API,
   read-only" or "SSH to the NAS for 30 min". You define them in the config or the UI. The agent asks for one
   with a reason, and you approve, downgrade to read-only, or deny with one tap. The gateway enforces Host,
@@ -44,17 +52,19 @@ only then let through, turned back, or held for you to decide.
 - **Context for decisions.** A prompt shows what Claude Code was running when it asked (reported by a hook,
   secrets redacted, clearly labelled as the agent's claim).
 - **No DNS exfiltration.** The agent's DNS always answers NXDOMAIN, and every attempt is logged. The gateway
-  only resolves a name after the policy or a human allowed it.
+  resolves a name only after the policy or a human allowed it
+  ([the one exception](docs/rules.md#when-a-name-is-resolved)).
 - **Secrets stay out of the agent.** The GitHub token lives in the gateway and is injected in flight, only when
   the CONNECT target and Host match, optionally only for the repositories you list. The agent's own
   credentials for those hosts are stripped, and
   read-only hosts (e.g. the npm registry) refuse uploads.
 - **Operator UI.** An overview of what the agent is doing and what needs you, approvals (with keyboard
-  shortcuts), live log, rules editor with dry-run test, shortcuts, workspace files, browser consoles (Remote
+  shortcuts), live log, the rule list with a dry-run test, quick settings, workspace files, browser consoles (Remote
   Control, bash, claude), and a guided first start that logs in to Claude, takes the git identity from GitHub
   and enables Remote Control without a console. It tells you when a new release is out.
 - **Learning mode.** Let a new task run for 30 minutes with public HTTPS allowed and recorded, then save the
-  destinations it used as rules in one go. The LAN stays blocked; it ends by itself.
+  destinations it used as rules in one go. Your rules and the blocked ranges still decide first; it ends by
+  itself.
 - **Rule usage.** Hit counters per rule, unused rules offered for removal, and a permanent rule suggested when
   you keep approving the same destination temporarily.
 - **Log search and audit export.** Search the whole log by host, kind, action and time range, see new
@@ -147,7 +157,8 @@ Details: [docs/operations.md#from-source](docs/operations.md#from-source)
 | [Operations](docs/operations.md) | Install, upgrade, backup, troubleshooting |
 | [How access works](docs/access.md) | The access model on one page: start here |
 | [User guide](docs/user-guide.md) | UI, approvals, Telegram/Matrix, rule cookbook |
-| [Rules by example](docs/rules.md) | How a connection is decided, with worked examples |
+| [Rules by example](docs/rules.md) | How a destination is decided: the one ordered rule list, built-in blocks, worked examples |
+| [Grants](docs/grants.md) | Access on request: bundles of destinations with levels, paths and a time limit |
 | [Configuration](docs/configuration.md) | All settings, with examples |
 | [API](docs/api.md) | Gateway and control interfaces |
 | [Development](docs/development.md) | Layout, tests, contributing |
@@ -157,7 +168,8 @@ Details: [docs/operations.md#from-source](docs/operations.md#from-source)
 ## Limitations
 
 tallygate is container isolation on a shared kernel, not a microVM. Allowed destinations can still be used
-to move data out, and the agent can *use* (not read) the injected token. See
+to move data out, and the agent can *use* (not read) the injected token. The blocks that keep the agent out
+of your local network are rules: whoever is logged in to the UI can open an address or delete a block. See
 [residual risks](docs/threat-model.md#residual-risks).
 
 ## Contributing and security
