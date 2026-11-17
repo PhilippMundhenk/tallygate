@@ -13,7 +13,7 @@
 
 Users want the agent to work with services on their home network (Home Assistant, Proxmox, a NAS)
 or other sensitive endpoints, sometimes read-only, sometimes with write access, and only while a task needs
-it. Per-connection approvals ([ADR-0004](0004-human-in-the-loop-approvals.md)) are the wrong unit for this:
+it. Per-connection approvals ([ADR-0008](0008-approvals-as-rules-with-ttl.md)) are the wrong unit for this:
 they cannot express "GET only" or "these paths", they prompt for every new host:port, and LAN addresses are
 hard-denied anyway ([ADR-0007](0007-hard-deny-on-resolved-ips-and-pinning.md)).
 

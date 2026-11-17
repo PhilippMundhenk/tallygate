@@ -59,8 +59,8 @@ policy) are `<details class="card">`.
 ## 6. Destructive and security-lowering actions
 
 - Trigger is a `.danger` button; the confirmation is the inline arm-and-confirm (`confirmClick`): the
-  question names the object and the consequence ("Delete grant nas-ssh?", "Unblock 192.168.0.0/16? The agent
-  will be able to reach your local network.").
+  question names the object and the consequence ("Delete grant nas-ssh?", "Delete the block of
+  192.168.0.0/16? The agent will be able to reach these addresses if another rule or the default allows it.").
 - Reversible actions are not confirmed; they offer Undo instead.
 
 ## 7. Status vocabulary
@@ -68,7 +68,7 @@ policy) are `<details class="card">`.
 | Element | Class | Use |
 |---|---|---|
 | Status | `.status.ok / .warn / .bad / .off` | A state word with a dot: **active**, **off**, **waiting**, **failed**, **done**. Colour is never the only signal. |
-| Tag | `.tag` | Neutral attribute: LAN, read, write, config file. |
+| Tag | `.tag` | Neutral attribute: local, read, write, config file. |
 | Count | `.badge` | A number in the menu. |
 | Claim | `.claim-badge` | Agent-written, unverified text. Same badge everywhere. |
 

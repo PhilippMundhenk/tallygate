@@ -155,10 +155,11 @@ Earlier releases had a separate switch for local targets. It is gone; old files 
 |---|---|
 | `lan: true` on a target | Ignored, logged once per target. A target with an IP or a fixed `address` keeps working. A target that is only a name no longer reaches a blocked range: add its `address`. |
 | `grants_lan_allow` in `gateway.yaml` | Ignored, logged once at start. UI grants are no longer limited to listed ranges; delete the key. |
-| `grants_never`, and the `never` scope `all+lan` | Read as plain `never` entries: blocked ranges seeded as rules ([configuration](configuration.md#configgatewayyaml)). |
+| `grants_never`, and the `never` scope `all+lan` | Read as plain `never` entries: blocked ranges seeded as rules. |
 | *This is a device on my local network* in the grant editor | Removed. Nothing to tick: enter the IP, or set *Fixed IP*. |
 
-What the upgrade does to `grants.yaml`: [operations](operations.md#upgrade-to-the-ordered-rule-list).
+Every removed key in one table: [configuration](configuration.md#removed-and-ignored-keys). What the upgrade
+does to `grants.yaml`: [operations](operations.md#upgrade-to-the-ordered-rule-list).
 
 ## Using grants
 
