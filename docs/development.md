@@ -41,6 +41,7 @@
 ├── agent/                    # agent container
 │   ├── Dockerfile            #   Debian + Claude Code + gh (signed repo) + ttyd (checksummed)
 │   ├── entrypoint.sh         #   CA trust, placeholders, tmux/ttyd/Remote Control supervisor
+│   ├── rc-loop.sh            #   restarts Remote Control as the same environment and session
 │   ├── status.py             #   status, isolation self-test and setup actions (agent network)
 │   ├── tallygate-cli.py      #   `tallygate` CLI: list and request grants, request status, notes
 │   ├── tallygate-hook.py     #   PreToolUse hook: reports the running command to the gateway
