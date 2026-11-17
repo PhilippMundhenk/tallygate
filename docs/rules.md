@@ -94,7 +94,9 @@ So, as in other firewalls:
 A catch-all name rule such as `*` (the *Allow web* shortcut is `allow *` on ports 80 and 443) also matches a
 destination given as an IP. It does not change the above: the first address rule that contains the address
 decides, wherever the `*` rule stands, and only when no address rule contains the address does the `*` rule
-decide. So `allow *` never opens a blocked range for an IP either.
+decide. One exception keeps a catch-all `ask` meaningful: when the `*` rule stands above the address rule,
+the more restrictive of the two decides, so `ask *` above `allow 192.0.2.7` still asks. `allow *` never
+opens a blocked range for an IP either.
 
 An IP address typed into the *Host* field of the rule form is stored as an address rule.
 
@@ -167,8 +169,8 @@ They are rules like any other:
   A deleted block **stays deleted** across restarts and upgrades.
 - **A block takes no time limit.** It would be removed when the time is over and, being remembered as added,
   never come back. To open a range for a while, add an allow rule with a time limit above the block.
-- **A block whose action you change** (to `allow` or `ask`) is no longer a block: it is listed as your own
-  rule from then on.
+- **A block whose action you change** (to `allow` or `ask`) or that you narrow to a port is no longer the
+  block it was: it is listed as your own rule from then on.
 - **Restore built-in blocks** (button above the table) adds back, at the bottom, every built-in or config
   block that is no longer in the list as a permanent `deny` for exactly that range on every port. A block you
   narrowed (a port, another action) counts as missing and gets a fresh rule next to it. **It does not close
