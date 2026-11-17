@@ -77,16 +77,19 @@ one filled button), **Allow for … min**, **Allow host permanently** or **Allow
 **Deny for … min** and **Deny permanently**; a grant request offers **Allow read / write for …**,
 **Allow read-only** and **Deny**. The help under the page title says when to use which.
 
-Notifications (Telegram, Matrix, Web Push) offer three choices; **More** shows three further ones.
+Notifications offer the decisions that need no input. Which of them a notification shows, and in which
+order, is a setting: [Notification buttons](#notification-buttons). Without it, Web Push shows **Allow once**
+and **Deny**; Telegram and Matrix show **Allow once**, **Allow host permanently** and **Deny**, and the others
+behind **More**.
 
 | Button | Effect |
 |---|---|
 | Allow once | This host:port for 2 minutes (covers the follow-up connections of one operation) |
-| Always allow | Permanent allow rule for exactly this host:port |
+| Allow for 1 h | This host:port for one hour |
+| Allow host permanently | Permanent allow rule for exactly this host:port |
+| Allow \*.example.com permanently | Permanent allow rule for the registrable domain and all subdomains. The button shows the exact pattern; it is not offered when the name has no registrable domain of its own (e.g. `github.io`, IPs). |
 | Deny | Deny for 2 minutes (the tool gets an error now; asking again later is possible) |
-| *More:* Allow 1 h | This host:port for one hour |
-| *More:* Always (*.example.com) | Permanent allow rule for the registrable domain and all subdomains. The button shows the exact pattern; it is not offered when the name has no registrable domain of its own (e.g. `github.io`, IPs). |
-| *More:* Block forever | Permanent deny rule |
+| Deny permanently | Permanent deny rule |
 
 **Why does the agent want this?** A card can show the agent's recent activity: the command or URL Claude
 Code was about to run when the connection started (`Bash curl … – Fetch the data`), or a note the agent
@@ -410,7 +413,7 @@ password change runs on the Docker host.
 | Log in to Claude | *Start login* runs `claude auth login` in the agent (tmux session `tg-login`) and shows the link to Anthropic's login page. Sign in there and paste the code it shows. Only links to Anthropic's login pages are shown. Once logged in, the button reads *Log in again*. |
 | Git identity | *Use my GitHub identity* asks GitHub, through the gateway with the stored token, who you are (`gh api user`) and shows the name and the noreply address `<id>+<login>@users.noreply.github.com`; *Save identity* sets them. Without a stored token, or when GitHub refuses it or cannot be reached, it says so and links to the token step. *Enter it yourself* is the fallback. Empty values are never written; a name or address that is set but empty (for example from a `git config` whose `$(…)` failed) is reported as such. |
 | Remote Control | *Enable Remote Control* answers Claude Code's one-time question `Enable Remote Control? (y/n)` with yes, trusts `/workspace` and restarts Remote Control. The step is done when it runs; it also tells you when Remote Control waits for an answer in the *rc* console. Switched off with `RC_ENABLE=0`. |
-| Notifications | One section for every channel (Telegram, Matrix, ntfy, Gotify, Pushover, Web Push). Each row says whether the channel is active, where its settings come from (*web UI* or *environment*) and, when it is off, why. **Configure** on a bot channel opens its settings ([details](#notification-channels-in-the-web-ui)); a **Test** button on each active channel sends a sample notification through just that channel and reports the result. Web Push devices and the [browser-notification permission](#browser-notifications) are set up in the same section. |
+| Notifications | One section for every channel (Telegram, Matrix, ntfy, Gotify, Pushover, Web Push). Each row says whether the channel is active, where its settings come from (*web UI* or *environment*) and, when it is off, why. **Configure** on a bot channel opens its settings ([details](#notification-channels-in-the-web-ui)); a **Test** button on each active channel sends a sample notification through just that channel and reports the result. **Notification buttons** chooses the decisions a notification offers ([details](#notification-buttons)). Web Push devices and the [browser-notification permission](#browser-notifications) are set up in the same section. |
 | Isolation self-test | Runs the in-agent self-test. |
 
 ## Telegram approvals
@@ -423,8 +426,9 @@ password change runs on the Docker host.
    Or in `.env`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ALLOWED_USER_IDS=<your from.id>`, then
    `docker compose up -d control`.
 
-Each request arrives with **Allow once**, **Always allow**, **Deny** and **More…**; *More…* adds *Allow 1 h*,
-*Always (\*.domain)* (when the name has a registrable domain) and *Block forever* to the same message. After a
+Each request arrives with **Allow once**, **Allow host permanently**, **Deny** and **More…** (or with the
+[buttons you chose](#notification-buttons)); *More…* shows every decision on the same message: also
+*Allow for 1 h*, *Allow \*.domain permanently* (when the name has a registrable domain) and *Deny permanently*. After a
 decision the message is edited to show the outcome and who decided. Taps from users not in the allowlist are answered with "Not authorised".
 
 ## Matrix approvals
@@ -438,8 +442,9 @@ decision the message is edited to show the outcome and who decided. Taps from us
    `docker compose up -d control`.
 
 Each request is posted as `🔐 #3 Agent wants to connect: host:port …` with three pre-seeded reactions: tap
-👍 allow once, ✅ always allow or 👎 deny. The message lists the others, which you add yourself: ⏰ 1 h,
-🌐 domain, ⛔ block. Or reply `allow 3`, `hour 3`, `always 3`, `domain 3`, `deny 3` or `block 3`. The bot
+👍 allow once, ✅ allow host permanently or 👎 deny (or the reactions of the
+[buttons you chose](#notification-buttons)). The message lists the others, which you add yourself: ⏰ 1 h,
+🌐 domain, ⛔ deny permanently. Or reply `allow 3`, `hour 3`, `always 3`, `domain 3`, `deny 3` or `block 3`. The bot
 confirms the outcome in a reply.
 
 ## Notification channels in the web UI
@@ -468,6 +473,39 @@ environment. Each of them has a **Configure** disclosure with the same fields as
 
 The decision behind this is recorded in [ADR-0018](adr/0018-notification-credentials-stored-by-the-control-plane.md).
 
+### Notification buttons
+
+**Setup → Notifications → Notification buttons** chooses which decisions a connection request offers in a
+notification. Pick one to four of the [six decisions](#approvals) in *Button 1* to *Button 4*, then **Save
+buttons**; the order is the order they are shown in. **Remove override** returns to the default.
+
+| Channel | What it shows |
+|---|---|
+| Web Push | Exactly your buttons. A phone or browser shows as many as it has room for, **two on most platforms**: the first ones in your order. The rest is left out there; tapping the notification opens the approvals with every choice. |
+| Telegram | Your buttons first, then **More…** with every decision. |
+| Matrix | The reactions of your buttons are pre-seeded; the message lists the others, and the text replies all keep working. |
+| ntfy, Gotify, Pushover | No buttons, as before: a link to the UI. |
+
+- **The default is unchanged:** Web Push shows *Allow once* and *Deny*; Telegram and Matrix show *Allow once*,
+  *Allow host permanently* and *Deny* first. Once you save a choice, all three follow it.
+- **A permanent allow from a notification is a bigger decision than *Allow once*:** one tap, also on a lock
+  screen that shows notification buttons, adds a permanent rule. The UI asks before it switches such a button
+  on. Put it first only if you read every request; otherwise keep it in position 3 or 4, or leave it out.
+- ***Allow \*.domain permanently*** always names the pattern on the button (*Allow \*.example.com
+  permanently*) and is left out for a name without a registrable domain of its own.
+- **A request for an IP address can only be denied from a Web Push notification.** Allowing an address adds an
+  address rule on top of the list, which opens it even inside a [blocked range](rules.md); the notification
+  says so and opens the approvals when you tap it. Telegram and Matrix, where only your allowed users can
+  decide, keep every decision.
+- **Switching a button off ends the buttons already sent:** a notification that still shows it answers
+  *Not applied*.
+- Grant requests keep their own buttons (see [below](#phone-approvals-without-a-chat-bot)): write access is
+  never approved from a Web Push notification.
+- The setting is stored with the channel settings (`notify.json` in the control data volume) and has no
+  environment variable. If that volume is not writable, the default stays.
+
+What a tap on a notification button can and cannot do is in the [threat model](threat-model.md) (T41, T47).
+
 ### Browser notifications
 
 While the UI is open in a background tab, new requests also appear as notifications of the browser itself.
@@ -488,7 +526,7 @@ notifications on this device**. Each request arrives as a notification:
 
 | Request | Buttons in the notification |
 |---|---|
-| Connection | **Allow once**, **Deny** |
+| Connection | **Allow once**, **Deny**, or the [buttons you chose](#notification-buttons); for an IP address only the *Deny* buttons |
 | Grant, read level | **Approve read**, **Deny** |
 | Grant, write level | **Approve read-only** (if the grant offers read), **Deny**. Write access needs the UI or a chat bot. |
 

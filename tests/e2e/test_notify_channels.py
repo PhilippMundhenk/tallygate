@@ -49,7 +49,7 @@ def test_matrix_delivers_while_telegram_is_down(gateway, mockbots, control_with,
 
 def test_telegram_delivers_while_matrix_is_down(gateway, mockbots, control_with, outage):
     outage["matrix"] = "error"
-    mockbots.plan = {"telegram": {"scope_label": "Allow 1 h", "user_id": 4242, "chat_id": 777}}
+    mockbots.plan = {"telegram": {"scope_label": "Allow for 1 h", "user_id": 4242, "chat_id": 777}}
     _both(control_with, mockbots)
     port = start_echo()
     status, _ = http_via_proxy(gateway["ports"]["http"], f"http://127.0.0.1:{port}/")

@@ -148,7 +148,7 @@ sequenceDiagram
     G->>G: create pending request (dedupe by host:port, max_pending), hold connection
     G-->>C: SSE event "ask"
     C-->>H: UI card / Telegram buttons / Matrix message
-    H->>C: "Allow 1 h"
+    H->>C: "Allow for 1 h"
     C->>G: POST /pending/{id}/decide {scope: hour, by: telegram:philipp}
     G->>G: insert rule at top (expires in 1 h) · release held connections
     G->>G: resolve · rule list for every resolved IP (a blocked range still denies) · pin IP

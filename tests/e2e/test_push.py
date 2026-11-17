@@ -97,9 +97,10 @@ def test_allow_from_the_notification_without_a_session(gateway, mockbots, ui):
     assert ui.call("GET", "/api/meta")[1]["notify"]["webpush"] is True
 
     port = start_echo()
-    t, res = in_thread(http_via_proxy, gateway["ports"]["http"], f"http://127.0.0.1:{port}/")
+    t, res = in_thread(http_via_proxy, gateway["ports"]["http"], f"http://other.test:{port}/")
     m = phone.wait(lambda m: m.get("tokens") and f":{port} " in m["body"])
-    assert [a["action"] for a in m["actions"]] == ["once", "deny"] and m["url"] == "/#approvals"
+    assert [a["action"] for a in m["actions"]] == ["once", "deny"] and m["url"] == "/#approvals"  # the default
+    assert [a["title"] for a in m["actions"]] == ["Allow once", "Deny"] and sorted(m["tokens"]) == ["deny", "once"]
     h = m["_headers"]
     assert h["Content-Encoding"] == "aes128gcm" and h["Authorization"].startswith("vapid t=") and h["Topic"]
 
@@ -107,11 +108,11 @@ def test_allow_from_the_notification_without_a_session(gateway, mockbots, ui):
     assert act(ui, m["tokens"]["once"], **{"X-Tallygate": ""})[0] == 403
     assert act(ui, m["tokens"]["once"], Origin="https://evil.example")[0] == 403
     status, r, _ = act(ui, m["tokens"]["once"])
-    assert status == 200 and r == {"ok": True, "decision": "once"}
+    assert status == 200 and r == {"ok": True, "decision": "once", "message": "Allowed other.test for 2 min"}
     t.join(10)
     assert res["r"][0] == 200
     _, evs, _ = gateway["api"].call("GET", "/events?limit=20")
-    assert any(e["port"] == port and e["reason"] == "once by push:my phone" for e in evs)
+    assert any(e["port"] == port and e["reason"].endswith("(approved via once)") for e in evs)
     assert act(ui, m["tokens"]["once"])[1]["error"] == "this action was already used"
     assert act(ui, m["tokens"]["deny"])[0] == 409  # already decided
     assert act(ui, "forged.token")[0] == 403
@@ -129,9 +130,138 @@ def test_allow_from_the_notification_without_a_session(gateway, mockbots, ui):
     assert not any(b"tokens" in b for _, b in mockbots.got("ntfy"))
 
 
+# ---------------------------------------------------------------- configurable buttons (#212)
+def ask(gateway, phone, host, port):
+    """Start a request that is held for approval; returns (thread, result, the push message for it)."""
+    t, res = in_thread(http_via_proxy, gateway["ports"]["http"], f"http://{host}:{port}/")
+    return t, res, phone.wait(lambda m: m.get("tokens") is not None and f"{host}:{port} " in m.get("body", ""))
+
+
+def rules(gateway, port):
+    return [r for r in gateway["api"].call("GET", "/policy")[1]["rules"] if r.get("port") == port]
+
+
+def test_the_configured_buttons_arrive_in_order_and_a_permanent_allow_works(gateway, mockbots, ui):
+    phone = Device(mockbots, "buttons")
+    ui.call("POST", "/api/push/subscribe", {"subscription": phone.sub, "label": "pocket"})
+    status, cfg, _ = ui.call("GET", "/api/notify/config")
+    assert status == 200 and cfg["actions"]["value"] == ["once", "deny"] and cfg["actions"]["custom"] is False
+    status, cfg, _ = ui.call("PUT", "/api/notify/actions", {"actions": ["always", "deny_always", "domain", "hour"]})
+    assert status == 200 and cfg["actions"]["custom"] is True
+
+    port = start_echo()
+    t, res, m = ask(gateway, phone, "other.test", port)
+    assert m["actions"] == [
+        {"action": "always", "title": "Allow host permanently"},
+        {"action": "deny_always", "title": "Deny permanently"},
+        {"action": "domain", "title": "Allow *.other.test permanently"},  # the pattern is on the button
+        {"action": "hour", "title": "Allow for 1 h"},
+    ]
+    assert list(m["tokens"]) == ["always", "deny_always", "domain", "hour"]
+    status, r, _ = act(ui, m["tokens"]["always"])
+    assert status == 200 and r == {"ok": True, "decision": "always", "message": "Allowed other.test permanently"}
+    t.join(10)
+    assert res["r"][0] == 200
+    (rule,) = rules(gateway, port)
+    assert rule["action"] == "allow" and rule["host"] == "other.test" and "expires" not in rule
+    assert rule["note"] == "approved via always"
+    done = phone.wait(lambda m: m.get("silent") and "→" in m["body"])
+    assert "allow (always, by push:pocket)" in done["body"]  # attributed to the device
+    for scope in ("always", "deny_always", "domain", "hour"):  # used, or already decided: nothing more happens
+        assert act(ui, m["tokens"][scope])[0] in (403, 409)
+    assert len(rules(gateway, port)) == 1
+    assert http_via_proxy(gateway["ports"]["http"], f"http://other.test:{port}/")[0] == 200  # no new prompt
+
+    # the domain button installs the pattern it names
+    port = start_echo()
+    t, res, m = ask(gateway, phone, "gh.test", port)
+    assert {"action": "domain", "title": "Allow *.gh.test permanently"} in m["actions"]
+    status, r, _ = act(ui, m["tokens"]["domain"])
+    assert status == 200 and r["message"] == "Allowed *.gh.test permanently"
+    t.join(10)
+    (rule,) = rules(gateway, port)
+    assert rule["action"] == "allow" and rule["host"] == "*.gh.test" and "expires" not in rule
+
+    # and a permanent deny denies
+    port = start_echo()
+    t, res, m = ask(gateway, phone, "other.test", port)
+    assert act(ui, m["tokens"]["deny_always"])[1]["message"] == "Denied other.test permanently"
+    t.join(10)
+    assert res["r"][0] == 502  # refused by the gateway
+    (rule,) = rules(gateway, port)
+    assert rule["action"] == "deny" and "expires" not in rule
+    assert ui.call("DELETE", "/api/notify/actions")[1]["actions"]["value"] == ["once", "deny"]
+
+
+def test_a_button_token_cannot_be_widened_and_dies_with_its_button(gateway, mockbots, ui):
+    phone = Device(mockbots, "narrow")
+    ui.call("POST", "/api/push/subscribe", {"subscription": phone.sub, "label": "narrow"})
+    assert ui.call("PUT", "/api/notify/actions", {"actions": ["deny", "always"]})[0] == 200
+    port = start_echo()
+    t, res, m = ask(gateway, phone, "other.test", port)
+    deny, always = m["tokens"]["deny"], m["tokens"]["always"]
+
+    # the claims of the Deny token rewritten to "always", with the Deny signature or with the other token's
+    raw, sig = deny.split(".")
+    pad = "=" * (-len(raw) % 4)
+    import base64
+
+    claims = json.loads(base64.urlsafe_b64decode(raw + pad))
+    assert claims["d"] == "deny" and claims["k"] == "ask"
+    forged = b64u(json.dumps({**claims, "d": "always"}, separators=(",", ":")).encode())
+    for token in (f"{forged}.{sig}", f"{forged}.{always.split('.')[1]}", f"{raw}.{always.split('.')[1]}"):
+        status, r, _ = act(ui, token)
+        assert status == 403 and r == {"error": "invalid action"}
+    assert rules(gateway, port) == []  # nothing was decided
+
+    # the operator switches the permanent allow off: the button that was already sent stops working
+    assert ui.call("PUT", "/api/notify/actions", {"actions": ["deny"]})[0] == 200
+    status, r, _ = act(ui, always)
+    assert status == 403 and "switched off" in r["error"]
+    assert rules(gateway, port) == []
+    # extra fields next to a Deny token do not change what it decides
+    status, r, _ = ui.anon.call("POST", "/api/push/act", {"token": deny, "scope": "always", "decision": "always"})
+    assert status == 200 and r["decision"] == "deny"
+    t.join(10)
+    assert res["r"][0] == 502  # refused by the gateway
+    (rule,) = rules(gateway, port)
+    assert rule["action"] == "deny" and rule.get("expires")
+    # the setting itself needs a session and the CSRF header, and refuses what the gateway would not accept
+    assert ui.anon.call("PUT", "/api/notify/actions", {"actions": ["always"]})[0] == 401
+    status, r, _ = ui.call("PUT", "/api/notify/actions", {"actions": ["always", "allow"]})
+    assert status == 400 and "unknown action" in r["error"]
+    assert ui.call("PUT", "/api/notify/actions", {"actions": []})[0] == 400
+    assert ui.call("GET", "/api/notify/config")[1]["actions"]["value"] == ["deny"]
+
+
+def test_an_ip_literal_can_only_be_denied_from_the_notification(gateway, mockbots, ui):
+    phone = Device(mockbots, "address")
+    ui.call("POST", "/api/push/subscribe", {"subscription": phone.sub, "label": "address"})
+    assert ui.call("PUT", "/api/notify/actions", {"actions": ["always", "once", "deny_always", "deny"]})[0] == 200
+    port = start_echo()
+    t, res, m = ask(gateway, phone, "127.0.0.1", port)
+    assert [a["action"] for a in m["actions"]] == ["deny_always", "deny"]
+    assert sorted(m["tokens"]) == ["deny", "deny_always"] and "IP address: it can only be denied" in m["body"]
+    assert act(ui, m["tokens"]["deny"])[0] == 200
+    t.join(10)
+    assert res["r"][0] == 502  # refused by the gateway
+    assert all(r["action"] == "deny" for r in rules(gateway, port))
+
+    # with only allow buttons chosen the notification has none: tapping it opens the approvals
+    assert ui.call("PUT", "/api/notify/actions", {"actions": ["always", "once"]})[0] == 200
+    port = start_echo()
+    t, res, m = ask(gateway, phone, "127.0.0.1", port)
+    assert m["actions"] == [] and m["tokens"] == {} and m["url"] == "/#approvals"
+    _, pend, _ = gateway["api"].call("GET", "/pending")
+    pid = next(p["id"] for p in pend if p["port"] == port)
+    assert ui.call("POST", f"/api/gw/pending/{pid}/decide", {"scope": "deny"})[0] == 200  # in the UI, as before
+    t.join(10)
+
+
 def test_grant_request_offers_only_read_from_the_notification(gateway, mockbots, ui):
     phone = Device(mockbots, "grantphone")
     ui.call("POST", "/api/push/subscribe", {"subscription": phone.sub, "label": "g"})
+    ui.call("PUT", "/api/notify/actions", {"actions": ["always", "deny_always"]})  # grants keep their own buttons
     status, r, _ = gateway["agent"].call("POST", "/v1/grants/svc/request", {"level": "write", "reason": "push"})
     assert status == 202
     m = phone.wait(lambda m: m.get("tokens") and m["tag"] == f"g{r['id']}")

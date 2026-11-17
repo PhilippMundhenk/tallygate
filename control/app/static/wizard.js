@@ -166,6 +166,60 @@ function notifyConfigForm(c, label) {
   return det;
 }
 
+// #212: which buttons a connection-approval notification offers. One select per position, because the
+// order is what a device with room for two buttons goes by. The server validates and owns the list.
+function renderNotifyActions(cfg) {
+  const form = $("#notifyActions"), a = cfg && cfg.actions;
+  if (!form) return;
+  form.innerHTML = "";
+  $$("#notifyActionsTitle, #notifyActionsTitle + .hint, #notifyActionsTitle + .hint + details").forEach((e) => e.classList.toggle("hidden", !a));
+  if (!a) return;  // an older backend
+  const label = Object.fromEntries(a.choices.map((c) => [c.action, c.label]));
+  $$(".notify-actions-text").forEach((e) => (e.textContent = a.value.map((x) => label[x] || x).join(", ")));
+  const selects = [];
+  for (let i = 0; i < a.max; i++) {
+    const lab = document.createElement("label"); lab.append(`Button ${i + 1}`);
+    const sel = document.createElement("select"); sel.name = `action${i}`; sel.disabled = !cfg.writable;
+    sel.add(new Option(i ? "No button" : "Choose a button", ""));
+    for (const c of a.choices) sel.add(new Option(`${c.label} (${c.effect})`, c.action));
+    sel.value = a.value[i] || "";
+    const small = document.createElement("small");
+    small.textContent = i < 2 ? "Shown on every device with buttons." : "Left out where a device shows two buttons.";
+    lab.append(sel, small); form.appendChild(lab); selects.push(sel);
+  }
+  const state = document.createElement("p"); state.className = "muted notify-actions-state"; state.setAttribute("role", "status");
+  state.textContent = !cfg.writable ? "The control data volume is not writable, so the default buttons stay."
+    : a.custom ? "Saved in the web UI."
+    : "Default. Until you save a choice, Telegram and Matrix also show Allow host permanently first.";
+  const btns = document.createElement("div"); btns.className = "btns";
+  const save = document.createElement("button"); save.type = "submit"; save.className = "small"; save.textContent = "Save buttons";
+  const reset = document.createElement("button"); reset.type = "button"; reset.className = "small secondary"; reset.textContent = "Remove override";
+  reset.setAttribute("aria-label", "Remove the notification buttons saved in the web UI");
+  save.disabled = !cfg.writable; reset.disabled = !cfg.writable || !a.custom;
+  btns.append(save, reset); form.append(state, btns);
+  const picked = () => {
+    const actions = selects.map((s) => s.value).filter(Boolean);
+    if (!actions.length) throw new Error("Choose at least one button");
+    if (new Set(actions).size !== actions.length) throw new Error("Each button can be chosen once");
+    return actions;
+  };
+  const doSave = async () => {
+    await api("PUT", "/api/notify/actions", { actions: picked() });
+    toast("Buttons saved"); await loadWizard();
+  };
+  // A new permanent allow button lowers the protection (one tap, also on a lock screen): confirmed inline.
+  const confirmed = confirmClick(save, "Offer a permanent allow in notifications? One tap then adds a permanent rule, also from a lock screen.", doSave);
+  const lowers = new Set(a.choices.filter((c) => c.confirm).map((c) => c.action));
+  form.onsubmit = guard(async (e) => {
+    e.preventDefault();
+    return picked().some((x) => lowers.has(x) && !a.value.includes(x)) ? confirmed() : doSave();
+  });
+  reset.onclick = guard(async () => {
+    await api("DELETE", "/api/notify/actions");
+    toast("Buttons override removed"); await loadWizard();
+  });
+}
+
 async function notifyTest(c) {
   if (c.channel === "webpush") {
     const r = await api("POST", "/api/push/test", {});
@@ -205,6 +259,7 @@ function renderNotify(meta, ncfg) {
       box.appendChild(item);
     }
   }
+  renderNotifyActions(cfg);
   const active = detail.filter((c) => c.configured).length;
   $$(".notify-status").forEach((e) => (e.textContent = active ? `${active} of ${detail.length} channels active` : "No notification channel is active yet. Configure one below."));
   step("st-notify", active ? "done" : "info", "");

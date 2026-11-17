@@ -14,8 +14,9 @@
     <p class="hint">Approve from your phone without a chat bot: install tallygate there and add the device here.</p>
     <details class="help"><summary>How do phone approvals work?</summary>
       <p>Install tallygate on your phone (browser menu → <i>Add to Home screen</i> / <i>Install app</i>), open it
-        and use <i>Add this device</i>. Each request arrives with <b>Allow once</b> and <b>Deny</b> buttons;
-        tapping the notification opens the approvals.</p></details>
+        and use <i>Add this device</i>. Each connection request arrives with the buttons chosen under
+        <i>Notification buttons</i> above, now <b class="notify-actions-text">Allow once, Deny</b>. A device shows
+        the first ones it has room for (two on most phones); tapping the notification opens the approvals.</p></details>
     <p id="pushUnsupported" class="alert warn hidden" role="note"></p>
     <div class="row wrap" id="pushControls">
       <label class="inline">This device <input id="pushLabel" maxlength="40" placeholder="e.g. phone" autocomplete="off"></label>

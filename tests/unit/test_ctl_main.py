@@ -823,3 +823,175 @@ def test_console_unknown_terminal_and_agent_down(load):
             return msg.type
 
     assert run(body()) in (WSMsgType.CLOSE, WSMsgType.CLOSED)
+
+
+# ---------------------------------------------------------------- notification buttons (#212)
+class Deciding(World):
+    """A gateway that answers a decision with the rule it installed, like the real one."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.status = 200
+
+    async def gw(self, request):
+        body = await request.json() if request.can_read_body else None
+        self.seen.append((request.method, request.path, dict(request.query), body))
+        if self.status != 200:
+            return web.json_response({"error": "no such pending request"}, status=self.status)
+        if "/grant-requests/" in request.path:
+            return web.json_response({"ok": True})
+        allow = body["scope"] in ("once", "hour", "always", "domain")
+        host = "*.example.com" if body["scope"] == "domain" else "api.example.com"
+        return web.json_response({"rule": {"id": "r1", "action": "allow" if allow else "deny", "host": host}})
+
+
+def test_notification_buttons_setting_needs_a_session_and_the_csrf_header(load, notify_env):
+    main = load()
+
+    async def body():
+        async with started(main, login=False) as c:
+            assert (await c.put("/api/notify/actions", json={"actions": ["always"]}, headers=CSRF)).status == 401
+            assert (await c.delete("/api/notify/actions", headers=CSRF)).status == 401
+        async with started(main) as c:
+            assert (await c.put("/api/notify/actions", json={"actions": ["always"]})).status == 403
+            assert (await c.delete("/api/notify/actions")).status == 403
+            evil = {**CSRF, "Origin": "https://evil.example"}
+            assert (await c.put("/api/notify/actions", json={"actions": ["always"]}, headers=evil)).status == 403
+            assert c.app["notifycfg"].actions() == ("once", "deny")
+
+    run(body())
+
+
+def test_notification_buttons_are_saved_validated_and_reset(load, notify_env, tmp_path, caplog):
+    main = load()
+
+    async def body():
+        async with started(main) as c:
+            data = await (await c.get("/api/notify/config")).json()
+            assert data["actions"]["value"] == ["once", "deny"] and data["actions"]["custom"] is False
+            assert data["actions"]["max"] == 4 and len(data["actions"]["choices"]) == 6
+            with caplog.at_level(logging.INFO, logger="control"):
+                r = await c.put("/api/notify/actions", json={"actions": ["deny_always", "always"]}, headers=CSRF)
+            data = await r.json()
+            assert r.status == 200 and data["ok"] is True and "channels" in data
+            assert data["actions"]["value"] == ["deny_always", "always"] and data["actions"]["custom"] is True
+            assert "notification buttons: deny_always, always saved by admin" in caplog.text
+            stored = json.loads((tmp_path / "data" / "notify.json").read_text())
+            assert stored["ask_actions"] == ["deny_always", "always"]
+            for bad in (
+                {"actions": ["always", "bogus"]},
+                {"actions": ["allow"]},
+                {"actions": []},
+                {"actions": ["once", "hour", "always", "domain", "deny"]},
+                {"actions": ["deny", "deny"]},
+                {"actions": "always"},
+                {},
+                ["always"],
+            ):
+                r = await c.put("/api/notify/actions", json=bad, headers=CSRF)
+                assert r.status == 400 and (await r.json())["error"].startswith("actions: "), bad
+            r = await c.put(
+                "/api/notify/actions", data=b"{not json", headers={**CSRF, "Content-Type": "application/json"}
+            )
+            assert r.status == 400
+            assert c.app["notifycfg"].actions() == ("deny_always", "always")  # a refused request changes nothing
+            r = await c.delete("/api/notify/actions", headers=CSRF)
+            data = await r.json()
+            assert r.status == 200 and data["removed"] is True and data["actions"]["value"] == ["once", "deny"]
+            assert (await (await c.delete("/api/notify/actions", headers=CSRF)).json())["removed"] is False
+            c.app["notifycfg"].writable = False
+            r = await c.put("/api/notify/actions", json={"actions": ["always"]}, headers=CSRF)
+            assert r.status == 503 and "not writable" in (await r.json())["error"]
+            c.app["notifycfg"].ask_actions = ["deny"]
+            assert (await c.delete("/api/notify/actions", headers=CSRF)).status == 503
+
+    run(body())
+
+
+def test_a_notification_button_decides_exactly_what_its_token_says(load, notify_env):
+    main = load()
+
+    async def body():
+        world = Deciding()
+        async with started(main, world, login=False) as c:  # no session: like a phone after it expired
+            push, cfg = c.app["webpush"], c.app["notifycfg"]
+            push.subs.append({"id": "dev1", "label": "phone", "endpoint": "https://fcm.googleapis.com/x"})
+            exp = time.time() + 60
+
+            async def act(token, **extra):
+                r = await c.post("/api/push/act", json={"token": token, **extra}, headers=CSRF)
+                return r.status, await r.json()
+
+            # a Deny token with everything a client could add to ask for more: it still only denies
+            deny = push.mint("ask", "abc123", "deny", "dev1", exp)
+            status, data = await act(deny, scope="always", decision="always", action="always", d="always", ttl=99999)
+            assert status == 200 and data == {
+                "ok": True,
+                "decision": "deny",
+                "message": "Denied api.example.com for 2 min",
+            }
+            assert world.seen == [("POST", "/gw/pending/abc123/decide", {}, {"scope": "deny", "by": "push:phone"})]
+            assert (await act(deny))[1] == {"error": "this action was already used"}
+
+            # a permanent allow is refused while its button is not switched on, and the gateway is not asked
+            always = push.mint("ask", "abc123", "always", "dev1", exp)
+            domain = push.mint("ask", "abc123", "domain", "dev1", exp)
+            status, data = await act(always)
+            assert status == 403 and "switched off" in data["error"] and len(world.seen) == 1
+            # no session and no CSRF header, or a foreign origin: refused before the token is looked at
+            assert (await c.post("/api/push/act", json={"token": always})).status == 403
+            evil = {**CSRF, "Origin": "https://evil.example"}
+            assert (await c.post("/api/push/act", json={"token": always}, headers=evil)).status == 403
+
+            cfg.set_actions(["always", "domain", "deny_always", "hour"])
+            status, data = await act(always)
+            assert status == 200 and data["message"] == "Allowed api.example.com permanently"
+            assert world.seen[-1][3] == {"scope": "always", "by": "push:phone"}
+            assert (await act(always))[0] == 403  # replay
+            status, data = await act(domain)
+            assert (status, data["decision"], data["message"]) == (200, "domain", "Allowed *.example.com permanently")
+            hour = push.mint("ask", "abc123", "hour", "dev1", exp)
+            assert (await act(hour))[1]["message"] == "Allowed api.example.com for 1 h"
+            block = push.mint("ask", "abc123", "deny_always", "dev1", exp)
+            assert (await act(block))[1]["message"] == "Denied api.example.com permanently"
+
+            # switching a button off ends the buttons that were already sent
+            late = push.mint("ask", "abc123", "always", "dev1", exp)
+            cfg.set_actions(["deny"])
+            assert (await act(late))[0] == 403
+            cfg.reset_actions()
+            once = push.mint("ask", "abc123", "once", "dev1", exp)
+            assert (await act(once))[1]["message"] == "Allowed api.example.com for 2 min"
+
+            # a signed token for a request id that is not one is refused, as before
+            assert (await act(push.mint("ask", "../policy", "deny", "dev1", exp)))[0] == 403
+            assert (await act("forged.token"))[1] == {"error": "invalid action"}
+            assert (await act(None))[0] == 403 and (await c.post("/api/push/act", json=[1], headers=CSRF)).status == 403
+
+            # grants: their own decisions and texts
+            status, data = await act(push.mint("grant", "ab12", "read", "gone", exp))
+            assert status == 200 and data["message"] == "Approved"
+            assert world.seen[-1] == (
+                "POST",
+                "/gw/grant-requests/ab12/decide",
+                {},
+                {"decision": "read", "by": "push:removed device"},
+            )
+            assert (await act(push.mint("grant", "ab12", "deny", "dev1", exp)))[1]["message"] == "Denied"
+
+            # the gateway no longer knows the request, or cannot be reached
+            world.status = 404
+            status, data = await act(push.mint("ask", "abc123", "deny", "dev1", exp))
+            assert status == 409 and data["error"] == "already decided or expired"
+            main.GW_URL = "http://127.0.0.1:1"
+            assert (await act(push.mint("ask", "abc123", "deny", "dev1", exp)))[0] == 502
+
+    run(body())
+
+
+def test_done_text_survives_an_unexpected_gateway_answer(load):
+    main = load()
+    assert main._done_text("ask", "always", None) == "Allowed permanently"
+    assert main._done_text("ask", "deny", {"rule": "x"}) == "Denied for 2 min"
+    assert main._done_text("ask", "always", {"rule": {"cidr": "192.0.2.7/32"}}) == "Allowed 192.0.2.7/32 permanently"
+    assert main._done_text("ask", "once", {"rule": {"host": "a\nb.example"}}) == "Allowed ab.example for 2 min"

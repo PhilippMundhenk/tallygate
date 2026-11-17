@@ -263,3 +263,125 @@ def test_unknown_and_non_text_entries_in_the_file_are_ignored(store, tmp_path):
         json.dumps({"channels": {"ntfy": {"url": "https://n/t", "token": 5, "extra": "x"}, "other": {"a": "b"}}})
     )
     assert store().overrides == {"ntfy": {"url": "https://n/t"}}
+
+
+# ---------------------------------------------------------------- notification buttons (#212)
+def test_the_default_buttons_are_allow_once_and_deny(store):
+    cfg = store()
+    assert cfg.actions() == ("once", "deny") and cfg.ask_actions is None
+    pub = cfg.public_actions()
+    assert pub["value"] == ["once", "deny"] and pub["default"] == ["once", "deny"] and pub["custom"] is False
+    assert pub["max"] == notifyconfig.MAX_ASK_ACTIONS == 4
+    assert [c["action"] for c in pub["choices"]] == ["once", "hour", "always", "domain", "deny", "deny_always"]
+    by = {c["action"]: c for c in pub["choices"]}
+    assert by["always"] == {
+        "action": "always",
+        "label": "Allow host permanently",
+        "effect": "a permanent allow rule for exactly this destination",
+        "kind": "allow",
+        "confirm": True,
+    }
+    assert [a for a, c in by.items() if c["confirm"]] == ["always", "domain"]  # the permanent allows
+    assert [a for a, c in by.items() if c["kind"] == "deny"] == ["deny", "deny_always"]
+
+
+def test_the_buttons_are_the_scopes_the_gateway_accepts_without_input():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gateway"))
+    from egressgw.policy import SCOPES
+
+    assert set(notifyconfig.ASK_ACTIONS) == set(SCOPES) - {"allow"}  # `allow` needs a duration: UI only
+    for action, (_, _, kind) in notifyconfig.ASK_ACTIONS.items():
+        assert SCOPES[action][0] == kind  # a button labelled Deny never allows, and the other way round
+
+
+def test_chosen_buttons_keep_their_order_and_survive_a_restart(store, tmp_path):
+    cfg = store()
+    assert cfg.set_actions(["deny_always", "always", "once"]) == ["deny_always", "always", "once"]
+    assert cfg.actions() == ("deny_always", "always", "once") and cfg.public_actions()["custom"] is True
+    path = tmp_path / "data" / "notify.json"
+    assert json.loads(path.read_text())["ask_actions"] == ["deny_always", "always", "once"]
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert NotifyConfig(path).actions() == ("deny_always", "always", "once")
+    # saving or removing a channel keeps the buttons, and saving the buttons keeps the channels
+    cfg.update("ntfy", {"url": "https://ntfy.example.org/t"})
+    cfg.set_actions(["deny"])
+    cfg.remove("gotify")
+    again = NotifyConfig(path)
+    assert again.actions() == ("deny",) and again.effective("ntfy")["url"] == "https://ntfy.example.org/t"
+    cfg.remove("ntfy")
+    assert NotifyConfig(path).actions() == ("deny",)
+
+
+def test_removing_the_chosen_buttons_returns_to_the_default(store, tmp_path):
+    cfg = store()
+    assert cfg.reset_actions() is False  # nothing saved: nothing written
+    assert not (tmp_path / "data" / "notify.json").exists()
+    cfg.set_actions(["always"])
+    assert cfg.reset_actions() is True
+    assert cfg.actions() == ("once", "deny") and cfg.ask_actions is None
+    assert "ask_actions" not in json.loads((tmp_path / "data" / "notify.json").read_text())
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (None, "expected a list"),
+        ("once", "expected a list"),
+        ({"once": True}, "expected a list"),
+        (["once", 1], "expected a list"),
+        ([], "choose 1 to 4"),
+        (["once", "hour", "always", "domain", "deny"], "choose 1 to 4"),
+        (["once", "allow"], "unknown action 'allow'"),  # the free duration of the Approvals tab
+        (["once", "everything"], "unknown action 'everything'"),
+        (["Once"], "unknown action"),
+        (["deny", "deny"], "each button can be chosen once"),
+    ],
+)
+def test_bad_button_lists_are_refused_and_nothing_is_stored(store, tmp_path, value, message):
+    cfg = store()
+    cfg.set_actions(["deny"])
+    with pytest.raises(ConfigError, match=message):
+        cfg.set_actions(value)
+    assert cfg.actions() == ("deny",) and NotifyConfig(tmp_path / "data" / "notify.json").actions() == ("deny",)
+
+
+def test_an_unknown_action_is_not_echoed_at_length(store):
+    with pytest.raises(ConfigError) as e:
+        store().set_actions(["x" * 500])
+    assert len(str(e.value)) < 200
+
+
+@pytest.mark.parametrize("stored", [["always", "bogus"], "always", [], ["once"] * 2, None, ["a", "b", "c", "d", "e"]])
+def test_invalid_stored_buttons_mean_the_default_never_more(store, tmp_path, caplog, stored):
+    path = tmp_path / "data" / "notify.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({"version": 1, "channels": {"ntfy": {"url": "https://n.example.org/t"}}, "ask_actions": stored})
+    )
+    with caplog.at_level(logging.ERROR, logger="notify"):
+        cfg = store()
+    assert cfg.actions() == ("once", "deny") and cfg.ask_actions is None
+    assert "notification buttons" in caplog.text and "using the default" in caplog.text
+    assert cfg.effective("ntfy")["url"] == "https://n.example.org/t"  # the channels are still read
+
+
+def test_buttons_cannot_be_saved_on_an_unwritable_volume(store, monkeypatch):
+    cfg = store()
+    cfg.set_actions(["deny"])
+    cfg.writable = False
+    with pytest.raises(ReadOnlyError):
+        cfg.set_actions(["always"])
+    with pytest.raises(ReadOnlyError):
+        cfg.reset_actions()
+    assert cfg.actions() == ("deny",)
+    env_only = NotifyConfig(None)
+    assert env_only.actions() == ("once", "deny")
+    with pytest.raises(ReadOnlyError):
+        env_only.set_actions(["deny"])
+
+
+def test_the_domain_button_names_its_pattern():
+    assert notifyconfig.ask_label("domain", "example.com") == "Allow *.example.com permanently"
+    assert notifyconfig.ask_label("domain") == "Allow *.domain permanently"  # the name of the choice in Settings
+    assert notifyconfig.ask_label("always", "example.com") == "Allow host permanently"
+    assert notifyconfig.ask_label("deny_always", "example.com") == "Deny permanently"

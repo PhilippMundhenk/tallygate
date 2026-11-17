@@ -102,6 +102,22 @@ earlier entry ends with *Replaced in this release*. The state you get:
 - CI: actions pinned to commit SHAs, base images by digest, gitleaks secret scan, Trivy image scan (#18).
 
 ### Added
+- **Notification buttons are configurable** (#212): *Setup → Notifications → Notification buttons* chooses
+  which decisions a connection request offers in a notification and in which order: one to four of *Allow
+  once*, *Allow for 1 h*, *Allow host permanently*, *Allow \*.domain permanently*, *Deny* and *Deny
+  permanently* ([user guide](docs/user-guide.md#notification-buttons)). The default is what it was (*Allow
+  once*, *Deny*), so nothing changes until you save a choice.
+  - Web Push shows exactly the chosen buttons; a device shows the first ones it has room for (two on most
+    platforms, `Notification.maxActions`) and opens the approvals on a tap. Telegram and Matrix show the chosen
+    buttons first and keep every decision behind *More*.
+  - Every button still carries its own single-use action token, and the decision is part of the signed token:
+    a *Deny* button cannot allow. A token whose button was switched off since is refused. *Allow \*.domain
+    permanently* shows its pattern and is only offered for a name with a registrable domain. Switching on a
+    permanent allow is confirmed (threat model T47).
+  - API: `PUT` / `DELETE /api/notify/actions`; `GET /api/notify/config` reports the setting; `POST
+    /api/push/act` also returns the text the notification then shows. The setting is stored in `notify.json`
+    ([ADR-0018](docs/adr/0018-notification-credentials-stored-by-the-control-plane.md), amended); there is no
+    environment variable.
 - **Test and status for every notification channel** (#180): *Setup → Notifications* is now one section (the
   wizard step and the old standalone card are folded together). Each channel (Telegram, Matrix, ntfy, Gotify,
   Pushover, Web Push) shows whether it is active and, when off, why — e.g. the environment variables still to
@@ -242,6 +258,14 @@ earlier entry ends with *Replaced in this release*. The state you get:
   prefix (#116).
 
 ### Changed
+- **Notification buttons use the words of the Approvals tab** (#212): in Telegram, Matrix and Web Push
+  *Always allow* is now *Allow host permanently*, *Always (\*.domain)* is *Allow \*.domain permanently*,
+  *Allow 1 h* is *Allow for 1 h* and *Block forever* is *Deny permanently*. What they do, the Matrix reactions
+  and the text replies (`allow`, `hour`, `always`, `domain`, `deny`, `block`) are unchanged.
+- **A request for an IP address can only be denied from a Web Push notification** (#212). It used to offer
+  *Allow once* as well. Allowing an address adds an address rule on top of the list, which opens it even
+  inside a blocked range, so that is decided in the UI (the notification says so and opens the approvals) or
+  in Telegram / Matrix.
 - **One ordered rule list, first match wins** ([ADR-0019](docs/adr/0019-one-ordered-rule-list.md), #208):
   the policy is evaluated like other firewalls do it. A destination given as an IP address is decided by the
   list from the top: the first rule for an address that contains it decides. A destination given by name
