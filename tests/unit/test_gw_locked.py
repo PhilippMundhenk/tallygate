@@ -373,6 +373,65 @@ def test_a_pre_0019_policy_file_is_migrated_once_with_a_backup_and_a_log(make, t
     assert g2.events.recent(1, kind=["admin"])[0]["id"] == ev["id"]
 
 
+def test_the_migration_names_the_grant_targets_that_start_working(make, tmp_path, caplog):
+    """A grant target that names an address inside a blocked range and had no `lan` flag was refused before
+    and is reachable through its grant now: said in the container log and in the migration's admin event."""
+    grants = {
+        "nolan": {"targets": [{"host": "192.168.1.7", "port": 22, "scheme": "tcp"}], "levels": ["write"]},
+        "waslan": {"targets": [{"host": "192.168.1.8", "port": 22, "scheme": "tcp", "lan": True}], "levels": ["write"]},
+        "pinned": {"targets": [{"host": "nas.example", "port": 443, "address": "10.0.0.9"}], "approval": "auto"},
+        "byname": {"targets": [{"host": "printer.example", "port": 631, "scheme": "http"}]},
+        "open": {"targets": [{"host": "169.254.169.254", "port": 80, "scheme": "http"}]},
+    }
+    old = {
+        "default": "ask",
+        "floor_open": ["169.254.0.0/16"],
+        "rules": [{"id": "ok", "action": "allow", "host": "ok.example"}],
+    }
+    with caplog.at_level(logging.WARNING, "egressgw"):
+        g = make(config={"grants": grants}, text=yaml.safe_dump(old))
+    nolan = (
+        "NOTE grant nolan: target 192.168.1.7:22 names the address 192.168.1.7 inside blocked range 192.168.0.0/16. "
+        "It was refused before; now it is reachable while the grant is active. Delete the target if that is not wanted"
+    )
+    pinned = (
+        "NOTE grant pinned: target nas.example:443 names the address 10.0.0.9 inside blocked range 10.0.0.0/8. "
+        "It was refused before; now it is reachable while the grant is active (approval for read is automatic). "
+        "Delete the target if that is not wanted"
+    )
+    reason = g.events.recent(1, kind=["admin"])[0]["reason"]
+    assert reason == (
+        "policy.yaml migrated to one ordered rule list (ADR-0019): not blocked, as before (floor_open): "
+        f"169.254.0.0/16; {nolan}; {pinned}"
+    )
+    assert f"grants: {nolan}" in caplog.text and f"grants: {pinned}" in caplog.text
+    for name in ("waslan", "byname", "open"):  # had `lan`; only a name; in a range that was open
+        assert f"NOTE grant {name}" not in reason and f"NOTE grant {name}" not in caplog.text
+    # the note is true: through the active grant the address is reachable now
+    assert "rule block-192.168.0.0_16" in connect(g, "192.168.1.7", 22)[0]
+    g.grants.activate("nolan", "write", 600, "", "t")
+    assert connect(g, "192.168.1.7", 22)[0] is None
+    # the next start has nothing to migrate and says nothing
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, "egressgw"):
+        g2 = core.Gateway()
+    assert "NOTE grant" not in caplog.text and g2.events.recent(1, kind=["admin"])[0]["reason"] == reason
+
+
+def test_a_start_without_the_stacks_networks_is_an_error_in_the_log(make, monkeypatch, caplog):
+    monkeypatch.setenv("GW_INTERNAL_NETS", "")
+    with caplog.at_level(logging.WARNING, "egressgw"):
+        g = make(policy={"default": "allow", "seeded": [], "rules": []})
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1 and errors[0].startswith("GW_INTERNAL_NETS is empty: no network of the stack is locked.")
+    assert g.policy.locked_nets == []
+    # what the message warns of: only the block stands in the way, and it can be deleted
+    assert "rule block-172.16.0.0_12" in connect(g, CONTROL, 8080)[0]
+    assert admin(g, "DELETE", "/destinations/block-172.16.0.0_12")[0] == 200
+    assert connect(g, CONTROL, 8080)[0] is None
+    assert ":8081 is the gateway itself" in connect(g, GW_API, 8081)[0]  # the own listeners stay locked
+
+
 def test_a_pre_0014_file_goes_through_both_migrations(make, tmp_path):
     old = {
         "default": "deny",

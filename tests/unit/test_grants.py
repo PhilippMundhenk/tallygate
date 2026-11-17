@@ -217,6 +217,76 @@ def test_a_grant_that_names_the_stack_itself_is_refused_when_it_is_saved(tmp_pat
     assert g.upsert_ui("cam", {"targets": [{**cam, "address": "192.168.5.2"}]})  # port 80 there is not the listener
 
 
+def test_an_empty_gw_internal_nets_is_an_error_in_the_log(tmp_path, monkeypatch, caplog):
+    """Without the stack's networks nothing is locked: only the built-in blocks stand between the agent and the
+    control plane, and those can be deleted. compose.yaml sets it; a start without it must be loud."""
+    for value in ("", " ", ","):
+        monkeypatch.setenv("GW_INTERNAL_NETS", value)
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, "egressgw"):
+            g = make(tmp_path)
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert g.internal == [] and len(errors) == 1, value
+        assert errors[0].getMessage().startswith("GW_INTERNAL_NETS is empty: no network of the stack is locked.")
+        assert "Set it to the stack's networks (compose.yaml does)" in errors[0].getMessage()
+    monkeypatch.delenv("GW_INTERNAL_NETS")
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, "egressgw"):
+        make(tmp_path)
+    assert "GW_INTERNAL_NETS is empty" in caplog.text  # not set at all: the same
+    monkeypatch.setenv("GW_INTERNAL_NETS", "172.31.11.0/24")
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, "egressgw"):
+        g = make(tmp_path)
+    assert [str(n) for n in g.internal] == ["172.31.11.0/24"] and "GW_INTERNAL_NETS" not in caplog.text
+
+
+def test_local_notes_name_the_address_targets_that_start_working_with_the_upgrade(tmp_path):
+    """Before ADR-0019 a grant target inside a blocked range was refused unless it carried `lan`. Now a target
+    that names an address is an address rule at the top: one stored WITHOUT `lan` starts working. The
+    operator is told which ones; nothing is changed."""
+    from egressgw.policy import Policy, Rule, builtin_blocks
+
+    grants = {
+        "was-lan": {"targets": [{"host": "192.168.1.7", "port": 22, "scheme": "tcp", "lan": True}], "levels": ["write"]},
+        "no-lan": {"targets": [{"host": "192.168.1.8", "port": 22, "scheme": "tcp"}], "levels": ["write"]},
+        "pin-lan": {"targets": [{"host": "nas.example", "port": 443, "address": "10.0.0.9", "lan": True}]},
+        "pin-no-lan": {"targets": [{"host": "nas2.example", "port": 443, "address": "10.0.0.10"}], "approval": "auto"},
+        "name": {"targets": [{"host": "printer.example", "port": 631}]},  # only a name: cannot open a range
+        "public": {"targets": [{"host": "140.82.112.3", "port": 22, "scheme": "tcp"}], "levels": ["write"]},
+        "mixed": {"targets": [{"host": "192.168.1.9", "port": 80, "scheme": "http", "lan": True},
+                              {"host": "192.168.1.9", "port": 81, "scheme": "http"}]},
+    }  # fmt: skip
+    g = Grants({"grants": grants}, tmp_path)
+    p = Policy()
+    p.seed_blocks(builtin_blocks(), [])
+    notes = g.local_notes(p)
+    assert notes == [
+        "NOTE grant no-lan: target 192.168.1.8:22 names the address 192.168.1.8 inside blocked range 192.168.0.0/16. "
+        "It was refused before; now it is reachable while the grant is active. Delete the target if that is not wanted",
+        "NOTE grant pin-no-lan: target nas2.example:443 names the address 10.0.0.10 inside blocked range 10.0.0.0/8. "
+        "It was refused before; now it is reachable while the grant is active (approval for read is automatic). "
+        "Delete the target if that is not wanted",
+        "NOTE grant mixed: target 192.168.1.9:81 names the address 192.168.1.9 inside blocked range 192.168.0.0/16. "
+        "It was refused before; now it is reachable while the grant is active. Delete the target if that is not wanted",
+    ]
+    assert set(g.defs) == set(grants) and g.local_notes(p) == notes  # it reports, it changes nothing
+    # where the range is not blocked (the operator had opened it, or allows the address above the block) the
+    # target was not refused before: nothing to say
+    p.remove_rule("block-192.168.0.0_16")
+    p.add_rule(Rule(action="allow", cidr="10.0.0.10/32", id="open"))
+    assert g.local_notes(p) == []
+    # a UI grant from grants.yaml is told apart the same way
+    (tmp_path / "ui").mkdir()
+    ui = {"cam": {"targets": [{"host": "192.168.1.20", "port": 80, "scheme": "http"}]},
+          "cam2": {"targets": [{"host": "192.168.1.21", "port": 80, "scheme": "http", "lan": True}]}}  # fmt: skip
+    (tmp_path / "ui" / "grants.yaml").write_text(yaml.safe_dump(ui))
+    g = Grants({}, tmp_path / "ui")
+    p = Policy()
+    p.seed_blocks(builtin_blocks(), [])
+    assert [n.split(":")[0] for n in g.local_notes(p)] == ["NOTE grant cam"]
+
+
 def test_own_listeners_and_internal_nets_from_the_environment(tmp_path, monkeypatch):
     for var in ("GW_INTERNAL_NETS", "GW_API_HOST", "GW_API_PORT", "GW_LISTEN_HOST"):
         monkeypatch.delenv(var, raising=False)

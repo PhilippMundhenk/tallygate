@@ -23,13 +23,16 @@ from egressgw.policy import (
     Rule,
     block_id,
     builtin_blocks,
+    embedded_v4,
     is_pre_0019,
+    locked_reason,
     migrate,
     policy_from_any,
     ports_within,
 )
 
 BUILTIN = builtin_blocks()
+SEEDED = ("builtin", "config")
 LAN16 = block_id("192.168.0.0/16")  # block-192.168.0.0_16
 TEN8 = block_id("10.0.0.0/8")
 
@@ -145,6 +148,23 @@ CASES = [
      PUBLIC, 443, [PUBLIC], "allow", "any"),
     ("literal, private, wildcard name rule: still blocked", [allow("any", host="*", port=[80, 443])], "deny",
      "192.168.1.1", 443, ["192.168.1.1"], "deny", LAN16),
+    # --- below a `*` name rule the first address rule that contains the literal decides, whatever its action
+    ("literal below a wildcard allow: the address allow decides", [allow("any", host="*", port=443), allow("dev", cidr="192.168.44.1/32", port=443)], "ask",
+     "192.168.44.1", 443, [], "allow", "dev"),
+    ("... its neighbour is in the block", [allow("any", host="*", port=443), allow("dev", cidr="192.168.44.1/32", port=443)], "ask",
+     "192.168.44.2", 443, [], "deny", LAN16),
+    ("... an address ask below it asks", [allow("any", host="*"), ask("q", cidr=PUBLIC + "/32")], "deny",
+     PUBLIC, 443, [], "ask", "q"),
+    ("... an address deny below it blocks", [allow("any", host="*"), deny("b", cidr=PUBLIC + "/32"), allow("late", cidr=PUBLIC + "/32")], "allow",
+     PUBLIC, 443, [], "deny", "b"),
+    ("... the first of two decides", [ask("any", host="*"), allow("a", cidr="192.168.1.0/24"), deny("late", cidr="192.168.1.30/32")], "deny",
+     "192.168.1.30", 443, [], "allow", "a"),
+    ("... on its port only: elsewhere the wildcard stands", [allow("any", host="*"), ask("q", cidr=PUBLIC + "/32", port=22)], "deny",
+     PUBLIC, 443, [], "allow", "any"),
+    ("a wildcard deny is final for a literal too", [deny("none", host="*"), allow("dev", cidr="192.168.44.1/32")], "allow",
+     "192.168.44.1", 443, [], "deny", "none"),
+    ("an address rule above the wildcard is simply the first match", [allow("dev", cidr="192.168.44.1/32"), deny("none", host="*")], "allow",
+     "192.168.44.1", 443, [], "allow", "dev"),
     ("literal with no addresses passed: the literal itself is checked", [], "allow",
      "10.1.2.3", 22, [], "deny", TEN8),
     ("IPv6 literal in brackets", [], "allow",
@@ -284,6 +304,64 @@ def test_every_built_in_range_is_blocked_once_seeded():
     assert p.evaluate("x.example", 443, [PUBLIC]).action == "allow"
 
 
+def test_an_ip_literal_below_a_catch_all_name_rule_is_decided_by_its_address_rule():
+    """A `*` rule is a statement about names. Below it the first address rule that contains an IP literal
+    decides - allow, ask or deny - and a deny keeps the reason that names both rules."""
+    rules = [allow("any", host="*", port=443), allow("dev", cidr="192.168.44.1/32", port=443)]
+    p = policy(rules)
+    d = p.evaluate("192.168.44.1", 443, ["192.168.44.1"])
+    assert (d.action, d.rule_id, d.reason, d.shadow) == ("allow", "dev", "rule dev", None)
+    d = p.evaluate("192.168.44.2", 443, [])
+    assert (d.action, d.rule_id) == ("deny", LAN16)
+    assert d.shadow == {"rule": "any", "address": "192.168.44.2", "by": LAN16, "range": "192.168.0.0/16"}
+    assert d.reason == (
+        "name allowed by rule any, but the address 192.168.44.2 is inside blocked range 192.168.0.0/16 "
+        f"(rule {LAN16}): add an allow for the address above that rule"
+    )
+    assert p.evaluate("192.168.44.1", 80, []).rule_id == LAN16  # the wildcard is for 443: the block is the first match
+    # a name is not touched by this: the wildcard allows it by name, the address rules say what is open
+    assert p.evaluate("x.example", 443, ["192.168.44.1"]).rule_id == "any"
+    assert p.evaluate("x.example", 443, ["192.168.44.2"]).shadow["rule"] == "any"
+    # what `covered_by` reports as never reached is never reached by a literal below a wildcard either
+    p = policy([allow("any", host="*"), allow("lan", cidr="192.168.1.0/24"), deny("late", cidr="192.168.1.30/32")])
+    assert p.covered_by(p.rules[2]).id == "lan"
+    assert (
+        p.evaluate("192.168.1.30", 443, []).rule_id == "lan"
+        and p.evaluate("x.example", 443, ["192.168.1.30"]).action == "allow"
+    )
+
+
+def test_blocked_by_is_the_first_address_rule_with_allow_or_deny():
+    """What blocks an address that only a name stands for (a name-only grant target): the first address rule
+    with allow or deny that contains it, if that is a deny. Address `ask` rules are skipped."""
+    p = policy(
+        [
+            ask("q", cidr="192.168.1.0/24"),
+            allow("dev", cidr="192.168.1.50/32", port=631),
+            deny("cam", cidr="8.8.8.8/32"),
+        ]
+    )
+    assert p.blocked_by("192.168.1.50", 631) is None  # the allow above the block opens the address ...
+    assert p.blocked_by("192.168.1.50", 80).id == LAN16  # ... on its port
+    assert p.blocked_by("192.168.1.51", 631).id == LAN16  # the ask above the block opens nothing
+    assert p.blocked_by("8.8.8.8", 53).id == "cam" and p.blocked_by("8.8.4.4", 53) is None
+    assert p.blocked_by("::ffff:192.168.1.51", 631).id == LAN16
+    # the order of the two decides; an expired rule is no rule
+    p = policy([deny("cam", cidr="192.168.1.48/29"), allow("dev", cidr="192.168.1.50/32")])
+    assert p.blocked_by("192.168.1.50", 631).id == "cam"
+    p = policy([{**allow("old", cidr="192.168.1.50/32"), "expires": time.time() - 1}])
+    assert p.blocked_by("192.168.1.50", 631).id == LAN16
+    p = policy([{**deny("old", cidr="8.8.8.8/32"), "expires": time.time() - 1}])
+    assert p.blocked_by("8.8.8.8", 53) is None
+    # it agrees with the evaluation of an allowed name, for every address
+    p = policy([allow("n", host="x.example"), ask("q", cidr="10.0.0.0/8"), allow("a", cidr="10.1.0.0/16"), deny("b", cidr="10.1.2.0/24"),
+                deny("c", cidr="9.9.9.9/32", port=53)])  # fmt: skip
+    for ip in ("10.1.2.3", "10.1.3.3", "10.2.0.1", "9.9.9.9", "1.1.1.1", "192.168.1.1"):
+        for port in (53, 443):
+            block, d = p.blocked_by(ip, port), p.evaluate("x.example", port, [ip])
+            assert (block.id if block else None) == (d.rule_id if d.action == "deny" else None), (ip, port)
+
+
 # ---------------------------------------------------------------- locked ranges
 STACK = ["172.31.10.0/24", "172.31.11.0/24", "fd00:31::/64"]
 EVERYTHING = [allow("v4", cidr="0.0.0.0/0"), allow("v6", cidr="::/0"), allow("names", host="*")]
@@ -320,6 +398,55 @@ def test_locked_listeners_are_one_address_and_port():
     assert p.evaluate("203.0.113.5", 443, []).action == "allow"  # another port of that address is not the listener
     assert p.evaluate("127.0.0.9", 3128, []).rule_id == LOCKED
     assert p.evaluate("203.0.113.6", 8081, []).action == "allow"
+
+
+@pytest.mark.parametrize(
+    "form, v4",
+    [
+        ("64:ff9b::ac1f:b02", "172.31.11.2"),  # NAT64, the well-known prefix
+        ("64:ff9b::172.31.11.2", "172.31.11.2"),  # ... written with the dotted tail
+        ("2002:ac1f:b02::1", "172.31.11.2"),  # 6to4: the IPv4 address in bits 16..48
+        ("2002:ac1f:b02:1234:5678:9abc:def0:1", "172.31.11.2"),
+        ("::ac1f:b02", "172.31.11.2"),  # IPv4-compatible (deprecated)
+        ("::172.31.11.2", "172.31.11.2"),
+        ("::ffff:172.31.11.2", None),  # IPv4-mapped: already normalised to the IPv4 address itself
+        ("64:ff9b:1::ac1f:b02", None),  # the local-use NAT64 prefix carries no fixed position
+        ("2001:db8::ac1f:b02", None),
+        ("::1", None),  # loopback is not an embedded 0.0.0.1
+        ("::", None),
+        ("172.31.11.2", None),
+    ],
+)
+def test_the_ipv4_address_an_ipv6_address_carries(form, v4):
+    from egressgw.policy import ip_addr
+
+    found = embedded_v4(ip_addr(form))
+    assert (str(found) if found else None) == v4
+
+
+def test_locked_ranges_also_match_the_ipv6_forms_that_carry_a_locked_ipv4_address():
+    """NAT64, 6to4 and IPv4-compatible addresses reach the IPv4 address they carry on a host with a translator
+    or tunnel. The built-in blocks close these prefixes - but blocks can be deleted, the lock cannot."""
+    nets = [ipaddress.ip_network(c) for c in STACK]
+    socks = [(ipaddress.ip_network("203.0.113.5/32"), 8081)]
+    for form in ("64:ff9b::ac1f:b02", "2002:ac1f:b02::1", "::172.31.11.2", "[64:ff9b::ac1f:b02]"):
+        why = locked_reason(form, 8081, nets, socks)
+        assert why == f"locked: {form} belongs to the tallygate stack itself (172.31.11.0/24)", form
+    # the gateway's own listener, by its port only
+    for form in ("64:ff9b::cb00:7105", "2002:cb00:7105::", "::203.0.113.5"):
+        assert locked_reason(form, 8081, nets, socks) == f"locked: {form}:8081 is the gateway itself"
+        assert locked_reason(form, 443, nets, socks) is None
+    # the same forms of an address that is not locked are not locked
+    for form in ("64:ff9b::808:808", "2002:808:808::1", "::8.8.8.8", "64:ff9b:1::ac1f:b02", "2001:db8::ac1f:b02"):
+        assert locked_reason(form, 8081, nets, socks) is None, form
+    # in the evaluation: with every block deleted and an allow for everything, by literal and behind a name
+    p = policy(EVERYTHING, "allow", seed=False, locked=STACK)
+    for form in ("64:ff9b::ac1f:b02", "2002:ac1f:b02::1", "::172.31.11.2"):
+        assert p.evaluate(f"[{form}]", 8080, []).rule_id == LOCKED
+        d = p.evaluate("rebind.example", 8080, [PUBLIC, form])
+        assert (d.action, d.rule_id) == ("deny", LOCKED) and d.reason.startswith(f"locked: {form} belongs to")
+    assert p.evaluate("[64:ff9b::808:808]", 443, []).action == "allow"
+    assert p.evaluate("[2002:ac1f:c02::1]", 443, []).action == "allow"  # 172.31.12.2: not the stack
 
 
 def test_a_rule_cannot_be_named_like_the_lock():
@@ -498,6 +625,103 @@ def test_restore_adds_back_what_is_missing_or_no_longer_a_block():
     assert p.evaluate("192.168.1.10", 443, []).rule_id == LAN16
     assert p.evaluate("10.0.0.1", 443, []).rule_id == TEN8  # the edited allow is above the restored block
     assert p.restore_blocks(BUILTIN, ["203.0.113.7/32"]) == []
+
+
+def test_a_seeded_block_whose_action_changes_becomes_your_rule_and_takes_no_time_limit():
+    """ADR-0019, amendment: `source: builtin/config` marks the block as it was seeded - an address deny. The
+    overview hides those and "remove unused rules" keeps them, so a rule that allows must not carry the mark."""
+    p = policy([allow("a", host="x.example")])
+    for change in ({"action": "allow"}, {"action": "ask"}):
+        q = Policy.from_dict(p.to_dict())
+        r = q.update_rule(TEN8, change)
+        assert (r.action, r.source, r.id, r.cidr) == (change["action"], "user", TEN8, "10.0.0.0/8")
+        assert "source" not in r.to_dict() and q.blocks_missing(BUILTIN, []) == ["10.0.0.0/8"]
+        assert q.update_rule(TEN8, {"action": "deny"}).source == "user"  # changed back: still yours, not seeded
+        assert q.blocks_missing(BUILTIN, []) == []  # ... but it blocks the range as the seeded block did
+    # note, group and port leave it the block it is
+    r = p.update_rule(TEN8, {"note": "lab", "group": "lan", "port": 443})
+    assert (r.source, r.port) == ("builtin", 443)
+    # a time limit is refused: the block would be pruned and, remembered as seeded, never come back
+    for rid in (LAN16, TEN8):
+        with pytest.raises(ValueError, match=f"rule {rid}: a built-in block takes no time limit. To open the range"):
+            p.update_rule(rid, {"expires": time.time() + 3600})
+        assert next(r for r in p.rules if r.id == rid).expires is None
+    assert p.update_rule(LAN16, {"expires": None}).source == "builtin"
+    # ... also in a document (PUT /policy, import, a hand-edited file): refused, not silently dropped
+    doc = p.to_dict()
+    doc["rules"][-1] = {**doc["rules"][-1], "expires": round(time.time()) + 60}
+    with pytest.raises(ValueError, match="a built-in block takes no time limit"):
+        Policy.from_dict(doc)
+    # a document cannot smuggle the mark onto something that is not an address deny
+    for r in (
+        {"id": "x", "action": "allow", "cidr": "10.0.0.0/8", "source": "builtin"},
+        {"id": "x", "action": "ask", "cidr": "10.0.0.0/8", "source": "config"},
+        {"id": "x", "action": "deny", "host": "*.example", "source": "builtin"},
+        {"id": "x", "action": "allow", "host": "*", "source": "config"},
+    ):
+        assert Rule.from_dict(dict(r)).source == "user", r
+    for source in SEEDED:
+        r = Rule.from_dict({"id": "x", "action": "deny", "cidr": "10.0.0.0/8", "source": source})
+        assert r.source == source
+    # an operator's rule with a time limit is as before; once the mark is gone a time limit is accepted
+    q = Policy.from_dict(p.to_dict())
+    q.update_rule(LAN16, {"action": "allow"})
+    assert q.update_rule(LAN16, {"expires": time.time() + 60}).source == "user"
+
+
+@pytest.mark.parametrize("source", ["user", "approval", "learning", "suggestion", "builtin", "config", "preset:dev-basics", "preset:a.b_c-1"])  # fmt: skip
+def test_the_known_sources_are_accepted(source):
+    assert Rule.from_dict({"id": "x", "action": "deny", "cidr": "10.0.0.0/8", "source": source}).source == source
+
+
+@pytest.mark.parametrize(
+    "source", ["", "admin", "Builtin", "builtin ", "builtin\n", "preset:", "preset:a b", "preset:" + "x" * 65, "user;config", None, 7, ["builtin"]]
+)  # fmt: skip
+def test_an_unknown_source_is_refused(source):
+    with pytest.raises(ValueError, match="rule x: invalid source"):
+        Rule.from_dict({"id": "x", "action": "allow", "host": "x.example", "source": source})
+    p = policy([allow("a", host="x.example")])
+    with pytest.raises(ValueError, match="cannot edit"):  # and it is not editable afterwards
+        p.update_rule("a", {"source": "builtin"})
+
+
+@pytest.mark.parametrize("expires", ["tomorrow", "1700000000", True, False, [1], {"at": 1}])
+def test_expires_must_be_a_number_or_null(expires):
+    with pytest.raises(ValueError, match="rule x: expires must be a unix time or null"):
+        Rule.from_dict({"id": "x", "action": "allow", "host": "x.example", "expires": expires})
+    p = policy([allow("a", host="x.example")])
+    with pytest.raises(ValueError, match="expires must be a unix time or null"):
+        p.update_rule("a", {"expires": expires})
+    assert p.rules[0].expires is None
+
+
+def test_expires_as_a_number_or_null_is_accepted():
+    for expires in (None, 0, 1700000000, time.time() + 60.5):
+        assert (
+            Rule.from_dict({"id": "x", "action": "allow", "host": "x.example", "expires": expires}).expires == expires
+        )
+
+
+def test_what_is_open_inside_the_blocks_and_which_blocks_are_missing():
+    p = policy([
+        allow("dev", cidr="192.168.1.10/32", port=8123), ask("q", cidr="10.0.0.0/7"), deny("cam", cidr="192.168.1.20/32"),
+        allow("pub", cidr=PUBLIC + "/32"), allow("n", host="*"), {**allow("old", cidr="127.0.0.1/32"), "expires": time.time() - 1},
+        allow("v6", cidr="fd00::/8"),
+    ])  # fmt: skip
+    assert p.opened_above(BUILTIN, []) == [
+        {"rule": "q", "action": "ask", "cidr": "10.0.0.0/7", "block": "10.0.0.0/8"},  # in the order of the blocks
+        {"rule": "dev", "action": "allow", "cidr": "192.168.1.10/32", "block": "192.168.0.0/16"},
+        {"rule": "v6", "action": "allow", "cidr": "fd00::/8", "block": "fc00::/7"},
+    ]
+    assert p.blocks_missing(BUILTIN, ["203.0.113.7/32"]) == ["203.0.113.7/32"]
+    # a rule BELOW its block opens nothing and is not listed; a block that is no longer one is not looked at
+    p.move_rule("dev", None)
+    p.update_rule(TEN8, {"port": 22})
+    assert [o["rule"] for o in p.opened_above(BUILTIN, [])] == ["v6"]
+    assert p.blocks_missing(BUILTIN, []) == ["10.0.0.0/8"]
+    p.remove_rule(LAN16)
+    assert p.blocks_missing(BUILTIN, []) == ["10.0.0.0/8", "192.168.0.0/16"]
+    assert policy(seed=False).blocks_missing(BUILTIN, []) == BUILTIN and policy().opened_above(BUILTIN, []) == []
 
 
 def test_move_rule_and_its_validation():

@@ -401,6 +401,81 @@ def test_restore_blocks_api(gw):
     assert admin(gw, "POST", "/destinations/restore-blocks", auth=False)[0] == 401
 
 
+def test_a_seeded_block_edited_into_an_allow_is_listed_as_your_rule(gw):
+    """ADR-0019, amendment: the overview of what the agent can reach leaves the seeded blocks out. A block
+    that was changed into an allow must not hide there under the source it was seeded with."""
+    from egressgw import access
+
+    hosts = lambda: {r["host"]: r for r in access.overview(gw)["rows"]}  # noqa: E731
+    assert "10.0.0.0/8" not in hosts() and "192.168.0.0/16" not in hosts()
+    status, d = admin(gw, "PATCH", "/destinations/block-10.0.0.0_8", {"access": "allow"})
+    assert status == 200 and d["access"] == "allow" and d.get("source", "user") == "user"
+    rule = next(r for r in gw.policy.rules if r.id == "block-10.0.0.0_8")
+    assert (rule.action, rule.source) == ("allow", "user")
+    row = hosts()["10.0.0.0/8"]
+    assert row["access"] == "allow" and row["rule"]["id"] == "block-10.0.0.0_8" and row["rule"]["source"] == "user"
+    assert "192.168.0.0/16" not in hosts()  # the blocks that are still blocks stay out
+    assert "source" not in next(r for r in admin(gw, "GET", "/policy")[1]["rules"] if r["id"] == "block-10.0.0.0_8")
+    assert core.Gateway().policy.rules[-len(gw.policy.rules) :] == gw.policy.rules  # stored like that
+    # "remove unused rules" treats it as the rule it is now, and restore says that it keeps the range open
+    stats = {r["id"]: r for r in admin(gw, "GET", "/rules/stats")[1]["rules"]}
+    assert "source" not in stats["block-10.0.0.0_8"] and stats["block-192.168.0.0_16"]["source"] == "builtin"
+    opened = admin(gw, "POST", "/destinations/restore-blocks")[1]["opened"]
+    assert opened == [{"rule": "block-10.0.0.0_8", "action": "allow", "cidr": "10.0.0.0/8", "block": "10.0.0.0/8"}]
+    # changed back to deny it stays the operator's rule, and is listed
+    assert admin(gw, "PATCH", "/destinations/block-10.0.0.0_8", {"access": "deny"})[0] == 200
+    assert hosts()["10.0.0.0/8"]["access"] == "deny"
+
+
+def test_a_seeded_block_takes_no_time_limit_and_rule_fields_are_checked(gw):
+    before = gw.policy.to_dict()
+    soon = round(time.time()) + 600
+    status, err = admin(gw, "PATCH", "/destinations/block-192.168.0.0_16", {"expires": soon})
+    assert status == 400 and "rule block-192.168.0.0_16: a built-in block takes no time limit" in err["error"]
+    assert "add an allow rule with a time limit above it" in err["error"]  # the way to do what was meant
+    status, err = admin(gw, "PATCH", "/destinations/block-192.168.0.0_16", {"access": "deny", "expires": soon})
+    assert status == 400
+    # expires must be a number or null, on any rule
+    for bad in ("tomorrow", "1700000000", True, [soon], {"at": soon}):
+        status, err = admin(gw, "PATCH", "/destinations/ok", {"expires": bad})
+        assert status == 400 and "expires must be a unix time or null" in err["error"], bad
+        status, err = admin(
+            gw, "POST", "/destinations", {"match": {"host": "t.example"}, "access": "allow", "expires": bad}
+        )
+        assert status == 400, bad
+    # a whole document is checked the same way: a time limit on a block, an unknown source, a bad expires
+    block = next(r for r in before["rules"] if r["id"] == "block-192.168.0.0_16")
+    for rule, error in (
+        ({**block, "expires": soon}, "a built-in block takes no time limit"),
+        ({"id": "x", "action": "allow", "host": "x.example", "source": "root"}, "rule x: invalid source 'root'"),
+        ({"id": "x", "action": "allow", "host": "x.example", "source": ""}, "invalid source"),
+        ({"id": "x", "action": "allow", "host": "x.example", "source": None}, "invalid source"),
+        (
+            {"id": "x", "action": "allow", "host": "x.example", "expires": "never"},
+            "expires must be a unix time or null",
+        ),
+    ):
+        doc = {**before, "rules": [rule, *[r for r in before["rules"] if r["id"] != rule["id"]]]}
+        status, err = admin(gw, "PUT", "/policy", doc)
+        assert status == 400 and error in err["error"], rule
+        text = yaml.safe_dump({"tallygate_export": 1, "policy": doc})
+        assert admin(gw, "POST", "/policy/import", {"yaml": text, "apply": True})[0] == 400, rule
+    assert (
+        gw.policy.to_dict() == before and gw.events.recent(1, kind=["admin"]) == []
+    )  # nothing changed, nothing recorded
+    # a document cannot mark an allow as a seeded block: it is stored and listed as the operator's rule
+    doc = {
+        **before,
+        "rules": [{"id": "x", "action": "allow", "cidr": "10.0.0.0/8", "source": "builtin"}, *before["rules"]],
+    }
+    status, pol = admin(gw, "PUT", "/policy", doc)
+    assert status == 200 and "source" not in pol["rules"][0] and gw.policy.rules[0].source == "user"
+    # what works: a time limit on an ordinary rule, and null on a block
+    assert admin(gw, "PATCH", "/destinations/ok", {"expires": soon})[0] == 200
+    assert admin(gw, "PATCH", "/destinations/block-192.168.0.0_16", {"expires": None, "note": "home"})[0] == 200
+    assert next(r for r in gw.policy.rules if r.id == "block-192.168.0.0_16").source == "builtin"
+
+
 def test_an_address_typed_as_a_host_becomes_an_address_rule(gw):
     # "An allow rule for a local address silently did nothing": typed into the host field it is still an address
     status, d = admin(gw, "POST", "/destinations", {"match": {"host": "192.168.1.5", "port": 8123}, "access": "allow"})
