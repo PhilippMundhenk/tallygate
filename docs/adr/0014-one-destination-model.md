@@ -1,6 +1,7 @@
 # ADR-0014: One destination model and one evaluation path
 
-- Status: Accepted (see [Decisions](#decisions))
+- Status: Accepted (see [Decisions](#decisions)); the order of evaluation in §2, §3, the `lan` part of §4 and
+  the #119 row of §6 are superseded by [ADR-0019](0019-one-ordered-rule-list.md) (notes at each section)
 - Date: 2026-11-13
 - Issue: #122
 
@@ -97,6 +98,12 @@ five helpers again.
 matched against the entries by the addresses their names resolve to. If it belongs to an entry that needs
 interception, it is refused with "connect by name". That is the rule #108 needed three patches to reach.
 
+> **Superseded by [ADR-0019](0019-one-ordered-rule-list.md) (2026-11-15):** the order below is replaced by
+> one ordered rule list, first match wins. Only the locked ranges (the stack's own networks and the gateway's
+> own listeners) are checked before the list; "never reachable" ranges are ordinary `deny` rules in it, and a
+> CIDR `deny` is no longer checked before name entries: position decides, and a name rule never opens an
+> address `deny` below it. The destination model itself (§1) and the one evaluation path stay.
+
 Order of evaluation:
 
 1. Never reachable (see 3), on the literal address, and again on every resolved address.
@@ -106,6 +113,11 @@ Order of evaluation:
 4. The mode.
 
 ### 3. One never-reachable list
+
+> **Superseded by [ADR-0019](0019-one-ordered-rule-list.md) (2026-11-15):** there is no never-reachable list
+> and no scope. The built-in ranges and the `never` entries of `gateway.yaml` are seeded once as ordinary
+> `deny` rules at the bottom of the rule list; `scope: all+lan` is read from old files and means nothing. What
+> the last example line stood for, the stack itself, is the locked ranges.
 
 One list, always additive, each entry with a scope:
 
@@ -126,6 +138,11 @@ never:
 > longer file-only to loosen — the authenticated UI may remove LAN / metadata / `hard_deny` entries (confirmed,
 > secure by default). `grants.internal`, `credentials`, `lan` and `tls.verify: false` are unchanged and stay
 > file-only.
+>
+> **Superseded in part by [ADR-0019](0019-one-ordered-rule-list.md) (2026-11-15), which also supersedes
+> ADR-0017:** `lan`, `grants_lan_allow` and file-only `never` entries are gone. Opening a local address is an
+> address rule (or a grant target that names the address) and can be done from the UI. What stays file-only is
+> what can hand out secrets: `credentials` and `tls.verify: false`. The stack itself is locked for everyone.
 
 Properties that can hand out secrets or open the local network are accepted **only from the read-only
 config file**: `credentials`, `lan`, `tls.verify: false`, and `never` entries that are removed or narrowed.
@@ -135,6 +152,9 @@ An entry from the API that sets a file-only property is rejected, as UI grants w
 `lan: true` from the UI stays possible inside `grants_lan_allow` (renamed `lan_allow`), as today.
 
 ### 5. Migration
+
+> **Extended by [ADR-0019](0019-one-ordered-rule-list.md) (2026-11-15):** a second one-time migration follows
+> the same rules (backup `*.pre-0019`, fail closed); `grants_lan_allow` and `lan` are ignored, not translated.
 
 There are few deployments, so the old formats are not kept alive next to the new ones. What must keep working
 is an **unattended image update** (for example by Watchtower): a stack that is running today has to come up
@@ -161,7 +181,7 @@ listed in the changelog and upgrade notes:
 
 | Change | Today | After |
 |---|---|---|
-| CIDR `deny` and a host `allow` above it (#119) | the host rule wins | the CIDR deny wins |
+| CIDR `deny` and a host `allow` above it (#119) | the host rule wins | the CIDR deny wins (*still true under ADR-0019, for a different reason: a name rule never opens an address `deny` below it. "A CIDR deny wins wherever it stands" no longer holds between address rules: position decides*) |
 | `*.example.lan` in a grant target | subdomains only | the domain and its subdomains, as in rules |
 | `grants_never` set in the config | replaces the built-in list | adds to it |
 

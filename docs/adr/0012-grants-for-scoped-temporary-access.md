@@ -1,7 +1,13 @@
 # ADR-0012: Grants for scoped, temporary access
 
-- Status: Accepted
+- Status: Accepted; the LAN exemption amended by [ADR-0019](0019-one-ordered-rule-list.md) (2026-11-15)
 - Date: 2026-11-11
+
+> **Amended by [ADR-0019](0019-one-ordered-rule-list.md).** Grants stay as decided here. The "LAN exemption
+> per exact target" and `grants_lan_allow` are gone: an active grant behaves like rules at the top of the one
+> rule list, a target that names an address (an IP, or a fixed `address`) may be local, and a target that is
+> only a name cannot open a blocked range. A UI session can therefore define a grant for a local address,
+> as it can add an allow rule for it. See [grants.md](../grants.md#local-targets-and-name-only-targets).
 
 ## Context
 
