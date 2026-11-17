@@ -8,7 +8,7 @@ Configuration lives in three places:
 |---|---|---|
 | `.env` next to `compose.yaml` | Optional: access, state paths, agent and notification settings | you (`docker compose up -d` applies changes) |
 | `config/gateway.yaml` | Static gateway config: grants, credential injection, service ports. Built into the image as `/etc/egressgw/config.yaml`; mount your own copy over it (see [operations](operations.md#with-docker-compose-recommended)) | you (restart `egress-gw` after changes) |
-| `policy.yaml` in the `gateway-data` volume | Live policy: default action, rules, hard deny | UI / API (or by hand while the gateway is stopped) |
+| `policy.yaml` in the `gateway-data` volume | Live policy: the default and the one ordered rule list (the built-in blocks are rules in it) | UI / API (or by hand while the gateway is stopped) |
 
 ## `.env`
 
@@ -115,12 +115,12 @@ Every key with an example. The file in the repository lists them all, most of th
 > **One destinations model (ADR-0014).** The `readonly`, `inject`, `github_repos` and `grants` keys below can
 > instead be written as a single `destinations:` list — each entry a match plus its properties (access,
 > methods, paths, credentials, repository scope, `request` grants). The two forms are not mixed in one file.
-> `python -m egressgw.convert <gateway.yaml>` rewrites a config in that form. The trust-critical properties
-> (credential injection, `tls_verify: false`, LAN exemption) stay file-only either way. The never-reachable
-> deny floor is still **defined** file-only, but an authenticated admin may open a LAN/metadata floor range
-> from the UI (ADR-0017, `floor_open` in `policy.yaml`); the stack's own networks (`GW_INTERNAL_NETS`) can
-> never be opened. See [`docs/adr/0014-one-destination-model.md`](adr/0014-one-destination-model.md) and
-> [`docs/adr/0017-admin-editable-deny-floor.md`](adr/0017-admin-editable-deny-floor.md).
+> `python -m egressgw.convert <gateway.yaml>` prints a config in that form. The properties that can hand out
+> secrets (credential injection, `tls_verify: false`) are accepted only from this file either way. The blocked
+> ranges are **not** in that group: they are rules in `policy.yaml`, and `never` below only seeds them
+> ([ADR-0019](adr/0019-one-ordered-rule-list.md)). What no file and no rule opens is the stack itself, the
+> locked ranges (`GW_INTERNAL_NETS`, see [Component environment](#component-environment)). See
+> [ADR-0014](adr/0014-one-destination-model.md) for the destinations form.
 
 | Key | Default | Example | Meaning |
 |---|---|---|---|
@@ -129,12 +129,10 @@ Every key with an example. The file in the repository lists them all, most of th
 > **Behaviour settings move to the UI (ADR-0015).** `log_keep_days`, `log_max_events`, `learning_ports`,
 > `learning_max_minutes`, `rule_stale_days`, `suggest_min_approvals`, `suggest_window_days`,
 > `grant_request_timeout`, `grant_max_pending`, `policy_history_keep` and `max_pending` are now edited in the UI
-> under *Setup → Behaviour settings* and persisted to a backend-owned `settings.yaml` in the data volume. The
+> under *Settings → Behaviour settings* and persisted to a backend-owned `settings.yaml` in the data volume. The
 > values below are the built-in defaults; a value here (or the matching env var) only **seeds** `settings.yaml`
 > on first start — after that the UI owns them and you need not set them. The trust-critical settings
-> (`inject`, `tls_verify`, `grants_lan_allow`, `GW_INTERNAL_NETS`) stay file-only. The deny floor (`never`)
-> is defined file-only too, but the admin may open a LAN/metadata range from the UI (ADR-0017); the stack's
-> own networks stay locked.
+> (`inject`, `tls_verify`) stay in this file, and `GW_INTERNAL_NETS` in the environment of the gateway.
 
 | `log_keep_days` | `30` | `7` | Event log retention. |
 | `log_max_events` | `500000` | `100000` | Hard cap on stored events. |
@@ -145,7 +143,7 @@ Every key with an example. The file in the repository lists them all, most of th
 | `suggest_min_approvals` | `3` | `5` | Temporary approvals of one destination that lead to a "make it permanent?" suggestion. |
 | `suggest_window_days` | `7` | `14` | The time window for those approvals (at most `log_keep_days`: older approvals are forgotten). |
 | `policy_history_keep` | `500` | `100` | Policy versions kept for diff and rollback (at least 10); older ones are removed. |
-| `never` | built-in list | `[203.0.113.7/32, {range: 192.168.1.1/32, scope: all+lan}]` | Ranges that are never reachable, **added** to the built-in list (your VPS's public IP; the example is a placeholder). A plain CIDR closes every connection, but a grant with `lan: true` may still reach it; `scope: all+lan` closes it for those grants too. Replaces the old keys `hard_deny_floor` (= scope `all`) and `grants_never` (= scope `all+lan`), which are still read; `python -m egressgw.convert` prints a file in the new form. |
+| `never` | `[]` | `[203.0.113.7/32]` | Blocked ranges of your own, for example the public IP of a VPS that runs the stack (the example is a placeholder). Each entry is seeded **once** as an ordinary `deny` rule at the bottom of the rule list (source *never (config file)*), next to the [built-in blocks](rules.md#built-in-blocks). From then on it is a rule like any other: it can be moved, edited and deleted on the *Destinations* tab, a deleted one stays deleted, and *Restore built-in blocks* adds it back. An entry added later is seeded at the next start; removing an entry here leaves its rule in the list. An invalid entry stops the gateway. Old spellings: [Removed and ignored keys](#removed-and-ignored-keys). |
 | `readonly` | `[]`; the shipped `gateway.yaml` lists npm, Yarn, crates.io, Docker Hub, GHCR, Quay, Hugging Face | `[registry.npmjs.org, {host: ghcr.io, post_is_write: true}]` | Hosts where writes are refused: PUT/PATCH/DELETE, and with `post_is_write` also POST (except `read_posts`). See [Read-only hosts](#read-only-hosts). |
 | `inject` | `[]`; the shipped `gateway.yaml` has the GitHub entries | see below | Credential injection per host. |
 | `github_repos` | `[]` (every repository) | `[acme/app, acme-tools/*]` | Limit GitHub to these repositories; others are refused before they reach GitHub. See [GitHub per repository](#github-per-repository). |
@@ -155,7 +153,7 @@ Every key with an example. The file in the repository lists them all, most of th
 | `services` | `[]` | `[{name: pg, listen: 15432, target: db.example.org:5432}]` | TCP service ports. |
 | `quiet_hours` | – | `{start: "22:00", end: "07:00", days: [mon, tue, wed, thu, fri], tz: Europe/Berlin}` | Daily period in which requests that need you are refused at once. See [Availability](#availability). |
 | `digest_minutes` | `30` | `0` | While away: a digest of what was refused every N minutes; `0` = only when you are back. |
-| `grants`, `grants_*`, `grant_*`, `activity_rate` | – | see [Grants](#grants) and [grants.md](grants.md) | Grants. |
+| `grants`, `grant_*`, `activity_rate` | – | see [Grants](#grants) and [grants.md](grants.md) | Grants. |
 
 ### Read-only hosts
 
@@ -196,7 +194,7 @@ learning_ports: [80, 443]  # ports learning mode may open (the UI offers 443, or
 learning_max_minutes: 120  # longest learning-mode session
 suggest_min_approvals: 3   # temporary approvals of one destination before a permanent rule is suggested ...
 suggest_window_days: 7     # ... within this many days
-# never: [...]             # ADDED to the built-in never-reachable list below (cannot remove from it). Only this file can change it.
+# never: [203.0.113.7/32]  # blocked ranges of your own: seeded once as deny rules at the bottom of the rule list
 readonly:                  # TLS intercepted, PUT/PATCH/DELETE refused (e.g. blocks `npm publish`)
   - registry.npmjs.org
   - host: ghcr.io            # POST refused too (an image push starts with a POST)
@@ -218,7 +216,7 @@ services:                  # TCP service ports for non-proxy-aware clients
   - name: postgres
     listen: 15432          # agent connects to egress-gw:15432
     target: db.example.org:5432
-    allow_private: false   # true = exempt exactly this target from hard_deny (LAN service)
+    allow_private: false   # true = exempt exactly this target from the built-in and config blocks (LAN service)
 ```
 
 Template syntax in `value`: `${name}` inserts the secret `name` (set via the UI/API); `${b64:…}` base64-encodes
@@ -289,67 +287,102 @@ See [grants.md](grants.md) for the concept and examples. Keys in `config/gateway
 | Key | Default | Meaning |
 |---|---|---|
 | `grants` | – | Map `name → definition` (`description`, `targets`, `levels`, `approval`, `default_ttl`, `max_ttl`, `inject`). Read-only in the UI. |
-| `grants_lan_allow` | `[]` | CIDRs that **UI-defined** grants may reach with `lan: true`. Empty = UI grants cannot target the LAN. |
-| `grants_never` | – | **Old key**, read as `never` entries with `scope: all+lan` (closed for every connection and every grant). Loopback, link-local, multicast and unspecified addresses are always closed for grants. The stack's own networks (`GW_INTERNAL_NETS`) and the gateway's own listeners are refused in addition, whatever is set here. |
 | `grant_request_timeout` | `300` | Seconds a request waits for a decision. |
 | `grant_max_pending` | `3` | Open grant requests at once. |
 | `grant_api_rate` | `30` | Requests/minute on the agent grant API. |
 | `activity_rate` | `60` | Activity reports/minute (the agent's PreToolUse hook and `tallygate note`), counted separately from grant requests. Excess reports are refused with `429`. |
 
 Target fields: `host` (name, `*.domain` or IP), `port`, `scheme` (`https` default, `http`, `tcp`), `paths`
-(globs, default `/*`), `lan`, `address` (fixed IP), `tls_fingerprint` (SHA-256), `tls_verify`
-(default `true`).
+(globs, default `/*`), `address` (fixed IP), `tls_fingerprint` (SHA-256), `tls_verify` (default `true`).
+A target on the local network must name the address: an IP as `host`, or a fixed `address`
+([grants.md](grants.md#local-targets-and-name-only-targets)). `grants_lan_allow`, `grants_never` and `lan` on
+a target are gone: [Removed and ignored keys](#removed-and-ignored-keys).
+
+### Removed and ignored keys
+
+The policy became one ordered rule list ([ADR-0019](adr/0019-one-ordered-rule-list.md)). Keys of the model
+before it are still read, so an unattended image update comes up without anyone touching a file. What
+happens to each:
+
+| Key | Where | What happens to it now |
+|---|---|---|
+| `grants_lan_allow` | `gateway.yaml` | Ignored; a warning at every start until you delete it. UI grants are no longer limited to listed ranges: a target that names an address may be local. |
+| `lan: true` on a grant target | `gateway.yaml`, `grants.yaml` | Ignored; a warning names each target. A target with an IP or a fixed `address` keeps working. A target that is only a name no longer reaches a blocked range: set its `address`. In `grants.yaml` the flag is removed at the first start (backup `grants.yaml.pre-0019`). |
+| `hard_deny_floor` | `gateway.yaml` | Still read, as `never` entries (a warning at start). Rename it to `never`. |
+| `grants_never` | `gateway.yaml` | The same. |
+| `{range: …, scope: all+lan}` in `never` | `gateway.yaml` | Still read; `scope` no longer means anything, the entry is a plain range. Write the CIDR alone. |
+| `hard_deny` | `policy.yaml`, a policy sent to the API, an imported or restored policy | Migrated: each range becomes a `deny` rule below your rules, above the built-in blocks. |
+| `floor_open` | the same | Migrated: the ranges you had opened are not seeded as blocks, so they stay open. |
+| `rules` without `seeded` | the same | A policy from before the ordered list: migrated as described in [operations](operations.md#upgrade-to-the-ordered-rule-list). |
+
+`python -m egressgw.convert <gateway.yaml>` prints your gateway config without the old keys (it writes
+nothing; comments are not kept). The one-time migration of the files in the data volume, the backups and the
+way back are in [operations](operations.md#upgrade-to-the-ordered-rule-list).
 
 ## `policy.yaml`
 
-The live policy, edited in the UI. Worked examples for hosts, ports, CIDRs and ordering:
-[rules.md](rules.md).
+The live policy: the default and the one ordered rule list. It is edited in the UI; how the list decides,
+with worked examples for hosts, ports, addresses and ordering, is in [rules.md](rules.md).
 
 ```yaml
-default: ask               # allow | deny | ask
+default: ask               # allow | deny | ask: what happens when no rule matches
 ask_timeout: 60            # seconds to hold a connection while waiting for a decision (5..3600)
-hard_deny:                 # optional ADDITIONS to the floor (cannot remove floor entries)
-  - 203.0.113.7/32         # placeholder, e.g. the Docker host's own public IP
-rules:                     # first match wins
-  - id: github             # optional, generated if missing; must be unique
-    action: allow          # allow | deny | ask
-    host: github.com       # glob; "*.x" = x and all subdomains   (either host or cidr)
-    # cidr: 140.82.112.0/20
-    port: 443              # 443 | [80, 443] | "8000-8100" | "*" (default)
+seeded:                    # written by the gateway: the blocks that were added once (not added again)
+  - 10.0.0.0/8
+  - 192.168.0.0/16         # ... one line per built-in and config block
+destinations:              # the rules, in the order they are checked: the first match decides
+  - match: {host: github.com, port: 443}   # host: glob, "*.x" = x and all subdomains
+    access: allow                          # allow | deny | ask
+    id: github                             # optional, generated if missing; must be unique
     note: free text
-    expires: 1794390000    # unix timestamp; omit for permanent
+  - match: {cidr: 192.168.44.1/32, port: 443}   # an address rule (either host or cidr); it stands
+    access: allow                               # above the block of its range, so it opens the address
+    expires: 1794390000                         # unix timestamp; omit for permanent
+  - match: {cidr: 192.168.0.0/16}          # port: 443 | [80, 443] | "8000-8100" | "*" (default)
+    access: deny
+    id: block-192.168.0.0_16
+    note: built-in block
+    source: builtin                        # builtin | config: a seeded block; otherwise who added the rule
 ```
 
-Built-in hard-deny floor: `0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
-192.0.0.0/24, 192.0.2.0/24, 192.88.99.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24,
-224.0.0.0/4, 240.0.0.0/4, ::/96, ::ffff:0:0/96, 64:ff9b::/96, 64:ff9b:1::/48, 100::/64, 2001::/32,
-2001:db8::/32, 2002::/16, fc00::/7, fe80::/10, fec0::/10, ff00::/8` (NAT64, 6to4 and Teredo prefixes are
-included because they embed IPv4 addresses). The floor always contains this list; `never` in the
-read-only gateway config **adds** to it (it cannot remove built-in ranges), and an invalid entry stops the
-gateway. `policy.yaml`/the API `hard_deny` can only add further CIDRs. An authenticated admin can, however,
-**open** a scope-all floor range for normal connections via `floor_open` in `policy.yaml` (ADR-0017, behind a
-UI confirmation); the grant path and the stack's own networks (`GW_INTERNAL_NETS`) are never opened by it. If
-the Docker host has a public IP (VPS), add it to `never`.
-For LAN services use a service port with `allow_private: true` (exempts exactly that target, and only on
-that service port — not via the proxy or SOCKS) rather than shrinking the floor.
+- **Order is the order of the file.** There is no other precedence: an address rule above a block opens that
+  address, a rule below it does not ([rules.md](rules.md#how-a-destination-is-decided)).
+- **The built-in blocks are rules in this file** (`source: builtin`), and the `never` entries of the gateway
+  config too (`source: config`). The list of ranges and what each protects:
+  [rules.md](rules.md#built-in-blocks).
+- **`seeded`** is the gateway's memory of which blocks it has added. A range listed there is not added again,
+  which is why a block you deleted stays deleted across restarts. Do not edit it by hand; to get deleted
+  blocks back use *Destinations → Restore built-in blocks*
+  ([operations](operations.md#restoring-the-built-in-blocks)).
+- **The locked ranges are not in this file** and nothing in it opens them
+  ([rules.md](rules.md#locked-ranges)).
+- The gateway API and the raw-policy editor (*Settings → Raw policy (JSON)*) show the same policy with the
+  rules as `rules: [{id, action, host | cidr, port, …}]` instead of `destinations` ([api.md](api.md)). A file
+  in that form, or one from before the ordered list (`hard_deny`, `floor_open`, no `seeded`), is translated
+  at start: [Removed and ignored keys](#removed-and-ignored-keys).
+- If the Docker host has a public IP (a VPS), add it to `never` in the gateway config.
+- For a LAN service that a client must reach without a proxy, use a service port with `allow_private: true`:
+  it exempts exactly that target from the built-in and config blocks, and only on that service port, not
+  through the proxy or SOCKS. Your own rules and the locked ranges still apply.
 
 ### Presets (`gateway/presets/*.yaml`)
 
-The UI calls these **shortcuts** (*Rules → Shortcuts*). "Preset" is the name of the file and of the API route
+The UI calls these **shortcuts** (*Quick settings*). "Preset" is the name of the file and of the API route
 behind a shortcut; `category` decides where the UI lists it.
 
 | Preset | Category | Content | Typical use |
 |---|---|---|---|
 | `baseline` | policy | default `ask`; allow Anthropic/Claude, GitHub, npm, PyPI | initial policy |
 | `lockdown` | policy | default `deny`; Anthropic only | emergency: replace the policy via raw editor/API (`POST` refuses it) |
-| `open` | internet | any public host on 80/443 | temporary, **always with a TTL** (*Shortcuts → Internet*) |
+| `open` | internet | any public host on 80/443 | temporary, **always with a TTL** (*Quick settings → Internet*) |
 | `internet` | internet | any public host on any port | temporary, **always with a TTL** |
-| `python`, `node`, `go`, `rust`, `debian`, `containers`, `huggingface` | template | the hosts a tool ecosystem needs | *Shortcuts → Tool ecosystems* |
+| `python`, `node`, `go`, `rust`, `debian`, `containers`, `huggingface` | template | the hosts a tool ecosystem needs | *Quick settings → Tool ecosystems* |
 
 Presets of the categories `internet` and `template` are applied **on top** (`POST /presets/<name>`):
 
-- Their rules are inserted at the top of the list, so **while active they win over your own rules, deny
-  rules included**. Undo them (or give them a time limit) when the task is done.
+- Their rules are inserted at the top of the list, so **while active they win over your own rules, name
+  `deny` rules included**. They are name rules, so they never open a blocked range below them
+  ([rules.md](rules.md#order-of-the-list)). Undo them (or give them a time limit) when the task is done.
 - Rule ids are namespaced as `<preset>:<id>` (e.g. `python:pypi`) and tagged `source: preset:<name>`.
   `DELETE /presets/<name>` removes exactly the rules with that tag.
 - A rule from another source is never taken over: if one already uses such an id, nothing is applied (`409`).
@@ -385,12 +418,12 @@ one that `compose.yaml` does not list, add it to that service's `environment:` b
 | egress-gw | `GW_HTTP_PORT` / `GW_SOCKS_PORT` / `GW_DNS_PORT` | Listener ports (3128 / 1080 / 53). |
 | egress-gw | `GW_API_HOST` / `GW_API_PORT` | API address on control-net / port (8081). |
 | egress-gw | `GW_GRANTS_PORT` | Agent grant API port on agent-net (8079). |
-| egress-gw | `GW_INTERNAL_NETS` | The stack's own networks as comma-separated CIDRs (compose: the four `172.31.1x.0/24` networks). Never reachable through a grant, not even with `lan: true`. Change it together with the `networks:` subnets; an invalid entry stops the gateway. |
+| egress-gw | `GW_INTERNAL_NETS` | The **locked ranges**: the stack's own networks as comma-separated CIDRs (compose: the four `172.31.1x.0/24` networks). They are denied before the rule list is walked, for every connection and every grant; no rule, grant or API call opens them ([rules.md](rules.md#locked-ranges)). The gateway's own listeners (`GW_API_HOST`/`GW_API_PORT`, `GW_LISTEN_HOST` with the grant, proxy and SOCKS ports) are locked the same way, without a setting. Change it together with the `networks:` subnets; an invalid entry stops the gateway. |
 | egress-gw | `GW_CONFIG`, `DATA_DIR`, `CA_EXPORT_DIR`, `PRESET_DIR` | Paths. |
 | egress-gw | `GW_EXTRA_ARGS` | Extra mitmdump arguments (advanced). |
 | egress-gw, control | `GW_API_TOKEN_FILE` | Token file in the `gw-token` volume (`/run/tallygate/gw/api-token`), used when `GW_API_TOKEN` is not set. |
 | egress-gw | `GW_TEST_STATIC_HOSTS` | **Test suite only.** Never set in production (logged as a warning). |
-| egress-gw | `GW_TEST_FLOOR_REPLACE` | **Test suite only.** `1` = `never` (or `hard_deny_floor`) replaces the built-in list (the e2e upstreams run on loopback). Never set in production (logged as a warning). |
+| egress-gw | `GW_TEST_FLOOR_REPLACE` | **Test suite only.** `1` = with `never` entries in the config, the built-in blocks are not seeded (the e2e upstreams run on loopback). Never set in production (logged as a warning). |
 | control | `CONTROL_BIND_HOST` / `CONTROL_PORT` | UI bind address (mgmt network only) / port. |
 | control | `GW_URL` | Gateway API base URL. |
 | control | `AGENT_HOST`, `AGENT_STATUS_PORT`, `TERMINALS` | Agent address, status port, `name:port` list of ttyd consoles. |
