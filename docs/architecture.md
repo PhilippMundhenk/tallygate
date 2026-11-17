@@ -319,7 +319,7 @@ It never becomes an `allow`. Refused destinations are collected and sent as one 
 |---|---|---|
 | egress-gw | `python run.py` → `exec mitmdump` | mitmproxy event loop with the tallygate addon and the aiohttp API server on the same loop |
 | control | `python -m app.main` | aiohttp server, gateway SSE subscriber, Telegram long-poll, Matrix `/sync` loop; outbound Web Push, ntfy, Gotify and Pushover requests |
-| agent | `tini` → `entrypoint.sh` | supervisor loop (5 s) restarting: tmux session `rc` (`claude remote-control` in a restart loop), ttyd × 3, `status.py` |
+| agent | `tini` → `entrypoint.sh` | supervisor loop (5 s) restarting: tmux session `rc` (`rc-loop.sh`: `claude remote-control` in a restart loop that keeps the environment), ttyd × 3, `status.py` |
 
 ## Grants
 

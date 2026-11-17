@@ -3,7 +3,7 @@ FROM docker.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d054
 
 # The single source of the Claude Code version. Bump deliberately: there is no auto-updater inside the agent.
 # .github/workflows/claude-code.yml opens a PR when a new version is published.
-ARG CLAUDE_VERSION=2.1.304
+ARG CLAUDE_VERSION=2.1.325
 # Extra Debian packages for your toolchains, e.g. "build-essential golang-go"
 ARG EXTRA_PACKAGES=""
 # ttyd is not packaged for Debian trixie: pinned upstream static binary, checksum-verified.
@@ -46,13 +46,13 @@ RUN apt-get update -qq \
 COPY managed-settings.json /etc/claude-code/managed-settings.json
 # managed memory: tells Claude about the gateway and how to request grants
 COPY CLAUDE.md /etc/claude-code/CLAUDE.md
-COPY entrypoint.sh status.py /usr/local/bin/
+COPY entrypoint.sh rc-loop.sh status.py /usr/local/bin/
 COPY tallygate-cli.py /usr/local/bin/tallygate
 # PreToolUse hook (managed-settings.json): tells the gateway what is about to run, shown next to approvals
 COPY tallygate-hook.py /usr/local/bin/tallygate-hook
 # `tallygate install` puts its rootless package prefix on PATH for every login shell (and entrypoint.sh)
 COPY profile.d-tallygate-install.sh /etc/profile.d/tallygate-install.sh
-RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/status.py /usr/local/bin/tallygate /usr/local/bin/tallygate-hook \
+RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/rc-loop.sh /usr/local/bin/status.py /usr/local/bin/tallygate /usr/local/bin/tallygate-hook \
  && chmod 644 /etc/profile.d/tallygate-install.sh
 
 ENV HOME=/home/agent DISABLE_AUTOUPDATER=1 TERM=xterm-256color

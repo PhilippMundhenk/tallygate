@@ -403,6 +403,13 @@ earlier entry ends with *Replaced in this release*. The state you get:
   (#17, #18).
 
 ### Fixed
+- **Remote Control session lost after a long outage** (#214): after more than about four hours without the
+  gateway or the network, Claude Code discarded its record of the environment it serves. The *rc* console
+  then repeated `This folder is already served …`, and later a new environment was registered: the session
+  in the Claude app showed *environment deleted*. The agent now keeps a copy of that record on the home
+  volume and puts it back before every start (`agent/rc-loop.sh`), so Remote Control comes back as the same
+  environment with the same session. The agent container also has a fixed hostname (`AGENT_HOSTNAME`,
+  default `tallygate`): the Claude app showed Docker's container id as the device.
 - **Browser-notification permission in Setup** (#201): the hint for a blocked site named a "lock / ⓘ icon"
   that Firefox does not have, and on plain HTTP it offered a button that could never work. The section now
   says what applies: on plain HTTP that browser notifications need HTTPS (or localhost); otherwise a

@@ -62,9 +62,8 @@ fi
 start_rc() {
   [[ "${RC_ENABLE:-1}" == "1" ]] || return 0
   tmux has-session -t rc 2>/dev/null && return 0
-  tmux new-session -d -s rc -x 200 -y 50 \
-    "cd /workspace; while true; do claude remote-control --name '$RC_NAME' --permission-mode '$PERMISSION_MODE' ${RC_ARGS:-}; \
-     echo; echo '[remote-control exited - restarting in 10s; Ctrl-C to stop the loop]'; sleep 10; done"
+  # rc-loop.sh restarts it and keeps it the same environment and session across restarts and outages (#214)
+  RC_NAME=$RC_NAME AGENT_PERMISSION_MODE=$PERMISSION_MODE tmux new-session -d -s rc -x 200 -y 50 /usr/local/bin/rc-loop.sh
   log "remote-control started in tmux session 'rc'"
 }
 
