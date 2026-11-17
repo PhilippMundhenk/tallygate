@@ -9,7 +9,7 @@ address is checked, and the connection gets the most restrictive result over all
   A destination given as an IP literal: the list top to bottom.
   1. an address rule (IP or CIDR) that contains the address (and matches the port) is final: allow, ask, deny.
   2. a name rule whose pattern matches the literal (`*`): `deny` is final; `allow` / `ask` is provisional -
-     the walk continues below it, looking only at address rules with `deny`.
+     the walk continues, and the first address rule below it that contains the address decides instead.
   3. nothing matched: the default action (allow | deny | ask).
 
   A destination given by name must pass two checks (ADR-0019, amendment):
@@ -406,12 +406,12 @@ class Policy:
         return locked_reason(ip, port, self.locked_nets, self.locked_socks)
 
     def blocked_by(self, ip: str, port: int, now: float | None = None) -> Rule | None:
-        """The first address `deny` rule that contains this address: what blocks an address that only a name
-        rule (or a grant target that is only a name) stands for."""
+        """The address `deny` rule that blocks this address for a name (a name rule, or a grant target that is
+        only a name): the first address rule with `allow` or `deny` that contains it, if that is a `deny`."""
         now, addr = now or time.time(), ip_addr(ip)
         for r in self.rules:
-            if r.cidr and r.action == "deny" and not r.expired(now) and port_matches(r.port, port) and r.contains(addr):
-                return r
+            if r.cidr and r.action != "ask" and not r.expired(now) and port_matches(r.port, port) and r.contains(addr):
+                return r if r.action == "deny" else None
         return None
 
     def evaluate_name(self, host: str, port: int) -> Decision:
@@ -498,7 +498,7 @@ class Policy:
                     return Decision(r.action, _why(r), r.id)  # an address rule: the first match is final
                 if r.action == "deny":
                     return self._shadowed(held, r, ip, literal=True)
-                # below a name rule only an address `deny` counts
+                return Decision(r.action, _why(r), r.id)  # the address rule decides, not the `*` above it
             elif held is None and r.names(name):
                 if r.action == "deny":
                     return Decision("deny", _why(r), r.id)  # a name `deny` is final
