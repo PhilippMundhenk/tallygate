@@ -1011,3 +1011,27 @@ def test_telegram_keeps_every_scope_for_an_ip_literal(ui):
     assert labels == ["Allow host permanently", "Deny", "More…"]
     full = [b["text"] for row in n._tg_keyboard("p1", n.msgs["p1"], full=True)["inline_keyboard"] for b in row]
     assert full == ["Allow once", "Allow for 1 h", "Allow host permanently", "Deny", "Deny permanently"]
+
+
+def test_the_largest_push_message_still_fits_one_record(pushed):
+    """Four buttons with their tokens, the longest host name and a full agent claim: under the 4096-byte record."""
+    import json
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from app import webpush
+
+    n, sent = pushed(["domain", "always", "deny_always", "hour"])
+    host = ".".join(["a" * 63] * 3 + ["b" * 57, "com"])  # 253 characters
+    domain = "b" * 57 + ".com"
+    ctx = [{"tool": "Bash", "text": "x" * 200, "note": "y" * 200}]
+    ips = ["2001:db8:85a3:8d3:1319:8a2e:370:7348"] * 8
+    run(n._on_ask(pending(host=host, domain=domain, idn=True, ips=ips, context=ctx)))
+    (m,) = sent
+    assert len(m["actions"]) == 4 and len(m["tokens"]) == 4
+    key = ec.generate_private_key(ec.SECP256R1()).public_key()
+    point = key.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+    payload = json.dumps(m, separators=(",", ":")).encode()
+    assert len(payload) < 3000
+    webpush.encrypt(payload, webpush.b64u(point), webpush.b64u(b"0123456789abcdef"))  # raises when too large
