@@ -163,7 +163,8 @@ def test_the_rule_list_with_blocks_locked_rows_and_order_through_the_control_pla
     assert ui.call("DELETE", f"/api/gw/destinations/{block['id']}")[0] == 200
     status, restored, _ = ui.call("POST", "/api/gw/destinations/restore-blocks")
     assert status == 200 and [r["cidr"] for r in restored["added"]] == ["169.254.0.0/16"]
-    assert ui.call("POST", "/api/gw/destinations/restore-blocks")[1] == {"added": []}
+    assert "opened" in restored  # address rules above the blocks that keep part of a range open (amendment)
+    assert ui.call("POST", "/api/gw/destinations/restore-blocks")[1]["added"] == []
     # the page and the scripts
     page = ui.call("GET", "/")[1]
     assert b'id="neverBody"' not in page and b'id="hardDeny"' not in page and b'id="neverCard"' not in page
@@ -171,7 +172,8 @@ def test_the_rule_list_with_blocks_locked_rows_and_order_through_the_control_pla
     dest_js = ui.call("GET", "/static/destinations.js")[1]
     assert b"floor_open" not in dest_js and b"Unblock" not in dest_js and b"model.never" not in dest_js
     assert b'mkbtn("Move up"' in dest_js and b'mkbtn("Move down"' in dest_js and b'id="dRestore"' in dest_js
-    assert b'<span class="status off">locked</span>' in dest_js and b"blocked by a range rule below" in dest_js
+    assert b'<span class="status off">locked</span>' in dest_js and b"blocked by a range rule</div>" in dest_js
+    assert b"DNS rebinding" in dest_js and b"Still open by rules above the blocks" in dest_js
     # deleting a block lowers security: confirmed, naming the range and the consequence (docs/ux-concept.md)
     assert b"confirmClick(del, block ? `Delete the block of ${label}? The agent will be able to reach" in dest_js
 

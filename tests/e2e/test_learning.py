@@ -40,7 +40,10 @@ def test_learn_then_save_the_rules(stack, upstream):
     _, ev, _ = ui.call("GET", "/api/gw/events?kind=conn&limit=10")
     reasons = {e["host"]: e["reason"] for e in reversed(ev)}  # the newest per host
     assert reasons["a.learn.test"] == "learning mode" and reasons["no.learn.test"].startswith("rule no")
-    assert reasons["lan.learn.test"] == "rule block-192.168.0.0_16 (never (gateway config))"
+    assert reasons["lan.learn.test"] == (
+        "resolves to 192.168.7.7, inside blocked range 192.168.0.0/16 "
+        "(rule block-192.168.0.0_16 (never (gateway config)))"
+    )
     sid = st["active"]["id"]
     assert ui.call("DELETE", "/api/gw/learning")[1]["active"] is None
     assert http_via_proxy(proxy, url)[0] != 200  # over: the mode decides again

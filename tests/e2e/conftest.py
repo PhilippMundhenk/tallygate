@@ -139,8 +139,8 @@ def upstream(tmp_path_factory):
         "lan": start_echo(bind="127.0.0.2"),
         "http": start_echo(),
         "http2": start_echo(),
-        # its own port: the policy allows 127.0.0.1 on the "http" port by address, and an address rule decides for
-        # every name that resolves there (ADR-0019) - a grant target on that port would not need its grant
+        # its own port for the grant target svc.test: the policy allows 127.0.0.1 on the "http" port by address.
+        # (That rule lets no name through by itself - ADR-0019, amendment - but it keeps the two apart.)
         "svc": start_echo(),
         "keepalive_tls": start_echo(cert, handler=KeepAliveEcho),
         "https": start_echo(cert),

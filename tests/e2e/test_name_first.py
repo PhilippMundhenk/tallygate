@@ -1,4 +1,4 @@
-"""TG-02 / #10 under ADR-0019: when a name is decided before it is resolved, and when it cannot be."""
+"""TG-02 / #10 under ADR-0019: a name the list denies or asks about is decided before it is resolved, always."""
 
 from __future__ import annotations
 
@@ -29,15 +29,15 @@ def events_for(gw, host):
     return [e for e in gw["api"].call("GET", "/events?limit=100")[1] if e["host"] == host]
 
 
-def test_names_are_decided_before_they_are_resolved_where_no_address_can_change_the_result(make_gateway, upstream):
-    """TG-02 (ADR-0011) under ADR-0019. A name the list denies or still asks about is not resolved - unless an
-    address allow rule for that port stands above what decides: then one of its addresses could be allowed by
-    that rule, and the name alone cannot say. That is the price of "an address rule decides for the address,
-    however it was named" (it re-opens #10 for the ports of such rules, and only for them)."""
+def test_names_are_decided_before_they_are_resolved_whatever_address_rules_there_are(make_gateway, upstream):
+    """TG-02 (ADR-0011) under ADR-0019 and its amendment. A name the list denies or still asks about is not
+    resolved - also after an IP literal was approved for that port: the address rule approves the literal, not
+    the names that resolve to it (#10, ADR-0013), so no address can change what the name alone says."""
     gw = make_gateway(
         {"hard_deny_floor": ["203.0.113.0/24"]},
         {"default": "ask", "ask_timeout": 5, "seeded": [], "rules": []},
-        GW_TEST_STATIC_HOSTS="probe.test=127.0.0.1,probe2.test=198.51.100.9,probe3.test=198.51.100.10",
+        GW_TEST_STATIC_HOSTS="probe.test=127.0.0.1,probe2.test=198.51.100.9,probe3.test=198.51.100.10,"
+        "probe4.test=127.0.0.1",
         GW_TEST_FLOOR_REPLACE="1",
     )
     proxy, port, other = gw["ports"]["http"], free_port(), free_port()
@@ -56,24 +56,35 @@ def test_names_are_decided_before_they_are_resolved_where_no_address_can_change_
     rule = approve_soon(gw, port, "always")["rule"]
     assert (rule["cidr"], rule["port"]) == ("127.0.0.1/32", port)
 
-    # a name that resolves to the approved address is allowed by that rule (nothing listens there: no tunnel)
-    connect_tunnel(proxy, f"probe.test:{port}", 10)
-    ev = events_for(gw, "probe.test")[0]
-    assert (ev["action"], ev["reason"], ev["ips"]) == (
-        "allow",
-        f"rule {rule['id']} (approved via always)",
-        ["127.0.0.1"],
-    )
-    # another name on that port is resolved first and then asked about, with its addresses shown
+    # a name that resolves to the approved address is NOT allowed by that rule: it is asked about, on the name
+    # alone, like every name that has no rule (and refused here)
+    threading.Thread(target=connect_tunnel, args=(proxy, f"probe.test:{port}", 8), daemon=True).start()
+    p = wait_pending(gw, port)
+    assert p["host"] == "probe.test" and p["ips"] == []
+    gw["api"].call("POST", f"/pending/{p['id']}/decide", {"scope": "deny", "by": "e2e"})
+    assert not any(e["action"] == "allow" for e in events_for(gw, "probe.test"))
+    # another name on that port is held without being resolved, as before the approval
     threading.Thread(target=connect_tunnel, args=(proxy, f"probe3.test:{port}", 8), daemon=True).start()
     p = wait_pending(gw, port)
-    assert p["host"] == "probe3.test" and p["ips"] == ["198.51.100.10"]
+    assert p["host"] == "probe3.test" and p["ips"] == []
     gw["api"].call("POST", f"/pending/{p['id']}/decide", {"scope": "deny", "by": "e2e"})
-    # ... and an unknown name on that port is looked up now
-    connect_tunnel(proxy, f"tg02-leak2.invalid:{port}", 10)
-    assert events_for(gw, "tg02-leak2.invalid")[0]["reason"].startswith("dns failure")
+    # ... and an unknown name on that port is still not looked up (no DNS exfiltration through the approved port)
+    _, line = connect_tunnel(proxy, f"tg02-leak2.invalid:{port}", 10)
+    assert " 200" not in line and all(e["ips"] == [] for e in events_for(gw, "tg02-leak2.invalid"))
+    assert not any("dns failure" in e["reason"] for e in events_for(gw, "tg02-leak2.invalid"))
+    # a name you approve is resolved after your answer and allowed by its own rule (nothing listens there: no
+    # tunnel); the address rule only says that the address is open
+    t = threading.Thread(target=connect_tunnel, args=(proxy, f"probe4.test:{port}", 8), daemon=True)
+    t.start()
+    p = wait_pending(gw, port)
+    assert p["host"] == "probe4.test" and p["ips"] == []
+    named = gw["api"].call("POST", f"/pending/{p['id']}/decide", {"scope": "always", "by": "e2e"})[1]["rule"]
+    t.join(10)
+    assert named["host"] == "probe4.test" and named["id"] != rule["id"]
+    ev = next(e for e in events_for(gw, "probe4.test") if e["action"] == "allow")
+    assert (ev["reason"], ev["ips"]) == (f"rule {named['id']} (approved via always)", ["127.0.0.1"])
 
-    # 3) on every other port nothing changed: held without resolving, never looked up
+    # 3) on every other port nothing changed either: held without resolving, never looked up
     threading.Thread(target=connect_tunnel, args=(proxy, f"probe3.test:{other}", 8), daemon=True).start()
     p = wait_pending(gw, other)
     assert p["host"] == "probe3.test" and p["ips"] == []
