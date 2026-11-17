@@ -1,11 +1,13 @@
 """Web Push for the installable UI (#72): VAPID (RFC 8292), message encryption (RFC 8291, aes128gcm),
 subscriptions, and single-use action tokens for the notification buttons.
 
-The notification's *Allow once* / *Deny* buttons work without opening the UI. They are not approve URLs:
-each button carries a token that is signed with a key derived from the session secret, bound to one
-pending request, one decision and one subscription, valid for at most ACTION_TTL seconds and accepted once.
-The token travels end-to-end encrypted to the subscribed browser (the push service cannot read it) and is
-sent back by the service worker as a POST with the CSRF header.
+The notification's buttons (*Allow once* / *Deny* by default; the operator chooses them, #212) work without
+opening the UI. They are not approve URLs: each button carries a token that is signed with a key derived
+from the session secret, bound to one pending request, one decision and one subscription, valid for at most
+ACTION_TTL seconds and accepted once. The decision is part of the signed claims, so a token minted for
+*Deny* can never allow, and nothing but the token says what to decide. A token for a button the operator
+has switched off since is refused. The token travels end-to-end encrypted to the subscribed browser (the
+push service cannot read it) and is sent back by the service worker as a POST with the CSRF header.
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from app.notifyconfig import ASK_ACTIONS, DEFAULT_ASK_ACTIONS
+
 log = logging.getLogger("control")
 
 ACTION_TTL = 600  # a notification button works for at most 10 minutes (and never after the request expired)
@@ -35,7 +39,10 @@ RECORD_SIZE = 4096
 # Push services of the common browsers. Others (e.g. a self-hosted autopush) via PUSH_ALLOWED_HOSTS: the
 # control plane only ever posts to these hosts, so a subscription cannot point it at the LAN.
 PUSH_HOSTS = ("fcm.googleapis.com", "*.push.services.mozilla.com", "*.push.apple.com", "*.notify.windows.com")
-DECISIONS = {"ask": ("once", "deny"), "grant": ("approve", "read", "deny")}
+# What a token can decide at all. For a connection request it is narrowed further when the token is
+# redeemed: to the buttons the operator has switched on (redeem(ask=...)).
+DECISIONS = {"ask": tuple(ASK_ACTIONS), "grant": ("approve", "read", "deny")}
+SWITCHED_OFF = "this button is switched off: open tallygate to decide"
 
 
 def b64u(data: bytes) -> str:
@@ -194,13 +201,17 @@ class WebPush:
 
     # ---------------------------------------------------------------- action tokens
     def mint(self, kind: str, item_id: str, decision: str, sub_id: str, expires: float) -> str:
+        if decision not in DECISIONS.get(kind, ()):
+            raise ValueError(f"no such notification action: {kind} {decision}")
         exp = int(min(expires, time.time() + ACTION_TTL))
         claims = {"k": kind, "i": item_id, "d": decision, "s": sub_id, "e": exp, "n": secrets.token_hex(8)}
         raw = b64u(json.dumps(claims, separators=(",", ":")).encode())
         return f"{raw}.{b64u(hmac.new(self.action_key, raw.encode(), hashlib.sha256).digest())}"
 
-    def redeem(self, token: str) -> dict:
-        """The token's claims if it is genuine, unexpired and unused; marks it used. ValueError otherwise."""
+    def redeem(self, token: str, ask: tuple[str, ...] = DEFAULT_ASK_ACTIONS) -> dict:
+        """The token's claims if it is genuine, unexpired and unused; marks it used. ValueError otherwise.
+        `ask` is the list of buttons switched on for connection requests right now: a token for another
+        decision is refused although it is signed (the button was switched off after it was sent)."""
         raw, _, sig = str(token).partition(".")
         good = b64u(hmac.new(self.action_key, raw.encode(), hashlib.sha256).digest())
         if not raw or not hmac.compare_digest(sig.encode(), good.encode()):
@@ -214,6 +225,8 @@ class WebPush:
             raise ValueError("this action was already used")
         if claims["d"] not in DECISIONS.get(claims["k"], ()):
             raise ValueError("invalid action")
+        if claims["k"] == "ask" and claims["d"] not in ask:
+            raise ValueError(SWITCHED_OFF)
         self.used[claims["n"]] = claims["e"]
         return claims
 

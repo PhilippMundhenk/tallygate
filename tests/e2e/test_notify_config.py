@@ -31,7 +31,7 @@ def channel(api: Api, name: str) -> dict:
 
 
 def test_telegram_configured_in_the_ui_approves_without_a_restart(gateway, mockbots, control_with, tmp_path):
-    mockbots.plan = {"telegram": {"scope_label": "Always allow", "user_id": 4242, "chat_id": 777}}
+    mockbots.plan = {"telegram": {"scope_label": "Allow host permanently", "user_id": 4242, "chat_id": 777}}
     data = tmp_path / "control-data"
     base = control_with(TELEGRAM_API_BASE=mockbots.base, CONTROL_DATA=data)  # no Telegram in the environment
     ui = login(base)

@@ -525,6 +525,7 @@ def _notify_config(app: web.Application) -> dict:
     for c in data["channels"]:
         st = status[c["channel"]]
         c.update(label=st["label"], active=st["configured"], reason=st["reason"])
+    data["actions"] = app["notifycfg"].public_actions()  # the buttons of a connection request (#212)
     return data
 
 
@@ -574,12 +575,54 @@ async def api_notify_config_delete(request: web.Request):
     return web.json_response({"ok": True, "removed": removed, **_notify_config(request.app)})
 
 
+async def api_notify_actions_put(request: web.Request):
+    """Choose the buttons of a connection-approval notification (#212). Body: {"actions": ["once", ...]}:
+    1 to 4 of the gateway's fixed approval scopes, in the order they are shown. It applies to the next
+    request; buttons that were sent before and are no longer chosen stop working (webpush.redeem).
+    400 for an unknown action, an empty or too long list or a duplicate; 503 when the data volume is not writable."""
+    body = await json_body(request)
+    try:
+        actions = request.app["notifycfg"].set_actions(body.get("actions") if isinstance(body, dict) else None)
+    except notifyconfig.ConfigError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except notifyconfig.ReadOnlyError as e:
+        return web.json_response({"error": str(e)}, status=503)
+    log.info("notification buttons: %s saved by %s", ", ".join(actions), request["user"])
+    return web.json_response({"ok": True, **_notify_config(request.app)})
+
+
+async def api_notify_actions_delete(request: web.Request):
+    """Forget the chosen buttons: every channel shows its default again (Web Push: Allow once, Deny)."""
+    try:
+        removed = request.app["notifycfg"].reset_actions()
+    except notifyconfig.ReadOnlyError as e:
+        return web.json_response({"error": str(e)}, status=503)
+    if removed:
+        log.info("notification buttons: back to the default by %s", request["user"])
+    return web.json_response({"ok": True, "removed": removed, **_notify_config(request.app)})
+
+
+def _done_text(kind: str, decision: str, data: object) -> str:
+    """What the notification says after its button was applied; names the rule the gateway installed."""
+    if kind != "ask":
+        return "Denied" if decision == "deny" else "Approved"
+    rule = data.get("rule") if isinstance(data, dict) else None
+    rule = rule if isinstance(rule, dict) else {}
+    what = "".join(c for c in str(rule.get("host") or rule.get("cidr") or "")[:80] if c.isprintable())
+    verb = "Allowed" if notifyconfig.ASK_ACTIONS[decision][2] == "allow" else "Denied"
+    how = {"once": "for 2 min", "hour": "for 1 h", "deny": "for 2 min"}.get(decision, "permanently")
+    return " ".join(x for x in (verb, what, how) if x)
+
+
 async def api_push_act(request: web.Request):
-    """A button in a push notification: {"token": ...}. The token says what to decide (see app/webpush.py)."""
+    """A button in a push notification: {"token": ...}. The token says what to decide (see app/webpush.py):
+    nothing else in the request does, and only the buttons that are switched on right now are accepted."""
     push = _push(request)
     body = await json_body(request)
     try:
-        claims = push.redeem(body.get("token", "") if isinstance(body, dict) else "")
+        claims = push.redeem(
+            body.get("token", "") if isinstance(body, dict) else "", ask=request.app["notifycfg"].actions()
+        )
     except (ValueError, KeyError, TypeError) as e:
         msg = str(e) if isinstance(e, ValueError) and "invalid" not in str(e) else "invalid action"
         return web.json_response({"error": msg}, status=403)
@@ -591,13 +634,14 @@ async def api_push_act(request: web.Request):
     else:
         path, payload = f"/grant-requests/{claims['i']}/decide", {"decision": claims["d"], "by": by}
     try:
-        status, _ = await gw(request.app, "POST", path, payload)
+        status, data = await gw(request.app, "POST", path, payload)
     except (TimeoutError, aiohttp.ClientError, ValueError) as e:
         return web.json_response({"error": f"gateway unreachable: {e}"}, status=502)
     if status != 200:
         return web.json_response({"error": "already decided or expired"}, status=409)
     log.info("web push action %s %s %s by %s", claims["k"], claims["i"], claims["d"], by)
-    return web.json_response({"ok": True, "decision": claims["d"]})
+    message = _done_text(claims["k"], claims["d"], data)
+    return web.json_response({"ok": True, "decision": claims["d"], "message": message})
 
 
 # ------------------------------------------------------------------ gateway relay
@@ -1333,6 +1377,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/notify/config", api_notify_config)
     app.router.add_put("/api/notify/config/{channel}", api_notify_config_put)
     app.router.add_delete("/api/notify/config/{channel}", api_notify_config_delete)
+    app.router.add_put("/api/notify/actions", api_notify_actions_put)
+    app.router.add_delete("/api/notify/actions", api_notify_actions_delete)
     app.router.add_post(PUSH_ACT, api_push_act)
     app.router.add_delete("/api/push/{sid}", api_push_delete)
     for path in PUBLIC_FILES:

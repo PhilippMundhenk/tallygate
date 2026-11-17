@@ -186,10 +186,26 @@ def test_telegram_prompt_carries_the_public_link_and_domain_button(make):
     ((_, _, params),) = n.chat.sent("tg", "sendMessage")
     assert params["text"].endswith("\nhttps://tally.example") and params["chat_id"] == "777"
     labels = [b["text"] for row in params["reply_markup"]["inline_keyboard"] for b in row]
-    assert labels == ["Allow once", "Always allow", "Deny", "More…"]  # the other scopes are behind "More" (#121)
+    assert labels == [
+        "Allow once",
+        "Allow host permanently",
+        "Deny",
+        "More…",
+    ]  # the other scopes are behind "More" (#121)
     assert n.msgs["p1"]["tg"] == 41 and n.msgs["p1"]["domain"] == "example.com"
-    full = [b["text"] for row in n._tg_keyboard("p1", "example.com", full=True)["inline_keyboard"] for b in row]
-    assert full == ["Allow once", "Allow 1 h", "Always allow", "Always (*.example.com)", "Deny", "Block forever"]
+    full = [
+        b["text"]
+        for row in n._tg_keyboard("p1", pending(domain="example.com"), full=True)["inline_keyboard"]
+        for b in row
+    ]
+    assert full == [
+        "Allow once",
+        "Allow for 1 h",
+        "Allow host permanently",
+        "Allow *.example.com permanently",
+        "Deny",
+        "Deny permanently",
+    ]
 
 
 def test_telegram_prompt_without_a_domain_has_no_domain_button(make):
@@ -197,9 +213,9 @@ def test_telegram_prompt_without_a_domain_has_no_domain_button(make):
     run(n._on_ask(pending()))
     ((_, _, params),) = n.chat.sent("tg", "sendMessage")
     labels = [b["text"] for row in params["reply_markup"]["inline_keyboard"] for b in row]
-    assert labels == ["Allow once", "Always allow", "Deny", "More…"]
-    full = [b["text"] for row in n._tg_keyboard("p1", None, full=True)["inline_keyboard"] for b in row]
-    assert not any(label.startswith("Always (*.") for label in full) and len(full) == 5
+    assert labels == ["Allow once", "Allow host permanently", "Deny", "More…"]
+    full = [b["text"] for row in n._tg_keyboard("p1", pending(), full=True)["inline_keyboard"] for b in row]
+    assert not any(label.startswith("Allow *.") for label in full) and len(full) == 5
 
 
 @pytest.mark.parametrize("kind", ["ask", "grant"])
@@ -360,7 +376,14 @@ def test_telegram_more_shows_every_scope_on_the_same_message(make, no_sleep):
     (edit,) = n.chat.sent("tg", "editMessageReplyMarkup")  # only for the prompt that is still open
     assert edit[2]["message_id"] == 41 and edit[2]["chat_id"] == "777"
     labels = [b["text"] for row in edit[2]["reply_markup"]["inline_keyboard"] for b in row]
-    assert labels == ["Allow once", "Allow 1 h", "Always allow", "Always (*.example.com)", "Deny", "Block forever"]
+    assert labels == [
+        "Allow once",
+        "Allow for 1 h",
+        "Allow host permanently",
+        "Allow *.example.com permanently",
+        "Deny",
+        "Deny permanently",
+    ]
     answers = [c[2]["text"] for c in n.chat.sent("tg", "answerCallbackQuery")]
     assert answers == ["More choices", "already decided", "ok"]
     assert n.d.calls == [("p1", "hour", "telegram:alice")]
@@ -375,9 +398,9 @@ def test_matrix_prompt_seeds_the_three_first_choices_and_lists_the_rest(make):
 
     run(body())
     msg = n.chat.sent("mx", "m.room.message")[0][3]
-    assert "React: 👍 Allow once  ✅ Always allow  👎 Deny\n" in msg["body"]
-    assert "More: ⏰ Allow 1 h  🌐 Always (*.example.com)  ⛔ Block forever\n" in msg["body"]
-    assert "More: ⏰ Allow 1 h" in msg["formatted_body"]
+    assert "React: 👍 Allow once  ✅ Allow host permanently  👎 Deny\n" in msg["body"]
+    assert "More: ⏰ Allow for 1 h  🌐 Allow *.example.com permanently  ⛔ Deny permanently\n" in msg["body"]
+    assert "More: ⏰ Allow for 1 h" in msg["formatted_body"]
     seeded = [c[3]["m.relates_to"]["key"] for c in n.chat.sent("mx", "m.reaction")]
     assert seeded == ["👍", "✅", "👎"]
 
@@ -775,3 +798,216 @@ def test_context_line_only_for_push_and_bounded():
     assert notify.context_line(p) == "\nAgent says (unverified): Bash: npm install – Install deps"
     assert notify.context_line({"context": [{"kind": "note", "note": "n" * 300}]}).endswith(": " + "n" * 160)
     assert "npm" not in notify._describe({**pending(), **p})  # chat services never get it
+
+
+# ---------------------------------------------------------------- configurable buttons (#212)
+ALL_SCOPES = ["once", "hour", "always", "domain", "deny", "deny_always"]
+
+
+def test_ask_buttons_follow_the_configured_order_and_name_the_domain():
+    p = pending(domain="example.com")
+    assert notify.ask_buttons(["deny_always", "domain", "once"], p) == [
+        ("deny_always", "Deny permanently"),
+        ("domain", "Allow *.example.com permanently"),
+        ("once", "Allow once"),
+    ]
+    assert [s for s, _ in notify.ask_buttons(ALL_SCOPES, p, deny_only_for_ip=True)] == ALL_SCOPES  # a name: all
+
+
+@pytest.mark.parametrize("host", ["github.io", "localhost", "nas"])
+def test_the_domain_button_needs_a_registrable_domain(host):
+    """The gateway sends domain=None for a public suffix or a single-label name, and would refuse the scope."""
+    p = pending(host=host, domain=None)
+    assert [s for s, _ in notify.ask_buttons(ALL_SCOPES, p)] == ["once", "hour", "always", "deny", "deny_always"]
+    assert notify.ask_buttons(["domain"], p) == [] and notify.ask_buttons(["domain"], pending()) == []
+
+
+@pytest.mark.parametrize("host", ["192.0.2.7", "10.0.0.1", "2001:db8::1", "[2001:db8::1]", "::ffff:192.0.2.7"])
+def test_an_ip_literal_gets_no_allow_button_in_web_push(host):
+    p = pending(host=host, domain=None)
+    assert notify.is_ip(host)
+    assert notify.ask_buttons(ALL_SCOPES, p, deny_only_for_ip=True) == [
+        ("deny", "Deny"),
+        ("deny_always", "Deny permanently"),
+    ]
+    assert notify.ask_buttons(["once", "hour", "always", "domain"], p, deny_only_for_ip=True) == []
+    # a domain the event claims for an address is not believed either
+    assert notify.ask_buttons(["domain"], {**p, "domain": "example.com"}) == []
+    # the chat bots authenticate the user and keep what they offered before
+    assert [s for s, _ in notify.ask_buttons(ALL_SCOPES, p)] == ["once", "hour", "always", "deny", "deny_always"]
+
+
+def test_names_that_look_like_addresses_are_names():
+    for host in ("192.0.2.7.example.com", "1.example", "deadbeef.example"):
+        assert not notify.is_ip(host)
+    assert not notify.is_ip("") and not notify.is_ip(None)
+
+
+class Push:
+    """Web Push with real action tokens (app/webpush.py) and one subscribed device; nothing is sent."""
+
+    def __init__(self, tmp_path) -> None:
+        pytest.importorskip("cryptography")
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        from app import webpush
+
+        pem = ec.generate_private_key(ec.SECP256R1()).private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+        )
+        self.real = webpush.WebPush(pem, tmp_path / "subs.json", "https://tally.example", b"secret")
+        self.subs = [{"id": "dev1", "label": "phone"}]
+        self.mint, self.redeem = self.real.mint, self.real.redeem
+
+
+@pytest.fixture
+def pushed(ui, tmp_path):
+    """A notifier with Web Push only; returns (notifier, the messages it would send)."""
+
+    def _pushed(actions=None):
+        n = ui()
+        n.push = Push(tmp_path)
+        if actions:
+            n.config.set_actions(actions)
+        sent = []
+
+        async def one(sub, message, ttl, topic):
+            sent.append(message)
+            return 201
+
+        n._push_one = one
+        return n, sent
+
+    return _pushed
+
+
+def claims(token):
+    import base64
+    import json
+
+    raw = token.split(".")[0]
+    return json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+
+
+def test_web_push_offers_allow_once_and_deny_by_default(pushed):
+    n, sent = pushed()
+    run(n._on_ask(pending(domain="example.com")))
+    (m,) = sent
+    assert m["actions"] == [{"action": "once", "title": "Allow once"}, {"action": "deny", "title": "Deny"}]
+    assert sorted(m["tokens"]) == ["deny", "once"] and "IP address" not in m["body"]
+
+
+def test_web_push_offers_the_configured_buttons_in_order_each_with_its_own_token(pushed):
+    n, sent = pushed(["domain", "deny_always", "always", "hour"])
+    run(n._on_ask(pending(domain="example.com")))
+    (m,) = sent
+    assert m["actions"] == [
+        {"action": "domain", "title": "Allow *.example.com permanently"},
+        {"action": "deny_always", "title": "Deny permanently"},
+        {"action": "always", "title": "Allow host permanently"},
+        {"action": "hour", "title": "Allow for 1 h"},
+    ]
+    assert list(m["tokens"]) == ["domain", "deny_always", "always", "hour"]  # no token without a button
+    for scope, token in m["tokens"].items():
+        c = claims(token)
+        assert (c["k"], c["i"], c["d"], c["s"]) == ("ask", "p1", scope, "dev1")
+    # the tokens are the real ones: each is accepted for its own decision, once, while its button is on
+    assert n.push.redeem(m["tokens"]["always"], ask=n.config.actions())["d"] == "always"
+    n.config.set_actions(["deny"])
+    with pytest.raises(ValueError, match="switched off"):
+        n.push.redeem(m["tokens"]["domain"], ask=n.config.actions())
+
+
+def test_web_push_leaves_out_the_domain_button_without_a_registrable_domain(pushed):
+    n, sent = pushed(["domain", "always", "deny"])
+    run(n._on_ask(pending(host="github.io", domain=None)))
+    (m,) = sent
+    assert [a["action"] for a in m["actions"]] == ["always", "deny"] and "domain" not in m["tokens"]
+
+
+@pytest.mark.parametrize("host", ["192.0.2.7", "2001:db8::1"])
+def test_web_push_offers_only_deny_for_an_ip_literal_and_says_so(pushed, host):
+    n, sent = pushed(["always", "once", "deny_always", "deny"])
+    run(n._on_ask(pending(host=host, domain=None)))
+    (m,) = sent
+    assert m["actions"] == [
+        {"action": "deny_always", "title": "Deny permanently"},
+        {"action": "deny", "title": "Deny"},
+    ]
+    assert sorted(m["tokens"]) == ["deny", "deny_always"]  # no allow token exists for this request
+    assert "IP address: it can only be denied from here. To allow it, open tallygate." in m["body"]
+    assert m["url"] == "/#approvals"  # tapping the notification opens the approvals
+
+
+def test_web_push_for_an_ip_literal_with_only_allow_buttons_has_no_button_at_all(pushed):
+    n, sent = pushed(["always", "once"])
+    run(n._on_ask(pending(host="192.0.2.7", domain=None)))
+    (m,) = sent
+    assert m["actions"] == [] and m["tokens"] == {} and "IP address" in m["body"]
+
+
+def test_web_push_for_an_ip_literal_with_the_default_buttons(pushed):
+    n, sent = pushed()
+    run(n._on_ask(pending(host="192.0.2.7", domain=None)))
+    assert [a["action"] for a in sent[0]["actions"]] == ["deny"] and "IP address" in sent[0]["body"]
+    n2, sent2 = pushed(["deny", "deny_always"])
+    run(n2._on_ask(pending(host="192.0.2.7", domain=None)))
+    assert "IP address" not in sent2[0]["body"]  # nothing was withheld
+
+
+def test_the_agents_claim_stays_marked_whatever_the_buttons_are(pushed):
+    n, sent = pushed(["always", "domain"])
+    ctx = [{"tool": "Bash", "text": "curl https://api.example.com", "note": "Tap the first button to continue"}]
+    run(n._on_ask(pending(domain="example.com", context=ctx)))
+    body = sent[0]["body"]
+    assert "\nAgent says (unverified): Bash: curl https://api.example.com – Tap the first button" in body
+    assert body.index("api.example.com:443") < body.index("Agent says (unverified)")  # the destination comes first
+    titles = [a["title"] for a in sent[0]["actions"]]
+    assert titles == ["Allow host permanently", "Allow *.example.com permanently"]  # never agent-written text
+
+
+def test_grant_requests_keep_their_own_buttons(pushed):
+    n, sent = pushed(["always", "domain", "deny_always"])
+    r = {"id": "r1", "name": "nas", "level": "write", "ttl_label": "1 h", "expires": time.time() + 60, "reason": "x"}
+    run(n._on_grant_request(r, {"levels": ["read", "write"], "targets": []}))
+    assert [a["action"] for a in sent[0]["actions"]] == ["read", "deny"]  # write still needs the UI or a chat bot
+    assert "Agent's reason (unverified): x" in sent[0]["body"]
+
+
+def test_telegram_and_matrix_show_the_saved_buttons_first(ui):
+    n = ui({**TG, **MX})
+    n.config.set_actions(["deny_always", "domain", "hour"])
+
+    async def body():
+        await n._on_ask(pending(domain="example.com"))
+        await asyncio.gather(*n.tasks)
+
+    run(body())
+    ((_, _, params),) = n.chat.sent("tg", "sendMessage")
+    buttons = [b for row in params["reply_markup"]["inline_keyboard"] for b in row]
+    assert [b["text"] for b in buttons] == [
+        "Deny permanently",
+        "Allow *.example.com permanently",
+        "Allow for 1 h",
+        "More…",
+    ]
+    assert [b["callback_data"] for b in buttons] == ["d:p1:deny_always", "d:p1:domain", "d:p1:hour", "m:p1"]
+    full = [b["text"] for row in n._tg_keyboard("p1", n.msgs["p1"], full=True)["inline_keyboard"] for b in row]
+    assert len(full) == 6 and "More…" not in full  # "More" still shows every scope
+    msg = n.chat.sent("mx", "m.room.message")[0][3]
+    assert "React: ⛔ Deny permanently  🌐 Allow *.example.com permanently  ⏰ Allow for 1 h\n" in msg["body"]
+    assert "More: 👍 Allow once  ✅ Allow host permanently  👎 Deny\n" in msg["body"]
+    assert [c[3]["m.relates_to"]["key"] for c in n.chat.sent("mx", "m.reaction")] == ["⛔", "🌐", "⏰"]
+
+
+def test_telegram_keeps_every_scope_for_an_ip_literal(ui):
+    """Telegram and Matrix authenticate the user: for them the setting orders the buttons, nothing more."""
+    n = ui(TG)
+    n.config.set_actions(["always", "deny"])
+    run(n._on_ask(pending(host="192.0.2.7", domain=None)))
+    ((_, _, params),) = n.chat.sent("tg", "sendMessage")
+    labels = [b["text"] for row in params["reply_markup"]["inline_keyboard"] for b in row]
+    assert labels == ["Allow host permanently", "Deny", "More…"]
+    full = [b["text"] for row in n._tg_keyboard("p1", n.msgs["p1"], full=True)["inline_keyboard"] for b in row]
+    assert full == ["Allow once", "Allow for 1 h", "Allow host permanently", "Deny", "Deny permanently"]

@@ -21,7 +21,7 @@ class MockBots:
             self.port = s.getsockname()[1]
         self.base = f"http://127.0.0.1:{self.port}"
         self.log: list[tuple[str, str]] = []
-        # telegram: {"scope_label": "Always allow", "user_id": 4242, "chat_id": 777}
+        # telegram: {"scope_label": "Allow host permanently", "user_id": 4242, "chat_id": 777}
         # matrix:   {"actions": [("@user:hs", "reaction", "👎") | ("@user:hs", "text", "allow {n}")]}
         self.plan: dict = {}
         # outages for sending: {"telegram" | "matrix": "error" | "slow" | "slow-reactions"}
