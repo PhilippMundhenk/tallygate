@@ -336,6 +336,8 @@ class Gateway:
             log.warning("blocks seeded as deny rules at the bottom: %s", ", ".join(r.cidr for r in self.seeded_now))
         self.policy = policy
         self._apply_service_exceptions()
+        if note := self.opened_note():  # at every start and every replacement: also a `never` entry added
+            log.warning("policy: %s", note)  # later stands below the address rules that were there before
         return policy
 
     def read_policy(self, doc: dict) -> tuple[Policy, list[str]]:
@@ -370,7 +372,19 @@ class Gateway:
         parts = list(notes or [])
         if missing := self.policy.blocks_missing(self.blocks_builtin, self.blocks_config):
             parts.append(f"built-in block(s) not in force: {', '.join(missing)}")
+        if note := self.opened_note():
+            parts.append(note)
         return "".join(f"; {p}" for p in parts)
+
+    def opened_note(self, policy: Policy | None = None) -> str:
+        """Which address rules stand above a built-in or config block and reach into it, in one line, or ""."""
+        policy = policy or self.policy
+        opened = {o["rule"]: o for o in policy.opened_above(self.blocks_builtin, self.blocks_config)}
+        if not opened:
+            return ""
+        return "open inside blocked ranges: " + ", ".join(
+            f"{o['cidr']} ({o['action']} rule {r})" for r, o in opened.items()
+        )
 
     def never_reachable(self) -> list[dict]:
         """What no rule, grant or API call can open: the locked ranges (the stack's own networks and the
@@ -729,6 +743,14 @@ class Gateway:
         for key, p in list(self.pending.items()):
             if p.id == pending_id:
                 rule = rule_for_approval(p.host, p.port, scope, ttl)
+                if rule.cidr and rule.action == "allow" and (block := self.policy.blocked_by(p.host, p.port)):
+                    # An IP inside a blocked range is refused without a question, so this request should not
+                    # exist. An approval must never be the rule that opens a blocked range: that takes a
+                    # rule for the address, added on Destinations by someone who sees which range it is in.
+                    raise ValueError(
+                        f"{p.host} is inside blocked range {block.cidr} (rule {block.id}): an approval cannot "
+                        "open it. Deny the request; to reach the address, add an allow rule for it on Destinations"
+                    )
                 self.policy.add_rule(rule, top=True)
                 self.save_policy(by, f"approval {scope} for {p.host}:{p.port}")
                 dec = Decision(rule.action, f"{scope} by {by}", rule.id)
