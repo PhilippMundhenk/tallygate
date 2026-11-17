@@ -386,6 +386,12 @@ class Grants:
         # through a grant or anything else. The Gateway attaches them to the policy, which checks them before
         # the rule list; they are kept here because they come from the environment, as the grants do.
         self.internal = internal_nets(os.environ.get("GW_INTERNAL_NETS", ""))
+        if not self.internal:
+            log.error(
+                "GW_INTERNAL_NETS is empty: no network of the stack is locked. Only the built-in blocks keep the "
+                "agent away from the control plane and the gateway API, and those can be deleted. Set it to the "
+                "stack's networks (compose.yaml does)"
+            )
         self.own = own_sockets(os.environ)
         if config.get("grants_lan_allow"):
             log.warning(
@@ -395,6 +401,7 @@ class Grants:
         self.request_timeout = int(config.get("grant_request_timeout", 300))
         self.max_requests = int(config.get("grant_max_pending", 3))
         self.defs: dict[str, GrantDef] = {}
+        self._had_lan = {(n, str(t.get("host")), t.get("port")) for n, t in _lan_targets(config.get("grants") or {})}
         _lan_notes("gateway config", _lan_targets(config.get("grants") or {}))
         for name, d in (config.get("grants") or {}).items():
             self.defs[name] = GrantDef.from_dict(name, d or {}, "config")
@@ -404,6 +411,7 @@ class Grants:
             old_form = "destinations" not in raw and bool(raw)  # a pre-0014 {name: def} file
             file_defs = destinations.grants_from_file(raw)  # a file that cannot be read stops the gateway
             lan = _lan_targets(file_defs)
+            self._had_lan |= {(n, str(t.get("host")), t.get("port")) for n, t in lan}
             for name, d in file_defs.items():
                 if name in self.defs:
                     continue  # config wins
@@ -432,6 +440,26 @@ class Grants:
             except (OSError, yaml.YAMLError, AttributeError) as e:  # fail closed: keep auto-approval off
                 log.error("%s unreadable (%s): auto-approval stays suspended", self.state_path, e)
                 self.auto_suspended = {"since": 0, "by": "unreadable state file"}
+
+    def local_notes(self, policy) -> list[str]:
+        """For the upgrade to ADR-0019: grant targets that name an address inside a blocked range and did not
+        carry the old `lan` flag. Such a target could be saved but was always refused; now it is reachable
+        while its grant is active. Nothing is changed here - the operator is told, once, in the log."""
+        out = []
+        for g in self.defs.values():
+            for t in g.targets:
+                ip = t.fixed()
+                if not ip or (g.name, t.host, t.port) in self._had_lan:
+                    continue
+                if block := policy.blocked_by(ip, t.port):
+                    auto = [lv for lv, how in g.approval.items() if how == "auto"]
+                    out.append(
+                        f"NOTE grant {g.name}: target {t.host}:{t.port} names the address {ip} inside blocked range "
+                        f"{block.cidr}. It was refused before; now it is reachable while the grant is active"
+                        + (f" (approval for {', '.join(auto)} is automatic)" if auto else "")
+                        + ". Delete the target if that is not wanted"
+                    )
+        return out
 
     # ---------------------------------------------------------------- auto-approval suspension
     def _save_state(self) -> None:

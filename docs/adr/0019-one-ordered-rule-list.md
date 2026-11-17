@@ -4,7 +4,11 @@
 - Date: 2026-11-15
 - Issue: #208
 - Supersedes: ADR-0017 (`floor_open`), the `lan` part of ADR-0014 §4 and the "a CIDR deny wins wherever it
-  stands" rule of #119. Keeps: ADR-0007 (decide on resolved IPs, pin the connection to them).
+  stands" rule of #119. Keeps: ADR-0007 (decide on resolved IPs, pin the connection to them), ADR-0011
+  (decide on the name before resolving it) and ADR-0013 (an approved address is not an approval of the names
+  that resolve to it).
+- Amended 2026-11-17 after the security review of the implementation: see [Amendment](#amendment-2026-11-17-names-pass-two-checks).
+  Where the sections below and the amendment differ, the amendment holds.
 
 ## Outcome
 
@@ -98,6 +102,56 @@ read from old files and ignored (logged once). Credentials and `tls.verify: fals
 - Grants: `lan: true` is dropped; a LAN target that is only a name keeps working only with a fixed
   `address` (the migration log names such targets).
 
+## Amendment (2026-11-17): names pass two checks
+
+The security review of the implementation (PR #211) showed that walking one list for a *name* destination
+gave up two things the earlier ADRs had secured, and that the migration opened what had been closed.
+
+**What went wrong with "an address rule is final, also for a name":**
+
+- One address `allow` for a port anywhere in the list meant that no `deny` or `ask` for a name on that port
+  could be acted on before DNS any more: an address might still allow it. After the operator approved a
+  single IP literal, the gateway resolved every name the agent asked for (DNS exfiltration, ADR-0011).
+- An approved address allowed every name that resolves to it, with that name's SNI and Host, and outranked a
+  name `deny` below it. On a shared CDN address that is another site (ADR-0013).
+
+**Decision.** A destination given as an **IP literal** is decided as described above: the list top to bottom,
+the first matching address rule is final. A destination given by **name** must pass two checks:
+
+1. **The name**: the first matching name rule, else the default. `deny` and `ask` are acted on before the
+   name is resolved, always. A name `deny` wins wherever it stands.
+2. **Each resolved address**: locked ranges deny. Otherwise the first address rule with `allow` or `deny`
+   that contains the address says whether the address is open: `deny` blocks it (with the reason from
+   "Why a name rule cannot open a blocked range"), `allow` or no such rule leaves the result of step 1.
+   Address `ask` rules are a question about an IP literal and are skipped for names.
+
+So an address `allow` above a range block still opens that address for a name, but only for a name that is
+allowed by name; it never lets a name through by itself. The position of a name rule relative to address
+rules no longer matters: the order among the name rules decides step 1, the order among the address rules
+decides step 2. "The pre-DNS decision may only short-cut where the result cannot depend on the addresses"
+(Consequences) is now true for every `deny` and `ask`.
+
+**Migration.** An address `allow`/`ask` rule never had an effect inside a blocked range. A built-in, config
+or `hard_deny` block that such a rule overlaps is therefore placed at the **top** of the migrated list (after
+the CIDR `deny` rules), not at the bottom, and the log names the rules. Nothing that was blocked opens by
+upgrading; the operator moves a rule above its block to open the address. Restoring an old history version
+and importing an old export record the same notes.
+
+**Also decided here:**
+
+- A seeded block takes no time limit (it would be pruned and, being remembered as seeded, never return), and
+  a seeded block whose action is changed becomes an ordinary rule of the operator (`source: user`).
+- Replacing the whole policy (PUT, import, restore) records which built-in and config blocks are not in
+  force afterwards.
+- The locked ranges also match an IPv6 address that carries a locked IPv4 address (NAT64, 6to4,
+  IPv4-compatible).
+- Kept as decided under "Grants": a grant target with an IP literal or a fixed `address` is not subject to
+  the blocks or to `deny` rules, only to the locked ranges. That includes loopback and metadata addresses and
+  the `never` entries of `gateway.yaml`, which were closed to grants before. A target of that kind stored
+  before the upgrade without `lan` was refused and now works while its grant is active; the migration log
+  names each one.
+
 ## Changelog
 
 - 2026-11-15: accepted.
+- 2026-11-17: amended (names pass two checks; migration keeps overlapped blocks on top).

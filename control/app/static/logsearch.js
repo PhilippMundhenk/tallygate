@@ -128,7 +128,7 @@
     const el = $("#lsDest");
     el.innerHTML = `<div class="row-between"><h4>${esc(d.host)}:${esc(d.port)}</h4><button type="button" id="lsBack" class="small ghost">Show results</button></div>
       <p>Now: <b class="a-${esc(d.decision.action)}">${esc(d.decision.action)}</b> — ${r ? `rule <code>${esc(r.action)} ${esc(r.host || r.cidr)}${r.port !== undefined ? ":" + esc(Array.isArray(r.port) ? r.port.join(",") : r.port) : ""}</code>${r.note ? " (" + esc(r.note) + ")" : ""}${r.source ? ` [${esc(r.source)}]` : ""}` : esc(d.decision.reason)}
-        <span class="muted">(decided on the name; the hard deny is checked again after resolving)</span></p>
+        <span class="muted">(decided on the name; the addresses it resolves to are checked against the blocked ranges when it connects)</span></p>
       ${s ? `<p class="muted">${esc(s.events)} events · ${esc(s.allowed)} allowed · ${esc(s.denied)} denied · ${esc(s.asked)} asked · first seen ${esc(fmtDate(s.first_seen))} · last ${esc(fmtDate(s.last))}</p>` : '<p class="muted">No connections in the log.</p>'}
       <div class="table-wrap"><table class="log"><thead><tr><th>Time</th><th>Kind</th><th>Action</th><th>Reason</th></tr></thead><tbody>
       ${d.events.map((e) => `<tr><td>${esc(fmtDate(e.ts))}</td><td>${esc(e.kind)}</td><td class="a-${esc(e.action)}">${esc(e.action)}</td><td>${esc(e.reason)}</td></tr>`).join("")}
