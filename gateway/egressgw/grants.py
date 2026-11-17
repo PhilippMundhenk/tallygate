@@ -393,7 +393,9 @@ class Grants:
         # the rule list; they are kept here because they come from the environment, as the grants do.
         self.internal = internal_nets(os.environ.get("GW_INTERNAL_NETS", ""))
         if not self.internal:
-            log.error(
+            # a warning, not an error: mitmproxy exits on an error logged at startup, and a gateway run
+            # outside the compose stack (development, tests) has no networks of a stack to lock
+            log.warning(
                 "GW_INTERNAL_NETS is empty: no network of the stack is locked. Only the built-in blocks keep the "
                 "agent away from the control plane and the gateway API, and those can be deleted. Set it to the "
                 "stack's networks (compose.yaml does)"

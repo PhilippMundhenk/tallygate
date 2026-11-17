@@ -42,7 +42,7 @@
 > | L3 | Built-in blocks could vanish through `PUT /policy`, import or restore without a record. | **Fixed.** The admin event and the import preview list the blocks that are not in force. |
 > | L4 | The hint on a name rule stopped by a blocked range steered towards opening the address. | **Fixed.** It leads with the DNS-rebinding warning. |
 > | L5 | A time limit on a seeded block deleted the block for good when it ran out. | **Fixed.** A time limit on a seeded block is refused. |
-> | L6 | The locked ranges depend on the environment. | **Partly.** An empty `GW_INTERNAL_NETS` is logged as an error, and NAT64, 6to4 and IPv4-compatible forms of a locked address are matched. Not done: the gateway does not refuse to start, and its own interface addresses are not added. |
+> | L6 | The locked ranges depend on the environment. | **Partly.** An empty `GW_INTERNAL_NETS` is logged as a warning, and NAT64, 6to4 and IPv4-compatible forms of a locked address are matched. Not done: the gateway does not refuse to start, and its own interface addresses are not added. |
 
 Severity scale: **Critical**: the agent gains control of the operator plane or fully escapes the policy.
 **High**: a security boundary is bypassed or weakened in a realistic setup. **Medium**: an exploitable

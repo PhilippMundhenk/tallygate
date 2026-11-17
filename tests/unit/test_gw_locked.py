@@ -418,11 +418,13 @@ def test_the_migration_names_the_grant_targets_that_start_working(make, tmp_path
     assert "NOTE grant" not in caplog.text and g2.events.recent(1, kind=["admin"])[0]["reason"] == reason
 
 
-def test_a_start_without_the_stacks_networks_is_an_error_in_the_log(make, monkeypatch, caplog):
+def test_a_start_without_the_stacks_networks_is_a_warning_in_the_log(make, monkeypatch, caplog):
     monkeypatch.setenv("GW_INTERNAL_NETS", "")
     with caplog.at_level(logging.WARNING, "egressgw"):
         g = make(policy={"default": "allow", "seeded": [], "rules": []})
-    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    errors = [
+        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING and "GW_INTERNAL_NETS" in r.getMessage()
+    ]
     assert len(errors) == 1 and errors[0].startswith("GW_INTERNAL_NETS is empty: no network of the stack is locked.")
     assert g.policy.locked_nets == []
     # what the message warns of: only the block stands in the way, and it can be deleted

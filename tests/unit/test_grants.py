@@ -217,7 +217,7 @@ def test_a_grant_that_names_the_stack_itself_is_refused_when_it_is_saved(tmp_pat
     assert g.upsert_ui("cam", {"targets": [{**cam, "address": "192.168.5.2"}]})  # port 80 there is not the listener
 
 
-def test_an_empty_gw_internal_nets_is_an_error_in_the_log(tmp_path, monkeypatch, caplog):
+def test_an_empty_gw_internal_nets_is_a_warning_in_the_log(tmp_path, monkeypatch, caplog):
     """Without the stack's networks nothing is locked: only the built-in blocks stand between the agent and the
     control plane, and those can be deleted. compose.yaml sets it; a start without it must be loud."""
     for value in ("", " ", ","):
@@ -225,7 +225,7 @@ def test_an_empty_gw_internal_nets_is_an_error_in_the_log(tmp_path, monkeypatch,
         caplog.clear()
         with caplog.at_level(logging.WARNING, "egressgw"):
             g = make(tmp_path)
-        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        errors = [r for r in caplog.records if r.levelno == logging.WARNING and "GW_INTERNAL_NETS" in r.getMessage()]
         assert g.internal == [] and len(errors) == 1, value
         assert errors[0].getMessage().startswith("GW_INTERNAL_NETS is empty: no network of the stack is locked.")
         assert "Set it to the stack's networks (compose.yaml does)" in errors[0].getMessage()

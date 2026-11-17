@@ -272,7 +272,7 @@ earlier entry ends with *Replaced in this release*. The state you get:
   - **Only the stack itself is locked**: the stack's own networks (`GW_INTERNAL_NETS`) and the gateway's own
     listeners are denied before the list, whatever a rule, a grant or the API says. A listener bound to every
     address is now locked on loopback too, and so is an IPv6 address that carries a locked IPv4 address
-    (NAT64, 6to4). An empty `GW_INTERNAL_NETS` is logged as an error. They are shown as the last rows before
+    (NAT64, 6to4). An empty `GW_INTERNAL_NETS` is logged as a warning. They are shown as the last rows before
     the default, with no actions.
   - **Rules have an order you can change**: *Move up* / *Move down* in the table, `POST
     /destinations/{id}/move` in the API. Approvals and shortcuts are still added at the top.
