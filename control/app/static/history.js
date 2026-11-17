@@ -22,7 +22,8 @@
     <details class="help"><summary>What happens on an import?</summary>
       <p>The file moves a setup to another host or shares it as a starting point. An import is checked like a
         normal policy change and shown before anything is replaced. A file from an older release is translated to the one ordered list: its
-        CIDR deny rules move to the top and the built-in blocks are added at the bottom.</p></details>
+        CIDR deny rules move to the top and the built-in blocks are added at the bottom. A block that an allow or ask rule for an
+        address reaches into goes to the top instead, so nothing that was blocked opens; the preview lists these.</p></details>
     <div class="row wrap">
       <button id="hiExport" class="secondary">Export policy</button>
       <label class="filebtn">Import policy&hellip;<input id="hiImport" type="file" accept=".yaml,.yml,text/yaml"></label>

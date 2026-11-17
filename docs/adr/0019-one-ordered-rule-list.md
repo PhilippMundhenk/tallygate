@@ -116,7 +116,9 @@ gave up two things the earlier ADRs had secured, and that the migration opened w
   name `deny` below it. On a shared CDN address that is another site (ADR-0013).
 
 **Decision.** A destination given as an **IP literal** is decided as described above: the list top to bottom,
-the first matching address rule is final. A destination given by **name** must pass two checks:
+the first matching address rule is final. A catch-all name rule (`*`) with `allow` or `ask` above it does not
+change that: the address rule below it decides, and only when no address rule contains the address does the
+`*` rule. A destination given by **name** must pass two checks:
 
 1. **The name**: the first matching name rule, else the default. `deny` and `ask` are acted on before the
    name is resolved, always. A name `deny` wins wherever it stands.
@@ -145,6 +147,8 @@ and importing an old export record the same notes.
   force afterwards.
 - The locked ranges also match an IPv6 address that carries a locked IPv4 address (NAT64, 6to4,
   IPv4-compatible).
+- A grant target that is only a name is checked like a name rule: an address `allow` above the block opens
+  the address for it too.
 - Kept as decided under "Grants": a grant target with an IP literal or a fixed `address` is not subject to
   the blocks or to `deny` rules, only to the locked ranges. That includes loopback and metadata addresses and
   the `never` entries of `gateway.yaml`, which were closed to grants before. A target of that kind stored

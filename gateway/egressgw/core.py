@@ -257,6 +257,8 @@ class Gateway:
         self.api_token = os.environ.get("GW_API_TOKEN", "")
         self._tasks: list[asyncio.Task] = []
         if migration is not None:  # in the log the operator reads, not only in the container output
+            for n in self.grants.local_notes(self.policy):
+                log.warning("grants: %s", n)
             self.record(
                 kind="admin",
                 action="policy",
