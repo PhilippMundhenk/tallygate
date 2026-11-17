@@ -9,7 +9,8 @@ address is checked, and the connection gets the most restrictive result over all
   A destination given as an IP literal: the list top to bottom.
   1. an address rule (IP or CIDR) that contains the address (and matches the port) is final: allow, ask, deny.
   2. a name rule whose pattern matches the literal (`*`): `deny` is final; `allow` / `ask` is provisional -
-     the walk continues, and the first address rule below it that contains the address decides instead.
+     the walk continues, and the first address rule below it that contains the address decides instead
+     (the more restrictive of the two, so an `ask` for `*` is not skipped).
   3. nothing matched: the default action (allow | deny | ask).
 
   A destination given by name must pass two checks (ADR-0019, amendment):
@@ -30,6 +31,7 @@ or `ask` of a name into `allow` (`Decision.early`).
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import functools
 import ipaddress
@@ -312,7 +314,7 @@ class Rule:
         if not isinstance(self.source, str) or not _SOURCE.fullmatch(self.source):
             raise ValueError(f"rule {self.id}: invalid source {self.source!r}")
         if self.source in SEEDED_SOURCES:
-            if self.action != "deny" or not self.cidr:
+            if self.action != "deny" or not self.cidr or self.port not in (None, "*", "any"):
                 self.source = "user"  # no longer the block that was seeded: listed and counted as your rule
             elif self.expires is not None:
                 # it would be pruned when the time is over and, being remembered as seeded, never come back
@@ -498,7 +500,9 @@ class Policy:
                     return Decision(r.action, _why(r), r.id)  # an address rule: the first match is final
                 if r.action == "deny":
                     return self._shadowed(held, r, ip, literal=True)
-                return Decision(r.action, _why(r), r.id)  # the address rule decides, not the `*` above it
+                # the address rule decides instead of the `*` above it, but cannot turn its `ask` into `allow`
+                strict = held if RANK[held.action] > RANK[r.action] else r
+                return Decision(strict.action, _why(strict), strict.id)
             elif held is None and r.names(name):
                 if r.action == "deny":
                     return Decision("deny", _why(r), r.id)  # a name `deny` is final
@@ -781,10 +785,8 @@ def migrate(d: dict | None, builtin: list[str], config: list[str]) -> tuple[dict
     loose = []
     for r in others:
         if r.get("cidr") and r.get("action") in ("allow", "ask"):
-            try:
+            with contextlib.suppress(ValueError):  # a broken range is reported with the rule's id by Rule.validate
                 loose.append((r, ipaddress.ip_network(str(r["cidr"]), strict=False)))
-            except ValueError:
-                pass  # reported with the rule's id by Rule.validate
 
     def hit_by(cidr: str) -> list[str]:
         net = _net(cidr)

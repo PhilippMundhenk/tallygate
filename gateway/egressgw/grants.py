@@ -364,6 +364,12 @@ def _lan_targets(defs: dict) -> list[tuple[str, dict]]:
     return out
 
 
+def _target_key(name: str, t: dict) -> tuple:
+    """(grant, host, port) of a raw target as the parsed target spells them."""
+    port = t.get("port")
+    return name, str(t.get("host", "")).lower().rstrip("."), int(port) if str(port).isdigit() else port
+
+
 def _lan_notes(where: str, targets: list[tuple[str, dict]]) -> None:
     """Log once what the dropped `lan` flag means for each target (ADR-0019, Migration)."""
     for name, t in targets:
@@ -401,7 +407,7 @@ class Grants:
         self.request_timeout = int(config.get("grant_request_timeout", 300))
         self.max_requests = int(config.get("grant_max_pending", 3))
         self.defs: dict[str, GrantDef] = {}
-        self._had_lan = {(n, str(t.get("host")), t.get("port")) for n, t in _lan_targets(config.get("grants") or {})}
+        self._had_lan = {_target_key(n, t) for n, t in _lan_targets(config.get("grants") or {})}
         _lan_notes("gateway config", _lan_targets(config.get("grants") or {}))
         for name, d in (config.get("grants") or {}).items():
             self.defs[name] = GrantDef.from_dict(name, d or {}, "config")
@@ -411,7 +417,7 @@ class Grants:
             old_form = "destinations" not in raw and bool(raw)  # a pre-0014 {name: def} file
             file_defs = destinations.grants_from_file(raw)  # a file that cannot be read stops the gateway
             lan = _lan_targets(file_defs)
-            self._had_lan |= {(n, str(t.get("host")), t.get("port")) for n, t in lan}
+            self._had_lan |= {_target_key(n, t) for n, t in lan}
             for name, d in file_defs.items():
                 if name in self.defs:
                     continue  # config wins
@@ -441,15 +447,23 @@ class Grants:
                 log.error("%s unreadable (%s): auto-approval stays suspended", self.state_path, e)
                 self.auto_suspended = {"since": 0, "by": "unreadable state file"}
 
-    def local_notes(self, policy) -> list[str]:
-        """For the upgrade to ADR-0019: grant targets that name an address inside a blocked range and did not
-        carry the old `lan` flag. Such a target could be saved but was always refused; now it is reachable
-        while its grant is active. Nothing is changed here - the operator is told, once, in the log."""
+    def local_notes(self, policy, never: list[str] | tuple = ()) -> list[str]:
+        """For the upgrade to ADR-0019: grant targets that name an address which was refused before and is
+        reachable now while the grant is active. That is an address inside a blocked range without the old
+        `lan` flag, and - with or without it - an address in the old never list (`never`: the built-in one and
+        the entries of the gateway config), which no grant could reach. Locked addresses stay refused and are
+        not named. Nothing is changed here - the operator is told, once, in the log."""
         out = []
+        nets = [ipaddress.ip_network(c, strict=False) for c in never]
         for g in self.defs.values():
             for t in g.targets:
                 ip = t.fixed()
-                if not ip or (g.name, t.host, t.port) in self._had_lan:
+                if not ip or policy.locked(ip, t.port):
+                    continue
+                addr = ip_addr(ip)
+                if (g.name, t.host.lower().rstrip("."), t.port) in self._had_lan and not any(
+                    addr.version == n.version and addr in n for n in nets
+                ):
                     continue
                 if block := policy.blocked_by(ip, t.port):
                     auto = [lv for lv, how in g.approval.items() if how == "auto"]

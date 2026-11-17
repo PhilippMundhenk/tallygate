@@ -40,6 +40,7 @@ from egressgw.learning import REASON as LEARNING
 from egressgw.learning import Learning, parse_ports
 from egressgw.model import INTERCEPT, Access, Req, Verdict
 from egressgw.policy import (
+    DEFAULT_NEVER,
     LOCKED,
     Decision,
     Exception_,
@@ -257,13 +258,13 @@ class Gateway:
         self.api_token = os.environ.get("GW_API_TOKEN", "")
         self._tasks: list[asyncio.Task] = []
         if migration is not None:  # in the log the operator reads, not only in the container output
-            for n in self.grants.local_notes(self.policy):
+            for n in self.grants.local_notes(self.policy, self._old_never()):
                 log.warning("grants: %s", n)
             self.record(
                 kind="admin",
                 action="policy",
                 reason="policy.yaml migrated to one ordered rule list (ADR-0019): "
-                + ("; ".join([*migration, *self.grants.local_notes(self.policy)]) or "ok"),
+                + ("; ".join([*migration, *self.grants.local_notes(self.policy, self._old_never())]) or "ok"),
             )
 
     def _write_policy_file(self) -> None:
@@ -353,6 +354,10 @@ class Gateway:
     def restore_blocks(self) -> list[dict]:
         """Add the built-in and config blocks that are missing back at the bottom (ADR-0019)."""
         return [r.to_dict() for r in self.policy.restore_blocks(self.blocks_builtin, self.blocks_config)]
+
+    def _old_never(self) -> list[str]:
+        """What no grant could reach before ADR-0019: the built-in never list and the config's entries."""
+        return [*DEFAULT_NEVER, *self.blocks_config]
 
     def opened_above(self) -> list[dict]:
         """Address rules above a built-in or config block that open part of it (`Policy.opened_above`)."""

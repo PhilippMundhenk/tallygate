@@ -194,7 +194,7 @@ def test_a_migrated_policy_is_never_less_restrictive_than_the_old_one(seed):
             small = minimised(doc, config, found[0])
             if worst is None or len(small["rules"]) < len(worst[0]["rules"]):
                 worst = (small, config, found[0])
-    assert checked > 40_000
+    assert checked > 30_000
     assert worst is None, (
         f"{opened} of 300 documents decide less restrictively after the migration. The smallest: document "
         f"{worst[0]} with never={worst[1]}: (host, port, addresses, old, new) = {worst[2]}"

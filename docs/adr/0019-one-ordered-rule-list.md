@@ -117,8 +117,8 @@ gave up two things the earlier ADRs had secured, and that the migration opened w
 
 **Decision.** A destination given as an **IP literal** is decided as described above: the list top to bottom,
 the first matching address rule is final. A catch-all name rule (`*`) with `allow` or `ask` above it does not
-change that: the address rule below it decides, and only when no address rule contains the address does the
-`*` rule. A destination given by **name** must pass two checks:
+change that: the address rule below it decides (the more restrictive of the two, so an `ask` for `*` still
+asks), and only when no address rule contains the address does the `*` rule. A destination given by **name** must pass two checks:
 
 1. **The name**: the first matching name rule, else the default. `deny` and `ask` are acted on before the
    name is resolved, always. A name `deny` wins wherever it stands.

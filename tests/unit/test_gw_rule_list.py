@@ -157,8 +157,10 @@ CASES = [
      PUBLIC, 443, [], "ask", "q"),
     ("... an address deny below it blocks", [allow("any", host="*"), deny("b", cidr=PUBLIC + "/32"), allow("late", cidr=PUBLIC + "/32")], "allow",
      PUBLIC, 443, [], "deny", "b"),
-    ("... the first of two decides", [ask("any", host="*"), allow("a", cidr="192.168.1.0/24"), deny("late", cidr="192.168.1.30/32")], "deny",
+    ("... the first of two decides", [allow("any", host="*"), allow("a", cidr="192.168.1.0/24"), deny("late", cidr="192.168.1.30/32")], "deny",
      "192.168.1.30", 443, [], "allow", "a"),
+    ("... but an ask for everything is not skipped by an address allow", [ask("any", host="*"), allow("a", cidr="192.168.1.0/24")], "allow",
+     "192.168.1.30", 443, [], "ask", "any"),
     ("... on its port only: elsewhere the wildcard stands", [allow("any", host="*"), ask("q", cidr=PUBLIC + "/32", port=22)], "deny",
      PUBLIC, 443, [], "allow", "any"),
     ("a wildcard deny is final for a literal too", [deny("none", host="*"), allow("dev", cidr="192.168.44.1/32")], "allow",
@@ -638,14 +640,17 @@ def test_a_seeded_block_whose_action_changes_becomes_your_rule_and_takes_no_time
         assert "source" not in r.to_dict() and q.blocks_missing(BUILTIN, []) == ["10.0.0.0/8"]
         assert q.update_rule(TEN8, {"action": "deny"}).source == "user"  # changed back: still yours, not seeded
         assert q.blocks_missing(BUILTIN, []) == []  # ... but it blocks the range as the seeded block did
-    # note, group and port leave it the block it is
-    r = p.update_rule(TEN8, {"note": "lab", "group": "lan", "port": 443})
-    assert (r.source, r.port) == ("builtin", 443)
+    # note and group leave it the block it is
+    r = p.update_rule(TEN8, {"note": "lab", "group": "lan"})
+    assert (r.source, r.port) == ("builtin", "*")
     # a time limit is refused: the block would be pruned and, remembered as seeded, never come back
     for rid in (LAN16, TEN8):
         with pytest.raises(ValueError, match=f"rule {rid}: a built-in block takes no time limit. To open the range"):
             p.update_rule(rid, {"expires": time.time() + 3600})
         assert next(r for r in p.rules if r.id == rid).expires is None
+    # narrowed to one port it no longer blocks the range as it was seeded: your rule, and the block is missing
+    r = p.update_rule(TEN8, {"port": 443})
+    assert (r.source, r.port) == ("user", 443) and p.blocks_missing(BUILTIN, []) == ["10.0.0.0/8"]
     assert p.update_rule(LAN16, {"expires": None}).source == "builtin"
     # ... also in a document (PUT /policy, import, a hand-edited file): refused, not silently dropped
     doc = p.to_dict()

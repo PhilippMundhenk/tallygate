@@ -287,6 +287,31 @@ def test_local_notes_name_the_address_targets_that_start_working_with_the_upgrad
     assert [n.split(":")[0] for n in g.local_notes(p)] == ["NOTE grant cam"]
 
 
+def test_local_notes_know_the_old_never_list_the_locked_ranges_and_other_spellings(tmp_path, monkeypatch):
+    """`lan` never opened the old never list (loopback, metadata, the config's `never`): such a target was
+    refused with the flag too, and is named. A locked address stays refused and is not named. The flag is
+    recognised however host and port were spelled in the file."""
+    from egressgw.policy import DEFAULT_NEVER, Policy, builtin_blocks, ip_addr
+
+    monkeypatch.setenv("GW_INTERNAL_NETS", "172.31.11.0/24")
+    grants = {
+        "meta": {"targets": [{"host": "169.254.169.254", "port": 80, "scheme": "http", "lan": True}]},
+        "cfg": {"targets": [{"host": "203.0.113.9", "port": 80, "scheme": "http", "lan": True}]},
+        "stack": {"targets": [{"host": "172.31.11.3", "port": 80, "scheme": "http"}]},
+        "spelled": {"targets": [{"host": "NAS.Lan.", "port": "443", "address": "192.168.1.9", "lan": True}]},
+    }
+    g = Grants({"grants": grants}, tmp_path)
+    p = Policy()
+    p.seed_blocks(builtin_blocks(), ["203.0.113.9/32"])
+    p.locked_nets = list(g.internal)
+    assert p.locked("172.31.11.3", 80) and ip_addr("192.168.1.9")
+    assert [n.split(":")[0] for n in g.local_notes(p, [*DEFAULT_NEVER, "203.0.113.9/32"])] == [
+        "NOTE grant meta",
+        "NOTE grant cfg",
+    ]
+    assert g.local_notes(p) == []  # without the old never list only targets that lacked `lan` are named
+
+
 def test_own_listeners_and_internal_nets_from_the_environment(tmp_path, monkeypatch):
     for var in ("GW_INTERNAL_NETS", "GW_API_HOST", "GW_API_PORT", "GW_LISTEN_HOST"):
         monkeypatch.delenv(var, raising=False)
