@@ -170,11 +170,20 @@ should not buzz at night. The **Availability** card at the end of **Approvals** 
 - **Quiet hours** (e.g. 22:00–07:00, on the days you pick): the same, every day, without notifications.
 
 Nothing is ever allowed automatically because you are away: away mode only turns *ask* into *deny*. Rules
-that allow a destination keep working, and grants with `approval: auto` are still granted (and logged).
-What was refused is listed under **Refused while you were away**, with *Allow for 1 h* per destination (for an
-IP address it takes a second click, because the rule is added at the top and opens the address), and sent
-as one **digest** to Telegram/Matrix: when quiet hours end, when you are back, and while away every
-`digest_minutes` (30). *Dismiss list* clears the list. The header shows *away* or *quiet hours* on every tab.
+that allow a destination keep working.
+What happened is listed under **While you were away**: every refused request is marked *refused*, with
+*Allow for 1 h* per destination (for an IP address it takes a second click, because the rule is added at
+the top and opens the address). The list is sent as one **digest** to Telegram/Matrix: when quiet hours
+end, when you are back, and while away every `digest_minutes` (30). *Dismiss list* clears the list. The
+header shows *away* or *quiet hours* on every tab.
+
+**Automatic grants are the exception.** A grant level with `approval: auto` is still activated while you
+are away or in quiet hours: you allowed it beforehand, and away mode is about requests that need a person.
+It does not happen unnoticed: the list and the digest show it as *activated automatically*, with the name
+of the grant, the level, how often and when last (`grant nas (read), 3 times, last at 14:30`), and without
+an *Allow* button, because nothing was refused. If you do not want this while you are away, set the level
+to `ask`. The **emergency stop** suspends automatic approval as well (it also revokes what is active and sets the mode to
+`deny`, see [Quick settings](#quick-settings)), until you set the mode again.
 The agent sees the state in `tallygate grants`.
 
 Quiet hours use the gateway's time zone: set `TZ` (e.g. `TZ=Europe/Berlin` in `.env`) or `tz` in

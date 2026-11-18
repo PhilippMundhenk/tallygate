@@ -170,6 +170,19 @@ def test_allowing_an_address_from_the_digest_takes_a_second_click():
         assert Access.checked_name(host) == host and not address(host)
 
 
+def test_an_automatic_grant_in_the_away_list_has_a_label_and_no_allow_button():
+    """#237, a text check of the UI code: the `auto_grant` kind is rendered before anything that treats an
+    entry as refused (the *Allow for 1 h* button, "the agent can request it again"), and escaped."""
+    js = (STATIC / "availability.js").read_text(encoding="utf-8")
+    auto = js.index('if (m.kind === "auto_grant") {')
+    block = js[auto : js.index("continue;", auto)]
+    assert "activated automatically" in block and "esc(`grant ${m.host} (${m.level})`)" in block
+    assert "Allow" not in block and "createElement" not in block and "gw(" not in block and "request it again" not in block
+    assert auto < js.index('if (m.kind === "conn") {') and auto < js.index("the agent can request it again")
+    assert '<span class="status warn">refused</span>' in js[js.index("continue;", auto) :]
+    assert "<h4>While you were away" in js
+
+
 def spellings(rng):
     """One IPv4 address in a random spelling: 1 to 4 parts, each decimal, hex or octal, perhaps a trailing dot,
     perhaps upper case, perhaps digits and dots of another script (IDNA folds them to ASCII)."""

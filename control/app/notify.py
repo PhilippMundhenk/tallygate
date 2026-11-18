@@ -116,8 +116,11 @@ def _describe(p: dict) -> str:
 
 
 def digest_text(ev: dict, public_url: str = "", limit: int = 20) -> str:
-    """The digest: what was refused without asking while the operator was away or in quiet hours."""
+    """The digest: what was refused without asking while the operator was away or in quiet hours, and which
+    grants were activated automatically meanwhile (#237; name, level and counts only, nothing agent-written)."""
     items = ev.get("items") or []
+    auto = [i for i in items if i.get("kind") == "auto_grant"]
+    items = [i for i in items if i.get("kind") != "auto_grant"]  # only these were refused
     total = len(items) + int(ev.get("more") or 0)
     lines = [f"📋 tallygate digest ({ev.get('why', 'while away')}): {total} request(s) refused without asking"]
     for i in items[:limit]:
@@ -125,9 +128,22 @@ def digest_text(ev: dict, public_url: str = "", limit: int = 20) -> str:
         lines.append(f"  {what}" + (f" ×{i['count']}" if i.get("count", 1) > 1 else ""))
     if total > min(len(items), limit):
         lines.append(f"  … and {total - min(len(items), limit)} more")
-    lines.append(
-        "Allow what you need in the UI (Approvals → Availability)" + (f": {public_url}" if public_url else ".")
-    )
+    if total:
+        lines.append(
+            "Allow what you need in the UI (Approvals → Availability)" + (f": {public_url}" if public_url else ".")
+        )
+    if auto:
+        lines.append(f"Activated automatically meanwhile (approval: auto): {len(auto)} grant level(s)")
+        for i in auto[:limit]:
+            last = i.get("last")
+            at = time.strftime("%H:%M", time.localtime(last)) if isinstance(last, (int, float)) else "?"
+            count = i.get("count", 1)
+            lines.append(
+                f"  grant {i['host']} ({i.get('level', '?')}), {count} time{'' if count == 1 else 's'}, last at {at}"
+            )
+        if len(auto) > limit:
+            lines.append(f"  … and {len(auto) - limit} more")
+        lines.append("Not wanted? The emergency stop suspends automatic approval.")
     return "\n".join(lines)
 
 

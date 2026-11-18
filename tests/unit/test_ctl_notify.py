@@ -794,6 +794,28 @@ def test_digest_text_counts_and_truncates():
     assert notify.digest_text({"items": [items[3]]}).endswith("(Approvals → Availability).")
 
 
+def test_digest_text_lists_automatic_grants_apart_from_what_was_refused():
+    """#237: an automatic grant is not a refused request: not counted as one, no "allow it" hint for it."""
+    last = time.mktime((2026, 1, 5, 14, 30, 0, 0, 0, -1))
+    auto = [
+        {"kind": "auto_grant", "host": "nas", "port": 0, "level": "read", "count": 3, "last": last},
+        {"kind": "auto_grant", "host": "wiki", "port": 0, "level": "write", "count": 1},
+    ]
+    refused = [{"kind": "conn", "host": "h.example", "port": 443, "count": 1}]
+    text = notify.digest_text({"why": "away ended", "items": auto + refused, "more": 0}, "https://t.example")
+    lines = text.split("\n")
+    assert lines[0] == "📋 tallygate digest (away ended): 1 request(s) refused without asking"
+    assert lines[1] == "  h.example:443" and lines[2].endswith(": https://t.example")
+    assert lines[3] == "Activated automatically meanwhile (approval: auto): 2 grant level(s)"
+    assert lines[4] == "  grant nas (read), 3 times, last at 14:30"
+    assert lines[5] == "  grant wiki (write), 1 time, last at ?"
+    assert lines[6] == "Not wanted? The emergency stop suspends automatic approval." and len(lines) == 7
+    only = notify.digest_text({"items": auto}, limit=1)
+    assert only.startswith("📋 tallygate digest (while away): 0 request(s) refused without asking\nActivated")
+    assert "nas:0" not in only and "Allow what you need" not in only and "  … and 1 more" in only
+    assert "wiki" not in only
+
+
 def test_digest_goes_to_every_channel(make):
     n = make({**TG, **MX})
     run(n.handle({"type": "digest", "why": "away ended", "items": [{"kind": "grant", "host": "nas", "port": 0}]}))

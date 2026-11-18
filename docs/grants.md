@@ -26,7 +26,7 @@ agent:  granted: homeassistant (read) for 30 min
 | **targets** | `host:port` plus `scheme`. `https`/`http` targets are inspected per request (method, path, Host). `tcp` passes raw traffic through (SSH, databases, MQTT …). Hosts can be exact, `*.lan` wildcards or IPs. A wildcard covers subdomains only: unlike in rules, `*.example.lan` does not include `example.lan`. |
 | **paths** | HTTP path patterns (`/api/*`): globs in which `*` also matches `/`, compared case-sensitively with the path without its query. Paths are matched after rejecting traversal tricks: `.` and `..` segments, `//`, backslashes, spaces and control characters, an encoded `.`, `/`, `\` or NUL (`%2e`, `%2f`, `%5c`, `%00`), any of these hidden by repeated encoding, more than three layers of encoding, and a `%` that is left after decoding. |
 | **levels** | `read` = `GET`/`HEAD`/`OPTIONS` only, no WebSocket upgrades. `write` = every method. A grant can offer one or both. `tcp` targets are only usable at `write`. |
-| **approval** | Per level: `ask` (a human decides) or `auto` (granted at once, still logged and shown). A common choice is `read: auto, write: ask`. |
+| **approval** | Per level: `ask` (a human decides) or `auto` (granted at once, still logged and shown). A common choice is `read: auto, write: ask`. `auto` also applies while you are away or in quiet hours (see the notes below). |
 | **address** | Fixed IP for the target (*Fixed IP* in the UI): the gateway connects to this address instead of resolving the name. It is what lets a target with a name be a device on the local network, see [Local targets and name-only targets](#local-targets-and-name-only-targets). |
 | **tls_fingerprint** | SHA-256 of the service's certificate: lets the gateway trust a self-signed cert (Proxmox, a NAS, a router) **without** turning verification off. `tls_verify: false` exists (config-file grants only), but avoid it. |
 | **inject** | Header templates such as `Authorization: Bearer ${ha_token}`. The secret lives in the gateway, and the agent never sees it. On a host with an inject rule, the agent's own `Authorization`/`Cookie` (`inject_strip_headers`) are stripped. Only for exact-host `https` targets; while a referenced secret is missing, the request goes out without the header. **Config-file grants only.** |
@@ -40,6 +40,11 @@ Defaults and limits:
   characters.
 - `levels` defaults to `[read]`. `approval` defaults to `ask`; one word (`approval: auto`) applies to every
   level.
+- **`approval: auto` and away mode.** An `auto` level is granted at once even while you are away or in quiet
+  hours: you authorised it beforehand, and [away mode](user-guide.md#away-mode-and-quiet-hours) only refuses
+  what needs a person. Each such activation is listed under *While you were away* and in the digest as
+  *activated automatically* (grant, level, how often, when last). The emergency stop suspends automatic
+  approval, also while you are away; then the request is refused like any other.
 - `default_ttl` defaults to `1h`, `max_ttl` to `4h`. Durations are written `90s`, `30m`, `4h`, `2d` or as
   seconds. A requested duration below one minute is raised to one minute.
 - `tcp` targets take no `paths` and no TLS options, `http` targets no TLS options. A grant with only `tcp`
