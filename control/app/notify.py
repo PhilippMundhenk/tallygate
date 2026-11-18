@@ -118,6 +118,18 @@ def digest_text(ev: dict, public_url: str = "", limit: int = 20) -> str:
     return "\n".join(lines)
 
 
+def connectivity_text(ev: dict) -> str:
+    """The gateway has no connection (or has one again, #218): a fixed text and a time, nothing from the agent."""
+    since = ev.get("since")
+    if not ev.get("down"):
+        return "✅ tallygate: the gateway has a connection again."
+    at = time.strftime("%H:%M", time.localtime(since)) if isinstance(since, (int, float)) else "?"
+    return (
+        f"⚠️ tallygate: no connection from the gateway since {at}. Lookups and connections fail: "
+        "a problem of the host's network, not a policy decision."
+    )
+
+
 def context_line(p: dict) -> str:
     """The agent's most recent claim about what it is doing (#74), for the end-to-end encrypted Web Push
     message only: third-party chat services do not get agent-written text from the workspace."""
@@ -403,6 +415,8 @@ class Notifier:
                 await self._on_grant_resolved(ev["request"])
             elif ev["type"] == "digest":
                 await self._on_digest(ev)
+            elif ev["type"] == "connectivity":
+                await self._on_connectivity(ev)
         except Exception as e:  # noqa: BLE001
             log.warning("notification failed: %s", e)
 
@@ -472,10 +486,23 @@ class Notifier:
 
     async def _on_digest(self, ev: dict) -> None:
         """One message for everything that was refused while nobody could answer (away / quiet hours, #73)."""
-        text = digest_text(ev, self.public_url)
+        await self._announce("digest", "tallygate digest", digest_text(ev, self.public_url), 3600)
+
+    async def _on_connectivity(self, ev: dict) -> None:
+        """Once when the gateway loses its connection and once when it is back (#218): a notice, no buttons."""
+        text = connectivity_text(ev)
+        await self._announce(
+            "connectivity",
+            "tallygate: no connection" if ev.get("down") else "tallygate: connected",
+            text,
+            3600,
+            high=bool(ev.get("down")),
+        )
+
+    async def _announce(self, what: str, title: str, text: str, ttl: int, high: bool = False) -> None:
         on = self.describe()
         await self._channels(
-            "digest",
+            what,
             tg=self._tg("sendMessage", chat_id=self.tg_chat, text=text, disable_web_page_preview=True)
             if on["telegram"]
             else None,
@@ -484,10 +511,8 @@ class Notifier:
             )
             if on["matrix"]
             else None,
-            push=self._push_all(lambda _s: {"title": "tallygate digest", "body": text, "tag": "digest"}, 3600)
-            if on["webpush"]
-            else None,
-            **self._plain("tallygate digest", text, high=False),
+            push=self._push_all(lambda _s: {"title": title, "body": text, "tag": what}, ttl) if on["webpush"] else None,
+            **self._plain(title, text, high=high),
         )
 
     # ---------------------------------------------------------------- grants
