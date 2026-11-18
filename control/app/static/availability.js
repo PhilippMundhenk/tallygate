@@ -12,11 +12,14 @@
   box.innerHTML = `<div class="row-between"><div><h3 class="inline-h">Availability</h3> <span class="status ok" id="avState" role="status"></span></div>
       <div class="btns"><select id="avFor" aria-label="How long you are away">${AWAY_FOR.map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}</select>
       <button id="avToggle"></button></div></div>
-    <p class="hint">While you are away or in quiet hours, requests that need you are refused at once; nothing is allowed automatically.</p>
+    <p class="hint">While you are away or in quiet hours, requests that need you are refused at once; nothing is allowed because you are away.</p>
     <details class="help"><summary>What happens while I am away?</summary>
       <p>Nothing waits for you: new destinations and grant requests that need your approval are refused at once,
-        and the agent is told why. Nothing is allowed automatically. What was refused is listed here and sent as
-        one digest when you are back.</p></details>
+        and the agent is told why. Nothing is allowed because you are away. What was refused is listed here and sent as
+        one digest when you are back.</p>
+      <p>Grants you set to <code>approval: auto</code> are still activated: you allowed that beforehand. Each one is
+        listed here as <em>activated automatically</em> and is part of the digest. The emergency stop suspends
+        automatic approval.</p></details>
     <details id="avQuiet" class="more"><summary>Quiet hours: <span id="avQuietText"></span></summary>
       <div class="row wrap">
         <label class="check inline-check"><input type="checkbox" id="avQOn"> Quiet hours on</label>
@@ -27,7 +30,7 @@
       <p class="hint" id="avZone"></p>
       <button id="avQSave" class="secondary">Save quiet hours</button>
     </details>
-    <div id="avMissed" class="hidden"><h4>Refused while you were away <span id="avMissedN" class="badge"></span></h4>
+    <div id="avMissed" class="hidden"><h4>While you were away <span id="avMissedN" class="badge"></span></h4>
       <div id="avMissedList"></div><button id="avMissedClear" class="small secondary">Dismiss list</button></div>`;
 
   // A small marker next to the brand, so the state is visible on every tab.
@@ -80,8 +83,16 @@
     const list = $("#avMissedList"); list.innerHTML = "";
     for (const m of missed) {
       const row = document.createElement("div"); row.className = "row-between missed-row";
+      if (m.kind === "auto_grant") {  // not refused (#237): a label only
+        row.classList.add("missed-auto");
+        row.innerHTML = `<div><span class="status ok">activated automatically</span> <code>${esc(`grant ${m.host} (${m.level})`)}</code>
+          <span class="muted">${esc(m.count)} time${m.count === 1 ? "" : "s"} · last ${esc(fmtDate(m.last))}</span></div>
+          <span class="muted">approval: auto · the emergency stop suspends it</span>`;
+        list.appendChild(row);
+        continue;
+      }
       const what = m.kind === "grant" ? `grant ${m.host}` : `${m.host}:${m.port}`;
-      row.innerHTML = `<div><code>${esc(what)}</code> <span class="muted">${m.count > 1 ? `×${esc(m.count)} · ` : ""}last ${esc(fmtDate(m.last))}</span></div>`;
+      row.innerHTML = `<div><span class="status warn">refused</span> <code>${esc(what)}</code> <span class="muted">${m.count > 1 ? `×${esc(m.count)} · ` : ""}last ${esc(fmtDate(m.last))}</span></div>`;
       if (m.kind === "conn") {
         const b = document.createElement("button"); b.className = "small ghost"; b.textContent = "Allow for 1 h";
         b.setAttribute("aria-label", `Allow ${what} for 1 hour`);
