@@ -435,6 +435,9 @@ earlier entry ends with *Replaced in this release*. The state you get:
   (#17, #18).
 
 ### Fixed
+- **Isolation self-test shown as "to do"** in Setup whenever the page was loaded, because its result is not stored.
+  It is an optional spot check now: *optional* before a run, *done* after a passing one, *check* after a failing
+  one, and it is no longer one of the steps counted in "N of M steps done".
 - **Approval requests for the GitHub CLI's own traffic**: `gh` sends usage telemetry to `cafe.github.com` and
   checks for updates, which showed up as approval requests nobody wanted. The agent image switches both off
   (`GH_TELEMETRY=false`, `GH_NO_UPDATE_NOTIFIER=1`, `GH_NO_EXTENSION_UPDATE_NOTIFIER=1`).
