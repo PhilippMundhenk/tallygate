@@ -4,6 +4,8 @@
 - [Installation](#installation)
   - [With Docker Compose (recommended)](#with-docker-compose-recommended)
   - [Reaching the UI](#reaching-the-ui)
+  - [Versions and pinning](#versions-and-pinning)
+  - [Verifying the images](#verifying-the-images)
   - [Host directories](#host-directories)
   - [From source](#from-source)
   - [Custom agent image](#custom-agent-image)
@@ -14,6 +16,7 @@
 - [Changing the UI password](#changing-the-ui-password)
 - [Day-to-day](#day-to-day)
 - [Upgrades](#upgrades)
+  - [Upgrading and rolling back](#upgrading-and-rolling-back)
   - [Upgrade to the ordered rule list](#upgrade-to-the-ordered-rule-list)
   - [Restoring the built-in blocks](#restoring-the-built-in-blocks)
 - [Resource limits](#resource-limits)
@@ -37,7 +40,8 @@
 ### With Docker Compose (recommended)
 
 Prebuilt images for amd64 and arm64 are published on GHCR: `tallygate-gateway`, `tallygate-control` and
-`tallygate-agent` under `ghcr.io/philippmundhenk/`. You only need the compose file.
+`tallygate-agent` under `ghcr.io/philippmundhenk/`. You only need the compose file **of a release**: it is
+pinned to the images of that release (see [Versions and pinning](#versions-and-pinning)).
 
 ```bash
 mkdir tallygate && cd tallygate
@@ -49,22 +53,40 @@ docker compose logs control | grep -A1 password    # the generated UI password
 The generated password stays readable in the control log (`docker compose logs`) until the log is rotated,
 so change it after the first login, see [Changing the UI password](#changing-the-ui-password).
 
-Open `http://<host>:8080` and continue with [First-time setup](#first-time-setup). See
-[Reaching the UI](#reaching-the-ui) for HTTPS, a localhost-only setup and an SSH tunnel.
+Open `http://127.0.0.1:8080` on the Docker host and continue with [First-time setup](#first-time-setup).
+From another machine, see [Reaching the UI](#reaching-the-ui): an SSH tunnel, HTTPS through a reverse proxy,
+or the port on the whole network.
 
 ### Reaching the UI
 
+The UI speaks plain HTTP. By default it is therefore published on the Docker host's loopback address only,
+and reaching it from another machine is your choice:
+
 | Setup | `CONTROL_PUBLISH` | How you open it |
 |---|---|---|
-| LAN, plain HTTP (default) | `0.0.0.0:8080` | `http://<host>:8080`. Password and session travel unencrypted: fine for a trusted home network or a first look; the UI shows a warning. |
+| On the host itself (default) | `127.0.0.1:8080` | `http://127.0.0.1:8080` in a browser on the Docker host |
+| SSH tunnel (default) | `127.0.0.1:8080` | `ssh -L 8080:127.0.0.1:8080 <host>`, then `http://127.0.0.1:8080` on your machine |
 | TLS reverse proxy on the same host (recommended) | `127.0.0.1:8080` | `https://tallygate.example.org`, see [Reverse proxy](#reverse-proxy) |
-| Localhost only, SSH tunnel | `127.0.0.1:8080` | `ssh -L 8080:127.0.0.1:8080 <host>`, then `http://127.0.0.1:8080` |
+| Proxy container on the `mgmt` network | no published port | `https://tallygate.example.org`, see [Authenticating proxy](#authenticating-proxy) |
+| The whole network, plain HTTP | `0.0.0.0:8080` (or one address: `192.168.1.10:8080`) | `http://<host>:8080`. The UI shows a warning. |
+
+Before you set `CONTROL_PUBLISH=0.0.0.0:8080` (the default up to 0.4.0):
+
+- The password and the session cookie cross the network unencrypted. Whoever can read the traffic controls
+  the policy, the consoles (code execution in the agent) and the use of the stored GitHub token.
+- **A host firewall does not close the port.** Docker publishes ports with its own NAT rules, which are
+  applied before the rules of ufw or firewalld: a `ufw deny 8080` has no effect on a published port. Limit
+  it with the address in `CONTROL_PUBLISH` (one interface instead of `0.0.0.0`) or with rules in Docker's
+  `DOCKER-USER` chain.
+- On a host with a public address, `0.0.0.0` publishes the UI to the internet.
 
 `CONTROL_PUBLISH` is a compose variable: set it in `.env` or as a stack variable (Portainer), or change the
-default in the `ports:` line. Under the service's `environment:` it has no effect.
+default in the `ports:` line. Under the service's `environment:` it has no effect. Apply a change with
+`docker compose up -d`.
 
 The session cookie follows the connection (`COOKIE_SECURE=auto`): `Secure` over HTTPS, so it is never sent
-unencrypted once you use a proxy, and a normal cookie over plain HTTP, so the LAN setup works without changes.
+unencrypted once you use a proxy, and a normal cookie over plain HTTP, so the tunnel and the plain-HTTP
+setup work without changes.
 
 None of these setups lets the agent reach the UI: control listens only on its `mgmt` address, the Docker host
 has no address on `agent-net`, and the gateway refuses private addresses (`bypass.sh` checks all three).
@@ -99,8 +121,50 @@ curl -fsSLO https://github.com/PhilippMundhenk/tallygate/releases/latest/downloa
 bash bypass.sh                 # must end with ALL CHECKS PASSED
 ```
 
-Pin a version with `TALLYGATE_VERSION=0.4` (minor version, gets patches) or `0.4.0` in `.env`. Each release
-also attaches `compose.yaml`, `.env.example`, `gateway.yaml` and `bypass.sh` for that version.
+### Versions and pinning
+
+`compose.yaml` holds the isolation itself: the networks, `GW_INTERNAL_NETS`, the hardening options and the
+self-test probes. It belongs to one version of the images, so take both from the same release:
+
+- **The `compose.yaml` attached to a release starts the images of that release.** The release job writes the
+  version into it (`…/tallygate-gateway:${TALLYGATE_VERSION:-X.Y.Z}`), so `docker compose pull` never moves
+  an installation to another version by itself. The link `releases/latest/download/compose.yaml` is the
+  newest release; `releases/download/vX.Y.Z/compose.yaml` is a specific one.
+- **By digest:** each release also attaches `compose.digests.yaml`, an override that names the three images
+  by their `sha256` digest. With it a tag that was moved or replaced in the registry cannot change what
+  runs: `docker compose -f compose.yaml -f compose.digests.yaml up -d`, or once in `.env`:
+  `COMPOSE_FILE=compose.yaml:compose.digests.yaml`. `TALLYGATE_VERSION` has no effect then.
+- The `compose.yaml` on the `main` branch of the repository defaults to `:latest` (the newest release). It
+  is meant for building from source and for trying `main`; do not install from it.
+- `TALLYGATE_VERSION` in `.env` still overrides the tag, e.g. `0.4` to follow the patch releases of a minor
+  version. Then the images move on `docker compose pull` while `compose.yaml` stays: read the changelog of
+  each release and fetch its `compose.yaml` too. A gateway that finds no `GW_INTERNAL_NETS` (a compose file
+  from before the setting) does not start.
+
+Each release also attaches `.env.example`, `gateway.yaml` and `bypass.sh` for that version.
+
+Releases up to 0.4.0 attached the unpinned `compose.yaml` and no digests: with those, set
+`TALLYGATE_VERSION=0.4.0` in `.env`.
+
+### Verifying the images
+
+The images on GHCR are signed with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
+(keyless: the signature is bound to the GitHub Actions workflow that built the image, there is no key to
+distribute). Releases after 0.4.0 are signed. To check an image before you start it:
+
+```bash
+cosign verify ghcr.io/philippmundhenk/tallygate-gateway:0.4.1 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity https://github.com/PhilippMundhenk/tallygate/.github/workflows/ci.yml@refs/tags/v0.4.1
+```
+
+Repeat it for `tallygate-control` and `tallygate-agent`. The identity is the workflow file in this
+repository at the release tag; for the `:main` and `:sha-…` images it ends in `@refs/heads/main`. A
+successful check prints the verified claims and the digest it checked. To be sure that the verified image
+is the one that runs, verify the digest lines of `compose.digests.yaml` (`…:0.4.1@sha256:…` instead of the
+tag) and start with that file. Docker itself does not check signatures: the check is this command.
+Build provenance and an SBOM are attached to every image as well
+(`docker buildx imagetools inspect <image> --format '{{ json .Provenance }}'`).
 
 ### Host directories
 
@@ -145,6 +209,9 @@ git clone https://github.com/PhilippMundhenk/tallygate.git && cd tallygate
 make up                   # docker compose -f compose.yaml -f compose.build.yaml up -d --build
 make bypass-test          # authoritative isolation test (must end with ALL CHECKS PASSED)
 ```
+
+The UI is at `http://127.0.0.1:8080` on the host, as with the published images
+([Reaching the UI](#reaching-the-ui)).
 
 The `make` targets add [`compose.build.yaml`](../compose.build.yaml), which gives every service a `build:`
 section; the local images are tagged `:local`. Requirements: Docker, `make`, and Python 3.12+ for the tests.
@@ -201,7 +268,8 @@ All three services set `max-size: 10m` themselves. To rotate other containers to
 
 ## Reverse proxy
 
-Publish the UI only on localhost (`CONTROL_PUBLISH=127.0.0.1:8080`) and terminate TLS in front. Set `PUBLIC_URL` (used for the origin check), `TRUST_FORWARDED_FOR=1` and `TRUSTED_PROXIES`, the
+Publish the UI only on localhost (`CONTROL_PUBLISH=127.0.0.1:8080`, the default: make sure `.env` does not
+set another address, or the plain-HTTP port stays open next to the proxy) and terminate TLS in front. Set `PUBLIC_URL` (used for the origin check), `TRUST_FORWARDED_FOR=1` and `TRUSTED_PROXIES`, the
 address control sees for your proxy. Forwarded headers from any other peer are ignored. WebSockets must be
 passed through (web consoles).
 
@@ -217,6 +285,15 @@ cannot reach host services through the egress path. Entries there are added to t
 
 ```yaml
 never: [203.0.113.7/32]   # your host's public IP; the built-in ranges still apply
+```
+
+`.env` for a proxy on the host:
+
+```sh
+CONTROL_PUBLISH=127.0.0.1:8080          # the default: only the host (your proxy) reaches the port
+PUBLIC_URL=https://tallygate.example.org
+TRUST_FORWARDED_FOR=1
+TRUSTED_PROXIES=172.31.12.1/32
 ```
 
 Caddy on the host, with SSO in front of the built-in password:
@@ -257,7 +334,7 @@ services:
       mgmt: {ipv4_address: 172.31.12.10}
 ```
 
-`.env`:
+`.env` (`CONTROL_PUBLISH` is not used: nothing of control is published):
 
 ```sh
 PUBLIC_URL=https://tallygate.example.org
@@ -354,7 +431,7 @@ docker compose exec control python -m app.passwd --print-hash   # prints scrypt:
 
 | Component | Procedure |
 |---|---|
-| tallygate (Compose) | The UI shows **Update: X.Y.Z** in the header when a newer release exists (Overview → *Versions*; switch the check off with `UPDATE_CHECK=0`). Read the [CHANGELOG](../CHANGELOG.md), including its *Upgrading* notes → `docker compose pull && docker compose up -d` → self-test or `bash bypass.sh`. Download the new `compose.yaml` when the changelog says so. When the networks changed (as in 0.4.0), run `docker compose down` first: a plain `up -d` keeps the running containers on the wrong addresses. |
+| tallygate (Compose) | The UI shows **Update: X.Y.Z** in the header when a newer release exists (Overview → *Versions*; switch the check off with `UPDATE_CHECK=0`). Read the [CHANGELOG](../CHANGELOG.md), including its *Upgrading* notes → **download the `compose.yaml` of the new release** → `docker compose pull && docker compose up -d` → self-test or `bash bypass.sh`. Steps and rollback: [Upgrading and rolling back](#upgrading-and-rolling-back). When the networks changed (as in 0.4.0), run `docker compose down` first: a plain `up -d` keeps the running containers on the wrong addresses. |
 | tallygate (from source) | `git pull` → read `CHANGELOG.md` → `make up` → `make bypass-test`. |
 | Claude Code | Part of the agent image, which has no auto-updater by design. New Claude Code versions arrive as tallygate patch releases: update tallygate. From source, set `CLAUDE_VERSION` in `.env` and run `make up`. |
 | Base images / dependencies | Published images are rebuilt for every release. From source: `docker compose -f compose.yaml -f compose.build.yaml build --pull && make up`. |
@@ -366,6 +443,44 @@ volume (`~/.claude/tallygate-rc-pointer.json`) and puts it back before every sta
 longer knows the environment, a new one is registered after five refused starts, and the old session shows
 *environment deleted* in the app. Its conversation is still on the home volume: `claude --resume` in the
 *claude* console lists it.
+
+### Upgrading and rolling back
+
+An upgrade replaces the compose file **and** the images, because the compose file carries the isolation
+settings of its version ([Versions and pinning](#versions-and-pinning)). `docker compose pull` alone keeps
+the old file: with a release's `compose.yaml` it pulls nothing new, and with `TALLYGATE_VERSION` or `:latest`
+it moves the images under an old file.
+
+```bash
+cd tallygate
+cp -p compose.yaml compose.yaml.previous             # for the way back
+curl -fsSLO https://github.com/PhilippMundhenk/tallygate/releases/latest/download/compose.yaml
+curl -fsSLO https://github.com/PhilippMundhenk/tallygate/releases/latest/download/compose.digests.yaml   # if you use it
+docker compose pull && docker compose up -d
+bash bypass.sh                                       # or the UI's self-test
+```
+
+- If you changed `compose.yaml` (for example the `gateway.yaml` mount, or other subnets together with
+  `GW_INTERNAL_NETS`), make the same changes in the new file: `diff compose.yaml.previous compose.yaml`
+  shows both yours and the release's. Changes kept in a `compose.override.yaml` and in `.env` survive as
+  they are.
+- If `.env` sets `TALLYGATE_VERSION`, remove the line or raise it: it overrides the version in the file.
+- Portainer and similar: replace the stack's compose text with the new release's file, then redeploy with
+  *re-pull image*.
+
+**Rolling back** is the same in the other direction: put the previous file back and start it.
+
+```bash
+cp -p compose.yaml.previous compose.yaml             # or download it again:
+# curl -fsSLO https://github.com/PhilippMundhenk/tallygate/releases/download/v0.4.1/compose.yaml
+docker compose up -d                                  # (compose.digests.yaml: take the one of that release)
+```
+
+The files of 0.4.0 and older are not pinned: set `TALLYGATE_VERSION=0.4.0` in `.env` to go back to one of
+them. State written by a newer version is not always readable by an older one; the changelog's *Upgrading*
+notes say when a backup has to be restored (as for the
+[ordered rule list](#upgrade-to-the-ordered-rule-list)). Take a [backup](#backup-and-restore) before an
+upgrade.
 
 ## Resource limits
 
@@ -445,7 +560,7 @@ key `seeded`), so put the backups back before you start it. Changes made after t
 docker compose stop egress-gw
 docker run --rm -v tallygate_gateway-data:/v debian sh -c \
   'cp -p /v/policy.yaml.pre-0019 /v/policy.yaml; [ ! -f /v/grants.yaml.pre-0019 ] || cp -p /v/grants.yaml.pre-0019 /v/grants.yaml'
-# set TALLYGATE_VERSION to the older release in .env, then:
+# put the compose.yaml of the older release back (0.4.0 and older: TALLYGATE_VERSION in .env), then:
 docker compose up -d
 ```
 
@@ -533,7 +648,8 @@ to a new gateway, the CA changes. That's harmless: the agent re-reads the CA on 
 | TLS errors only for github.com | The agent doesn't trust the gateway CA: check `/ca/egress-gw-ca.pem` exists in the agent (`ls /ca`) and restart the agent after the gateway. |
 | `ENOSPC: no space left on device` | Host disk full. Free space (`docker system df`, logs) or grow the VM disk. |
 | UI login loops | `COOKIE_SECURE=1` forces a Secure cookie, which browsers drop over plain HTTP from another machine. Use the default `auto`, or HTTPS. |
-| UI does not answer on `http://<host>:8080` | `docker port tallygate-control-1` must show `0.0.0.0:8080`. `127.0.0.1:8080` means `CONTROL_PUBLISH` is set to localhost (or was put under `environment:`, where it has no effect). Otherwise check the host firewall. |
+| UI does not answer on `http://<host>:8080` from another machine | Intended (up to 0.4.0 it was every interface): the UI is published on the host's loopback address only (`docker port tallygate-control-1` shows `127.0.0.1:8080`). Use an SSH tunnel or a reverse proxy, or set `CONTROL_PUBLISH=0.0.0.0:8080` in `.env` (not under `environment:`, where it has no effect) after reading [Reaching the UI](#reaching-the-ui). If the port shows `0.0.0.0:8080` and does not answer, check the host firewall's forwarding rules. |
+| Gateway does not start: `GW_INTERNAL_NETS is empty` | The images are newer than `compose.yaml`: download the `compose.yaml` of the release you run ([Upgrading and rolling back](#upgrading-and-rolling-back)). |
 | A notification channel fails with `answered with a redirect, which control never follows` (channel status under **Setup → Notifications**, or the *Send test* button) | Control does not follow HTTP redirects, for any outbound call. The configured URL (`NTFY_URL`, `GOTIFY_URL`, `MATRIX_HOMESERVER`, …) must be the final one: typical causes are `http://` where the reverse proxy redirects to `https://`, a missing or extra path prefix, or a host name that redirects to another (`example.org` → `www.example.org`). Open the URL with `curl -sI` and enter the address from its `Location` header. For Matrix use the homeserver's client API base URL, not the server name that is only delegated through `.well-known`. |
 | *the agent answered with a redirect, which is never followed* in the UI (Overview, Setup, Files) or `the agent answered with a redirect: not followed` in the control log | The agent's status server answered a call of the control plane with a 3xx. The real one (`agent/status.py`) never does; treat it as a sign that something in the agent container replaced it (threat T49). Control did not follow it. Look at the consoles and the gateway log, and restart the agent container. |
 | Reactions and replies in the Matrix room do nothing; **Setup → Notifications** says *Matrix approvals paused: cannot verify the bot's own account*, the control log `matrix whoami failed: …` | The control plane could not ask the homeserver which account its token belongs to, and reads nothing from the room until it can (so the bot's own reactions can never count as yours). Check `MATRIX_HOMESERVER` and the access token (expired, logged out?) and that the homeserver is up. It retries by itself (5 s up to 5 min); taps made meanwhile are not applied later, decide in the UI or react again. *Matrix approvals off: the bot's own account … is in the allowed users* means the token belongs to an allowed user: use a separate bot account ([user guide](user-guide.md#matrix-approvals)). |

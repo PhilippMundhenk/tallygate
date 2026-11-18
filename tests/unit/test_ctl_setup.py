@@ -137,6 +137,9 @@ def test_checks_plain_http_cookie_and_proxy(load_main):
             got = await checks(c, "http://192.0.2.5:8080", **{"X-Forwarded-Proto": "https"})
             assert got["https"]["state"] == "warn" and got["proxy"]["state"] == "warn"
             assert "X-Forwarded-Proto" in got["proxy"]["detail"] and "192.0.2.5:8080" in got["reach"]["detail"]
+            # the default is loopback (#231); the whole network is named as a choice, with what it means
+            assert "published only on the Docker host itself (CONTROL_PUBLISH=127.0.0.1:8080)" in got["reach"]["detail"]
+            assert "CONTROL_PUBLISH=0.0.0.0:8080 publishes it on every interface" in got["reach"]["detail"]
             got = await checks(c, "not a url")
             assert got["https"]["state"] == "warn" and "same address" not in got["reach"]["detail"]
 
