@@ -49,6 +49,6 @@ The third security review showed two ways around the Host binding, both closed i
   upstream connection. A plain-HTTP proxy request has no connection when it is checked, and mitmproxy then
   reuses an open one by address. Such a request is decided on its own destination and is never sent on a
   connection that was checked for another one
-  ([architecture](../architecture.md#what-is-checked-per-connection-and-what-per-request), threat T49).
+  ([architecture](../architecture.md#what-is-checked-per-connection-and-what-per-request), threat T50).
   [ADR-0003](0003-single-enforcement-hook.md) stands: the decision for a connection is made in
   `server_connect` only; the request hooks refuse, they never open anything.

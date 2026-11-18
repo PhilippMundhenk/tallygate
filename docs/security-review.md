@@ -84,7 +84,7 @@
 >
 > | What | Outcome |
 > |---|---|
-> | The request gate trusted a request without a connection verdict | **Fixed.** It decides the request's own destination with the policy and binds the request to the connection that carries it: never one that was checked for another destination; a new connection is decided by `server_connect` as before (threat model T49, [architecture](architecture.md#what-is-checked-per-connection-and-what-per-request)). |
+> | The request gate trusted a request without a connection verdict | **Fixed.** It decides the request's own destination with the policy and binds the request to the connection that carries it: never one that was checked for another destination; a new connection is decided by `server_connect` as before (threat model T50, [architecture](architecture.md#what-is-checked-per-connection-and-what-per-request)). |
 > | The fixed address of an active grant's target, by IP literal | **Decided:** the grant opens the name, not the address. The literal is decided by the rule list and refused without a prompt unless a rule allows it. |
 > | A grant on an IP-literal target that is revoked while its connection is open | **Fixed** with the above (found while testing): the next request on the reused connection was forwarded. |
 > | The authority in an HTTP/1 request line inside a tunnel (CONNECT, SOCKS5, intercepted TLS) | **Fixed** (found while checking the other paths): mitmproxy forwards an absolute-form request line as it is, and a server uses it before the `Host` header, so another site on the same address could be named there. It must be the checked target now. |

@@ -213,7 +213,9 @@ header; the console WebSocket needs an `Origin` header that matches. Session coo
 (`COOKIE_SECURE=auto`, the default; `1`/`0` force it). `Lax` lets the `PUBLIC_URL` link in a notification open the UI logged in; cross-site
 POSTs still carry no cookie, and the header and Origin checks do not depend on it. API errors are JSON
 `{"error": …}`: 400 for an invalid request body, 401 without a session (`/api/` and `/term/`; other pages
-redirect to `/login`), 500 for an internal error, 502 when the gateway, the agent or GitHub fails.
+redirect to `/login`), 500 for an internal error, 502 when the gateway, the agent or GitHub fails. A redirect (any 3xx) from one of
+them is such a failure: control never follows it, and for the agent and the gateway the error text is fixed
+(`the agent answered with a redirect, which is never followed`).
 
 ## Agent status server
 

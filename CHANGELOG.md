@@ -7,6 +7,20 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **The control plane never follows a redirect (#230, High).** The agent's status server and ttyd run as the
+  agent user, so a hostile agent could replace them and answer the control plane's calls (status every 30 s
+  while *Overview* is open, version, setup, files, console) with `302 Location: <any URL>`. Control, which
+  has a route to the local network and the internet, fetched that URL itself: a path around the gateway with
+  no policy, no approval and no log entry, including data in URLs and, with 307/308, re-sent POST and DELETE
+  requests. Now every HTTP client of the control plane refuses any 3xx before a second request is built
+  (HTTP and the console WebSocket alike), and the browser gets `502` with a fixed text. The client for the
+  agent connects to `AGENT_HOST` on the status and console ports only, the one for the gateway to `GW_URL`
+  only. Threat T49 in [docs/threat-model.md](docs/threat-model.md).
+  **Check after upgrading:** calls to GitHub and to the notification services (ntfy, Gotify, Pushover,
+  Telegram, Matrix, Web Push) are not followed either. If a channel worked only through a redirect (for
+  example `http://` in `NTFY_URL` behind a reverse proxy that redirects to `https://`), it now fails with
+  *answered with a redirect, which control never follows*: enter the final URL
+  ([troubleshooting](docs/operations.md#troubleshooting)).
 - **Every request is checked against its own destination, also on a reused connection (#236, high).** Found
   by the security review of v0.4.0. After one allowed plain-HTTP request to a grant target, a second request
   on the same keep-alive connection that named the target's **IP address** was forwarded without any check:
@@ -31,7 +45,7 @@ All notable changes to this project are documented here. The format follows
     connection refuses that connection (`… changed while the request was checked: send it again`).
 
   Unchanged: a first request to a destination you are asked about is held until you answer, and keep-alive
-  to one destination works as before. See threat T49 in [docs/threat-model.md](docs/threat-model.md) and
+  to one destination works as before. See threat T50 in [docs/threat-model.md](docs/threat-model.md) and
   [what is checked per connection and what per request](docs/architecture.md#what-is-checked-per-connection-and-what-per-request).
 
 ## [0.4.0] - 2026-11-18
