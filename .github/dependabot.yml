@@ -1,7 +1,9 @@
 version: 2
 # Minor and patch updates are grouped per ecosystem; majors come as single PRs.
 updates:
-  - package-ecosystem: pip
+  # requirements*.txt are lock files with hashes, compiled by `uv pip compile` from requirements*.in
+  # (make lock). The uv ecosystem bumps the pin in the .in file and recompiles the .txt with new hashes.
+  - package-ecosystem: uv
     directories: ["/gateway", "/control", "/"]
     schedule: { interval: weekly }
     labels: [dependencies]
