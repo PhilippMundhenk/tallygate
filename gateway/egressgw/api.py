@@ -634,6 +634,8 @@ def build_app(gw: Gateway) -> web.Application:
         warnings = [*warnings, *notes]
         if missing := new.blocks_missing(gw.blocks_builtin, gw.blocks_config):
             warnings.append(f"built-in block(s) not in force in this policy: {', '.join(missing)}")
+        if note := gw.opened_note(new):
+            warnings.append(note)
         checked = {n: await gw.check_grant(n, d, new) for n, d in grants_d.items()}
         result = {
             "diff": history.diff(gw.policy.to_dict(), new.to_dict()),

@@ -85,10 +85,15 @@
       if (m.kind === "conn") {
         const b = document.createElement("button"); b.className = "small ghost"; b.textContent = "Allow for 1 h";
         b.setAttribute("aria-label", `Allow ${what} for 1 hour`);
-        b.onclick = guard(async () => {
+        const add = async () => {
           await gw("POST", "/destinations", { access: "allow", match: { host: m.host, port: m.port }, expires: Date.now() / 1000 + 3600, note: "refused while away" });
           toast(`${what} allowed for 1 h`); row.remove();
-        });
+        };
+        // as in the log: an allow for an address opens it even inside a blocked range, so it takes a second click
+        const address = /^[\d.]+$/.test(m.host) || m.host.includes(":");
+        b.onclick = address
+          ? confirmClick(b, `Allow the address ${what}? The rule is added at the top and opens it even if it is inside a blocked range.`, add)
+          : guard(add);
         row.appendChild(b);
       } else {
         const n = document.createElement("span"); n.className = "muted"; n.textContent = "the agent can request it again";

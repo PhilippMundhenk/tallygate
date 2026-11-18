@@ -45,7 +45,7 @@ def test_a_cidr_deny_refuses_a_name_below_rules_that_allow_it(make_gateway, upst
     assert denied["action"] == "deny" and denied["ips"] == ["127.0.0.2"]
     assert denied["reason"] == (
         "name allowed by rule web, but it resolves to 127.0.0.2, inside blocked range 127.0.0.2/32 (rule net): "
-        "add an allow for the address above that rule"
+        "a name rule cannot open a blocked range"
     )
     # the IP literal: the `*` rule matches it as a name rule would - and the deny below still wins
     assert http_via_proxy(proxy, f"http://127.0.0.2:{upstream['lan']}/x")[0] == 502
