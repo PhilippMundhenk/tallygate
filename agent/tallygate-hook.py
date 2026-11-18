@@ -5,6 +5,12 @@ The operator then sees, next to an approval prompt, the command or URL that caus
 Install dependencies"). Sends only the tool name, the command / URL and Claude's own description of it:
 never the environment or file contents. Obvious secrets are redacted here and again in the gateway.
 
+The redaction is best effort and a known limit (#234): it recognises a secret by a keyword next to it
+(token=, password:, Authorization), by its form (credentials in a URL, a known token prefix, a long opaque
+string) or by a few commands (curl -u, sshpass -p). A short secret with none of these passes, e.g.
+`mysql -pSECRET` or a 32-character hex key as a bare argument. The text goes to the operator only (approval
+prompt, activity list, event log), labelled as the agent's claim.
+
 Never in the agent's way: no output, always exit code 0, and the report gives up after TIMEOUT seconds.
 """
 
@@ -30,6 +36,11 @@ _SECRETS = [
         r"\1\2\3<redacted>",
     ),
     (re.compile(r"(://)[^/\s:@]+:[^/\s@]+@"), r"\1<redacted>@"),
+    # tokens that announce themselves by their prefix, whatever their length (same list as the gateway)
+    (re.compile(r"\b(?:gh[pousr]_|github_pat_|glpat-|xox[abprs]-|sk-|AKIA)[A-Za-z0-9_-]{8,}"), "<redacted>"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*"), "<redacted>"),  # JWT
+    (re.compile(r"\b(?:bot)?\d{6,12}:[A-Za-z0-9_-]{30,}"), "<redacted>"),  # Telegram bot token (also in a URL)
+    (re.compile(r"(\bsshpass\s+-p\s*)(?:'[^']*'|\"[^\"]*\"|\S+)"), r"\1<redacted>"),
     (re.compile(r"[A-Za-z0-9+/_=-]{40,}"), "<redacted>"),
 ]
 
