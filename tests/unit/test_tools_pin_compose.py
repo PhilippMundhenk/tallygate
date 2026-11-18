@@ -58,6 +58,47 @@ def test_compose_always_gives_the_gateway_its_networks_to_lock():
         assert not any(k.startswith("GW_TEST_") for k in spec.get("environment", {}))
 
 
+def test_no_service_writes_core_dumps_or_forwards_packets():
+    """#233: a core dump would go to the host's handler (core_pattern is not namespaced), and a container with
+    a leg on agent-net and one on a network with a way out must not be a router. Both come from the hardening
+    anchor; a service with its own `ulimits:` or `sysctls:` replaces the anchor's map, so every service is
+    checked as compose will see it (PyYAML resolves `<<` the same way)."""
+    no_forwarding = {
+        "net.ipv4.ip_forward": "0",
+        "net.ipv4.conf.all.forwarding": "0",
+        "net.ipv4.conf.default.forwarding": "0",
+        "net.ipv4.conf.all.proxy_arp": "0",
+        "net.ipv4.conf.all.send_redirects": "0",
+        "net.ipv4.conf.all.accept_source_route": "0",
+    }
+    no_ipv6 = {"net.ipv6.conf.all.disable_ipv6": "1", "net.ipv6.conf.default.disable_ipv6": "1"}
+    services = yaml.safe_load(COMPOSE)["services"]
+    assert set(services) == {"egress-gw", "control", "agent"}
+    for name, spec in services.items():
+        assert spec["ulimits"] == {"core": 0}, name
+        assert spec["cap_drop"] == ["ALL"] and spec["security_opt"] == ["no-new-privileges:true"], name
+        extra = {"net.ipv4.ip_unprivileged_port_start": "53"} if name == "egress-gw" else {}
+        assert spec["sysctls"] == {**no_ipv6, **no_forwarding, **extra}, name
+        # nothing that would need or allow routing
+        assert not spec.get("privileged") and "cap_add" not in spec and "network_mode" not in spec, name
+    # the build override must not replace either map
+    for spec in yaml.safe_load((ROOT / "compose.build.yaml").read_text(encoding="utf-8"))["services"].values():
+        assert not {"ulimits", "sysctls", "cap_add", "security_opt"} & set(spec)
+    # the authoritative test checks the same on the running stack
+    bypass = (ROOT / "tests/integration/bypass.sh").read_text(encoding="utf-8")
+    assert "core=0:0" in bypass and "/proc/sys/net/ipv4/$f" in bypass and "net.ipv4.ip_forward:0" in bypass
+
+
+def test_bypass_runs_python_in_the_agent_in_isolated_mode():
+    """#234: the agent owns ~/.local and its environment; `python3 -I` ignores user site-packages and PYTHON*."""
+    bypass = (ROOT / "tests/integration/bypass.sh").read_text(encoding="utf-8")
+    in_agent = re.findall(r'docker exec "\$AGENT" (python3\S*(?: -\S+)*)', bypass)
+    assert len(in_agent) == 2 and all(cmd.startswith("python3 -I") for cmd in in_agent), in_agent
+    # the probe containers run the trusted image's interpreter the same way
+    assert bypass.count('--entrypoint python "$GW_IMAGE"') == 3
+    assert bypass.count('"$GW_IMAGE" -I -c') == 2 and "  -I -u -c" in bypass
+
+
 # ------------------------------------------------------------------ pin()
 def test_pin_changes_the_three_defaults_and_nothing_else(pc):
     pinned = pc.pin(COMPOSE, "0.4.1")

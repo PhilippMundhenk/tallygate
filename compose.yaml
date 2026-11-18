@@ -32,9 +32,22 @@ name: tallygate
 x-hardening: &hardening
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
-  sysctls: &no-ipv6                       # no IPv6 at all (not even link-local fe80:: on internal networks)
+  # No core dumps: the host's core_pattern usually pipes them to a handler on the HOST (systemd-coredump),
+  # which would store a crashed process's memory (credentials) there and parse it as root.
+  ulimits: {core: 0}                      # a service that sets its own `ulimits:` must repeat this (it replaces)
+  sysctls: &net-sysctls
+    # no IPv6 at all (not even link-local fe80:: on internal networks)
     net.ipv6.conf.all.disable_ipv6: "1"
     net.ipv6.conf.default.disable_ipv6: "1"
+    # No container is a router. A new network namespace inherits ip_forward=1 from a Docker host; the gateway
+    # and control have a leg on agent-net and one on a network with a way out, and forward nothing in the
+    # kernel: the gateway is a proxy (application layer), control only opens connections itself.
+    net.ipv4.ip_forward: "0"
+    net.ipv4.conf.all.forwarding: "0"
+    net.ipv4.conf.default.forwarding: "0"
+    net.ipv4.conf.all.proxy_arp: "0"
+    net.ipv4.conf.all.send_redirects: "0"
+    net.ipv4.conf.all.accept_source_route: "0"
   restart: unless-stopped
   logging:
     driver: json-file
@@ -46,8 +59,8 @@ services:
     image: ghcr.io/philippmundhenk/tallygate-gateway:${TALLYGATE_VERSION:-latest}
     read_only: true
     tmpfs: ["/tmp"]
-    sysctls:
-      <<: *no-ipv6
+    sysctls:                              # replaces the anchor's map, so merge it back in
+      <<: *net-sysctls
       net.ipv4.ip_unprivileged_port_start: "53"   # bind DNS :53 as non-root without capabilities
     environment:
       GW_LISTEN_HOST: 172.31.10.2        # proxy/SOCKS/DNS/service ports: agent network only
