@@ -5,6 +5,8 @@ Never has docker.sock; never holds anything the agent could use to widen its own
 
 Everything that comes from the agent (terminal bytes, status JSON) is untrusted: no HTML/JS from
 the agent is ever served on this origin, and all agent responses are size-limited.
+No outbound call follows a redirect, and the clients for the agent and the gateway connect to that one peer
+only (see "outbound HTTP"): control makes exactly the requests it built itself.
 """
 
 from __future__ import annotations
@@ -644,13 +646,80 @@ async def api_push_act(request: web.Request):
     return web.json_response({"ok": True, "decision": claims["d"], "message": message})
 
 
+# ------------------------------------------------------------------ outbound HTTP (#230)
+# Control never follows a redirect and never accepts one as an answer, whoever sends it: the agent's status
+# server and ttyd run as the agent user, so a hostile agent can answer any call with "302 Location: <any
+# URL>", and control (on mgmt, with a route to the LAN and the internet) would fetch that URL itself, around
+# the gateway. Every client session is made by _client(): a redirect raises UpstreamRedirect before a second
+# request is built, for HTTP and WebSocket alike, so a new call site cannot forget it. The sessions for the
+# agent and the gateway can in addition connect to nothing but that one peer.
+class UpstreamRedirect(aiohttp.ClientError):
+    """A 3xx answer. The text is fixed: nothing the other side sent (status, Location, body) is in it."""
+
+    def __init__(self) -> None:
+        super().__init__("answered with a redirect, which control never follows")
+
+
+class PinnedPeer(aiohttp.ClientError):
+    def __init__(self) -> None:
+        super().__init__("destination refused: this client connects to one configured peer only")
+
+
+async def _refuse_redirect(_session, _ctx, params) -> None:
+    # on_request_redirect: aiohttp is about to follow; on_request_end: a 3xx it would not follow (300, 304, ...)
+    if 300 <= params.response.status < 400:
+        raise UpstreamRedirect  # aiohttp closes the response; the Location header is never read
+
+
+class PinnedConnector(aiohttp.TCPConnector):
+    """Connects only to the (host, port) pairs `allowed()` returns right now; everything else is refused
+    before any name is resolved or any socket is opened."""
+
+    def __init__(self, allowed, **kw) -> None:
+        super().__init__(**kw)
+        self._allowed = allowed
+
+    async def connect(self, req, traces, timeout):
+        if ((req.url.host or "").lower(), req.url.port) not in self._allowed():
+            raise PinnedPeer
+        return await super().connect(req, traces, timeout)
+
+
+def _client(allowed=None) -> aiohttp.ClientSession:
+    """The only place a client session is created. `allowed`: the peers it may connect to (None = any host:
+    GitHub and the notification services the operator configured)."""
+    trace = aiohttp.TraceConfig()
+    trace.on_request_redirect.append(_refuse_redirect)
+    trace.on_request_end.append(_refuse_redirect)
+    return aiohttp.ClientSession(
+        trust_env=False,
+        trace_configs=[trace],
+        connector=PinnedConnector(allowed) if allowed else None,
+        cookie_jar=aiohttp.DummyCookieJar(),  # no call needs cookies: none are kept
+    )
+
+
+def _agent_peers() -> set[tuple[str, int]]:
+    return {(AGENT_HOST.lower().strip("[]"), port) for port in (AGENT_STATUS_PORT, *TERMINALS.values())}
+
+
+def _gateway_peers() -> set[tuple[str, int | None]]:
+    u = urllib.parse.urlsplit(GW_URL)
+    return {((u.hostname or "").lower(), u.port or (443 if u.scheme == "https" else 80))}
+
+
+def _redirect_502(who: str) -> web.Response:
+    log.warning("%s answered with a redirect: not followed", who)
+    return web.json_response({"error": f"{who} answered with a redirect, which is never followed"}, status=502)
+
+
 # ------------------------------------------------------------------ gateway relay
 async def gw(app: web.Application, method: str, path: str, body=None, timeout: float = 15, by: str = ""):
     headers = {"Authorization": f"Bearer {GW_TOKEN}"}
     if by:
         # attribution in the gateway's policy history: printable ASCII only (it travels in a header)
         headers["X-Tallygate-By"] = "".join(c if " " <= c <= "~" else "?" for c in by)[:64]
-    async with app["http"].request(
+    async with app["gw"].request(
         method,
         GW_URL + path,
         json=body,
@@ -689,6 +758,8 @@ async def api_gw(request: web.Request):
         qs = "?" + urllib.parse.urlencode({"by": by})
     try:
         status, data = await gw(request.app, request.method, sub + qs, body, by=by)
+    except UpstreamRedirect:
+        return _redirect_502("the gateway")
     except (TimeoutError, aiohttp.ClientError) as e:
         return web.json_response({"error": f"gateway unreachable: {e}"}, status=502)
     except ValueError:
@@ -705,7 +776,7 @@ async def api_stream(request: web.Request):
 
     async def relay():
         try:
-            async with request.app["http"].get(
+            async with request.app["gw"].get(
                 GW_URL + "/stream",
                 headers={"Authorization": f"Bearer {GW_TOKEN}"},
                 timeout=aiohttp.ClientTimeout(total=None, sock_read=60),
@@ -788,7 +859,7 @@ def safe_login_url(url: object) -> str:
 
 async def agent_call(app: web.Application, method: str, what: str, body: dict | None = None) -> tuple[int, dict]:
     """Call the agent's status server; the answer is size-limited and must be a JSON object."""
-    async with app["http"].request(
+    async with app["agent"].request(
         method, f"http://{AGENT_HOST}:{AGENT_STATUS_PORT}/{what}", json=body, timeout=aiohttp.ClientTimeout(total=90)
     ) as r:
         raw = b""  # read() returns what has arrived so far: read until the end or the cap
@@ -818,6 +889,8 @@ async def api_agent(request: web.Request):
             return web.json_response({"error": "expected a JSON object"}, status=400)
     try:
         status, data = await agent_call(request.app, request.method, what, body)
+    except UpstreamRedirect:
+        return _redirect_502("the agent")
     except ValueError as e:
         msg = "agent response too large" if "too large" in str(e) else f"agent unreachable or invalid response: {e}"
         return web.json_response({"error": msg}, status=502)
@@ -1060,6 +1133,8 @@ async def api_files_list(request: web.Request):
     path = files_path(request)
     try:
         status, data = await agent_call(request.app, "GET", "files?" + urllib.parse.urlencode({"path": path}))
+    except UpstreamRedirect:
+        return _redirect_502("the agent")
     except (TimeoutError, aiohttp.ClientError, ValueError) as e:
         return web.json_response({"error": f"agent unreachable or invalid response: {e}"}, status=502)
     if status != 200:
@@ -1104,7 +1179,7 @@ async def api_files_download(request: web.Request):
     path = files_path(request, file=True)
     resp = None
     try:
-        async with request.app["http"].get(
+        async with request.app["agent"].get(
             _agent_files_url("files/download", path=path),
             timeout=aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=60),
         ) as r:
@@ -1136,6 +1211,8 @@ async def api_files_download(request: web.Request):
                 await resp.write(chunk)
             await resp.write_eof()
             return resp
+    except UpstreamRedirect:  # raised before any byte of an answer is passed on
+        return _redirect_502("the agent")
     except (TimeoutError, aiohttp.ClientError) as e:
         if resp is None:
             return web.json_response({"error": f"agent unreachable: {e}"}, status=502)
@@ -1163,7 +1240,7 @@ async def api_files_upload(request: web.Request):
 
     overwrite = "1" if request.query.get("overwrite") == "1" else "0"
     try:
-        async with request.app["http"].put(
+        async with request.app["agent"].put(
             _agent_files_url("files", path=path, overwrite=overwrite),
             data=body(),
             headers={"Content-Length": str(length), "Content-Type": "application/octet-stream"},
@@ -1173,6 +1250,8 @@ async def api_files_upload(request: web.Request):
             if not isinstance(data, dict):
                 raise ValueError("not an object")
             status = r.status
+    except UpstreamRedirect:
+        return _redirect_502("the agent")
     except (TimeoutError, aiohttp.ClientError, ConnectionResetError, ValueError) as e:
         return web.json_response({"error": f"upload failed: {e}"}, status=502)
     if status != 200:
@@ -1186,6 +1265,8 @@ async def api_files_delete(request: web.Request):
     path = files_path(request, file=True)
     try:
         status, data = await agent_call(request.app, "DELETE", "files?" + urllib.parse.urlencode({"path": path}))
+    except UpstreamRedirect:
+        return _redirect_502("the agent")
     except (TimeoutError, aiohttp.ClientError, ValueError) as e:
         return web.json_response({"error": f"agent unreachable or invalid response: {e}"}, status=502)
     if status != 200:
@@ -1232,7 +1313,7 @@ async def term_ws(request: web.Request):
     ws_client = web.WebSocketResponse(protocols=("tty",), max_msg_size=BROWSER_MAX_FRAME, heartbeat=30)
     await ws_client.prepare(request)
     try:
-        async with request.app["http"].ws_connect(
+        async with request.app["agent"].ws_connect(
             upstream, protocols=("tty",), headers=headers, max_msg_size=AGENT_MAX_BYTES
         ) as ws_up:
 
@@ -1275,7 +1356,9 @@ async def term_ws(request: web.Request):
 
 # ------------------------------------------------------------------ app
 async def on_startup(app: web.Application):
-    app["http"] = aiohttp.ClientSession(trust_env=False)
+    app["http"] = _client()  # GitHub and the notification services: any host, but never a redirect
+    app["agent"] = _client(_agent_peers)  # the agent's status server and ttyd, nothing else
+    app["gw"] = _client(_gateway_peers)  # the gateway API, nothing else
     app["notifier"] = notify.Notifier(
         app,
         decide_grant=lambda rid, decision, by: gw(
@@ -1294,14 +1377,15 @@ async def on_cleanup(app: web.Application):
         t.cancel()
     await asyncio.gather(*app["bg"], return_exceptions=True)  # finished before their HTTP session closes
     await app["notifier"].close()
-    await app["http"].close()
+    for name in ("http", "agent", "gw"):
+        await app[name].close()
 
 
 async def watch_gateway(app: web.Application):
     """Single upstream SSE subscription that drives notifications."""
     while True:
         try:
-            async with app["http"].get(
+            async with app["gw"].get(
                 GW_URL + "/stream",
                 headers={"Authorization": f"Bearer {GW_TOKEN}"},
                 timeout=aiohttp.ClientTimeout(total=None, sock_read=60),

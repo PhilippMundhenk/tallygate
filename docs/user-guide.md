@@ -580,6 +580,10 @@ under **Setup → Notifications → Configure**, or set `NTFY_URL` (+ `NTFY_TOKE
 but no decision buttons: an approve link would work for anyone who sees it. These services see the
 destinations in plain text, like Telegram does.
 
+For every channel, enter the service's final URL: the control plane does not follow HTTP redirects (for
+example from `http://` to `https://` behind a reverse proxy), and a channel that answers with one is shown as
+failed ([troubleshooting](operations.md#troubleshooting)).
+
 ## Rule cookbook
 
 | Goal | Rule / setting |
