@@ -266,9 +266,12 @@ function renderNotify(meta, ncfg) {
   showNotifyPerm();
 }
 
+// A spot check you run when you want one: its result is not stored, so after a page load "not run" is the normal
+// state and not something left to do. It is no required step (it does not hold up "All steps done"); a failed
+// run shows "check".
 function renderSelftest() {
-  if (!wz.selftest) return step("st-test", "missing", $("#st-test > .step-msg").innerHTML ? undefined : "Not run yet.");
-  step("st-test", wz.selftest.every((t) => t.pass) ? "done" : "missing");
+  if (!wz.selftest) return step("st-test", "info", $("#st-test > .step-msg").innerHTML ? undefined : "Not run in this page view. The result is not stored: run it whenever you want a spot check.");
+  step("st-test", wz.selftest.every((t) => t.pass) ? "done" : "warn");
 }
 
 function renderSummary() {
