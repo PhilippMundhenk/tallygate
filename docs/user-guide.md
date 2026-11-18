@@ -584,8 +584,11 @@ notifications on this device**. Each request arrives as a notification:
 Tapping the notification itself opens the approvals. After a decision (from anywhere) the notification is
 replaced by the outcome. The buttons work for at most 10 minutes and once, only on the device they were sent
 to; they need no login, but they cannot do anything except that one decision (see the
-[threat model](threat-model.md), T41). *Remove* stops a device, and a device whose subscription expired is
-removed automatically.
+[threat model](threat-model.md), T41). *Remove* stops a device at once: the buttons of the notifications it
+still shows answer *Not applied: this device was removed from tallygate*. A device whose subscription expired
+is removed automatically. After a restart of the control plane (an update, `docker compose restart control`)
+the buttons of notifications sent before it no longer work (*Not applied: tallygate was restarted since this
+notification*): open tallygate and decide there. Requests that are still waiting are shown in **Approvals**.
 
 Every channel in the **Notifications** section has a **Test** button: it sends a short "tallygate test"
 message through that one channel so you can confirm the credentials and the path work, without waiting for a

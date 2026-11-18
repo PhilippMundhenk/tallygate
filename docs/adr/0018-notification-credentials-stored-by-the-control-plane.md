@@ -73,7 +73,8 @@ control plane, never sent to the agent or the gateway.
 - **The setting chooses buttons, not authority.** What a tap may do is still decided by its action token
   (ADR-0010 for the bots, `app/webpush.py` for Web Push): bound to one request, one decision and one device,
   single use, short-lived. The control plane mints a token only for a button it offers, refuses a token whose
-  button was switched off since, and offers no allow button for an IP-literal destination in Web Push.
+  button was switched off since, whose device was removed since, or that an earlier run of the control plane
+  minted (#241: the used tokens are remembered in memory only, so a token names its run), and offers no allow button for an IP-literal destination in Web Push.
 - **Why here and not in the gateway's settings:** the gateway accepts every scope from the control plane
   anyway (the UI needs them); which of them a *notification* offers is a property of the notification
   channels, which only the control plane knows.

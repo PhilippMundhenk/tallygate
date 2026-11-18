@@ -10,6 +10,19 @@ Fixes for the findings of the security review of 0.4.0. One of them changes how 
 [Upgrading from 0.4.0](#upgrading-from-040) before you update.
 
 ### Security
+- **Notification buttons end with their device and at a restart (#241, Low).** Found by the security review
+  of v0.4.0. A push action token named its device, but pressing the button did not check that the device was
+  still subscribed: for up to 10 minutes after *Remove*, a removed phone could still decide the requests it
+  showed (attributed to `push:removed device`). And the list of used tokens lives in memory, so a restart
+  of the control plane made a used token good again within its lifetime. Now a token whose device is gone is
+  refused, and every token carries the boot id of the control process that minted it: no other run takes it.
+  The boot id was chosen over storing used tokens on disk because it needs no new state file, cannot lose a
+  write, and fails closed. `/api/push/act` now also requires the `Origin` header, as the threat model (T41)
+  already said; the service worker's request always has it.
+  **Check after upgrading:** after every restart of the control plane (this update included) the buttons of
+  notifications that were sent before it answer *Not applied: tallygate was restarted since this
+  notification*. Decide those requests under **Approvals**; new notifications work as before. Nothing else
+  changes for browsers. A script of your own that calls `/api/push/act` must send `Origin`.
 - **Automatic grants while you are away are no longer silent (#237, Info).** A grant level with
   `approval: auto` is activated at once, also in away mode and in quiet hours. That stays so: you authorised
   the level beforehand, away mode is about requests that need a person, and the emergency stop suspends
