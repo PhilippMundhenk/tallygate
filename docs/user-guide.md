@@ -38,11 +38,35 @@ while it is open and at once when a request arrives or is decided.
 | Part | Shows |
 |---|---|
 | Status | Claude logged in; Remote Control running, with the session name (or the question it waits for); Claude Code version; disk use of the workspace's file system; gateway health and the disk use of its state, with the size of the event log. 90 % or more is marked. |
+| No connection | A warning above the cards while the gateway itself has no connection: *No connection from the gateway since 08:35 (52 min): lookups and connections fail. This is a problem of the host's network, not a policy decision.* The *Log* tab shows the same line. It clears when a lookup or connection works again. See [No connection](#no-connection-from-the-gateway). |
 | Needs attention | Waiting connection and grant requests; rules and grants that end within the hour; a missing GitHub token, one GitHub refuses, or one that expires within 7 days (checked once per page load through the agent, so it appears in the log). |
 | Last hour | Connections allowed, denied and asked; the 10 most frequent destinations; destinations seen for the first time in the kept log (`log_keep_days`). |
 | Versions | tallygate (the release the gateway runs) and Claude Code, and the latest tallygate release. When a newer one exists, the header shows **Update: X.Y.Z**; the card links to the changelog and the release and shows the upgrade command (click to copy). Claude Code has no auto-updater in the agent: new versions come with tallygate releases. Control asks GitHub itself, at most every 6 hours; `UPDATE_CHECK=0` switches it off ([configuration](configuration.md)). |
 | Rule usage | How often each rule matched, unused rules to clean up, and permanent rules suggested for destinations you keep approving for a limited time. See [Rule usage](#rule-usage). |
 | Shortcuts | *Emergency stop* (click twice), *Allow web for 15 min* (the `open` preset), *Open rc console*. |
+
+### No connection from the gateway
+
+When the host's network is down, every upstream lookup and connection of the gateway fails, and the agent
+only sees *proxy refused the connection*. The gateway recognises this from its own results and says so:
+
+- **When it starts.** At least 5 lookups or connections failed (`dns failure`, a connect error or a timeout,
+  not a policy decision) over at least 2 different names, none worked in between, the oldest failure is at
+  least 2 minutes old, **and** a control probe fails too: the gateway resolves a fixed name
+  (`api.anthropic.com` unless you set `connectivity_probe_hosts`) and opens a connection to it, at most once
+  every 30 seconds. A name that does not exist (*Name or service not known*, *No address associated*) is an
+  answer, not an outage, and one failing name is never one.
+- **What you see.** The warning on *Overview* and *Log*; one event in the Log when it starts and one when it
+  ends, with the duration; a notification on each channel when it starts and when it ends (once per change).
+  Refusals during it say `no connection: dns failure: …`, are not counted as denies on *Overview*, and the
+  agent's `tallygate grants` says that the gateway has no connection.
+- **When it ends.** At the first lookup that is answered, upstream connection that is made or probe that
+  works. The gateway checks every 15 seconds while an outage is on, so it also ends when nobody is using it.
+  It survives a restart of the gateway and then ends with the whole duration.
+
+The hint names no host: only times, counts and the kinds of errors (dns, connect, timeout). What it cannot
+see: an outage that only some destinations feel (it then needs the probe to fail as well), and a host whose
+resolver answers from a cache while connections fail (the cached answers count as working).
 
 ### Rule usage
 

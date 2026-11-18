@@ -87,6 +87,9 @@ services: []
 # grant_max_pending: 3                # open grant requests at once
 # grant_api_rate: 30                  # requests per minute the agent may send to the grant API
 # activity_rate: 60                   # activity reports per minute (the agent's hook and `tallygate note`)
+# Does the gateway have a connection at all (docs/configuration.md#connectivity)? The defaults fit most hosts.
+# connectivity_probe_hosts: [api.anthropic.com]   # the control probe, fixed names (name or name:port)
+# connectivity_probe_interval: 30     # at most one probe per this many seconds
 # grants:
 #   homeassistant:
 #     description: Home Assistant REST API
