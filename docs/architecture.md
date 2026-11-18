@@ -190,6 +190,34 @@ Bodies over `stream_large_bodies` (1 MB) are streamed upstream right after the h
 `403`; one whose body is streamed or of unknown size (chunked) is cut instead, because mitmproxy cannot send
 a response while it streams the body (#56).
 
+#### What is checked per connection and what per request
+
+| When | Hook | What is decided |
+|---|---|---|
+| An upstream connection is opened | `server_connect` | The whole decision for the destination: locked ranges, the rule list on the name and on every address, grants, your answer to a prompt. The result is a *verdict* (the checked name or IP literal, and the grant that carries the connection), stored for that connection, which is pinned to the checked address. |
+| A request arrives | `requestheaders`, `request` | The limits that follow from the verdict of the connection that carries the request: `Host` (and, for HTTP/1, the authority in the request line) must be the checked target; read-only, repositories, grant paths and level, credentials. |
+| A response arrives (plain-HTTP proxy requests) | `responseheaders` | The connection that carried the request must be one that was checked for it; otherwise the response is withheld and logged. |
+
+In a CONNECT tunnel, over SOCKS5 and on intercepted TLS (HTTP/2 streams included) the connection exists
+before the first request, so every request on it has that one verdict. A **plain-HTTP proxy request** is
+different: its hooks run *before* mitmproxy picks the upstream connection, and mitmproxy picks an open one of
+the same client connection whose address equals the host and port the request names, without
+`server_connect`. Because a connection is pinned to the checked address, a request that names that address
+would ride a connection that was checked for a name (#236). The request gate therefore
+
+1. decides the request on **its own destination** with the policy (nothing is resolved, nobody is asked);
+2. works out which open connection would carry it: one that was checked for **another** destination never
+   does (`403 request for … on a connection that was checked for …`); one that was checked for the same
+   destination (an IP literal) does, with that connection's verdict, while the policy still allows the
+   destination by itself. No prompt can be asked for a request, so `ask` is refused there;
+3. otherwise lets mitmproxy open a new connection, which `server_connect` decides in full, with the prompt.
+   That is the normal case and it is unchanged: a first request to a destination you are asked about is held
+   until you answer.
+
+A name never shares an upstream connection: mitmproxy looks for the name and the connection is known by its
+address, so each request to a name gets a connection of its own and its own `server_connect`. Only requests
+to an IP literal reuse one.
+
 ### DNS
 
 The agent's `/etc/resolv.conf` points at Docker's embedded resolver, which forwards non-container names to
