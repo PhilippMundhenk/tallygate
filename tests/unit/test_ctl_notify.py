@@ -57,9 +57,10 @@ class Chat:
         if "m.reaction" in path and self.hold is not None:
             await self.hold.wait()
         if path == "/account/whoami":
-            if isinstance(self.whoami, BaseException):
-                raise self.whoami
-            return self.whoami
+            answer = self.whoami.pop(0) if isinstance(self.whoami, list) else self.whoami  # a list: one per call
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
         if path == "/sync":
             return self._next()
         return {"event_id": f"$e{len(self.calls)}"}
@@ -431,7 +432,6 @@ def test_matrix_bot_account_must_not_be_an_approver(make, caplog):
 
 def test_matrix_sync_skips_history_survives_errors_and_dispatches(make, no_sleep, caplog):
     n = make(MX)
-    n.chat.whoami = RuntimeError("M_UNKNOWN_TOKEN")
     seen = []
 
     async def on_event(ev):
@@ -455,7 +455,7 @@ def test_matrix_sync_skips_history_survives_errors_and_dispatches(make, no_sleep
 
     with caplog.at_level(logging.WARNING, logger="notify"):
         run(body())
-    assert n.mx_self is None and "matrix whoami failed: M_UNKNOWN_TOKEN" in caplog.text
+    assert n.mx_self == "@bot:hs"
     assert seen == [new]  # history before the start is not replayed
     assert [c[4].get("since") for c in n.chat.sent("mx", "/sync")] == [None, "s1", "s1", "s2", "s3"]
     assert "matrix sync: connection reset" in caplog.text and no_sleep == [5]
@@ -537,6 +537,249 @@ def test_matrix_revoke_ends_the_grant_and_frees_the_number(make):
     assert n.chat.notices() == ["Grant revoked by @me:hs"]
     run(n._mx_event(text("revoke 4")))  # number is free now: nothing happens
     assert len(n.rg.calls) == 1
+
+
+# ---------------------------------------------------------------- Matrix: the bot never decides itself (#238)
+def matrix_status(n):
+    return {c["channel"]: c for c in n.status()}["matrix"]
+
+
+def room(*events):
+    return {"rooms": {"join": {"!room:hs": {"timeline": {"events": list(events)}}}}}
+
+
+def echoes(n, sender):
+    """What the homeserver sends back in /sync for everything control sent: the same events, by the bot."""
+    out = []
+    for call in n.chat.calls:
+        if call[0] == "mx" and call[1] == "PUT":
+            kind = "m.reaction" if "m.reaction" in call[2] else "m.room.message"
+            out.append(
+                {"type": kind, "sender": sender, "event_id": f"$e{n.chat.calls.index(call) + 1}", "content": call[3]}
+            )
+    return out
+
+
+async def prompts(n):
+    """One connection prompt and one write-level grant request, with their pre-seeded reactions."""
+    await n._on_ask(pending("p1"))
+    grant_request = {"id": "r1", "name": "nas", "level": "write", "ttl_label": "1 h", "reason": "x"}
+    await n._on_grant_request(
+        {**grant_request, "expires": time.time() + 60}, {"targets": [], "levels": ["read", "write"]}
+    )
+    await asyncio.gather(*n.tasks)
+
+
+def test_matrix_decides_nothing_until_whoami_succeeded_and_replays_nothing(make, monkeypatch, caplog):
+    """whoami fails twice (homeserver not up yet), then succeeds. While it fails nothing is read from the
+    room and the status says so; what happened in the room meanwhile is skipped with the history, so the
+    prompt stays open (for the UI, or for a new reaction); a real user's reaction afterwards decides."""
+    n = make(MX)
+    n.chat.whoami = [RuntimeError("upstream timeout"), RuntimeError("upstream timeout"), {"user_id": "@bot:hs"}]
+    slept, during = [], []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+        during.append((n.mx_self, matrix_status(n)["reason"], len(n.chat.sent("mx", "/sync"))))
+        await n._mx_event(reaction("$e1", "👍"))  # a tap while approvals are paused, should it ever get here
+
+    monkeypatch.setattr(notify.asyncio, "sleep", sleep)
+
+    async def body():
+        await prompts(n)
+        meanwhile = reaction("$e1", "✅", "@me:hs")  # arrived while whoami was failing
+        n.chat.script = [
+            {"next_batch": "s1", **room(meanwhile, *echoes(n, "@bot:hs"))},
+            {"next_batch": "s2", **room({**reaction("$e1", "👍"), "event_id": "$user1"})},
+            asyncio.CancelledError(),
+        ]
+        with pytest.raises(asyncio.CancelledError):
+            await n._mx_sync()
+
+    with caplog.at_level(logging.INFO, logger="notify"):
+        run(body())
+    assert slept == [5, 10]
+    assert during == [(None, notify.MX_PAUSED, 0)] * 2  # paused, said so, and no /sync before whoami
+    assert "- Matrix approvals paused until the bot's own account is verified (next try in 5 s)" in caplog.text
+    assert "matrix: bot account verified (@bot:hs), approvals resume" in caplog.text
+    assert n.mx_self == "@bot:hs" and matrix_status(n)["reason"] == "Configured in the environment."
+    assert n.d.calls == [("p1", "once", "matrix:@me:hs")] and n.dg.calls == []  # only the tap after the pause
+
+
+def test_matrix_whoami_failing_forever_backs_off_and_never_decides(make, monkeypatch, caplog):
+    n = make(MX)
+    n.chat.whoami = [RuntimeError("M_UNKNOWN_TOKEN")] * 9 + [asyncio.CancelledError()]
+    slept = []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(notify.asyncio, "sleep", sleep)
+
+    async def body():
+        await prompts(n)
+        with pytest.raises(asyncio.CancelledError):
+            await n._mx_sync()
+        for ev in (reaction("$e1", "👍"), text("allow 1"), text("approve 2"), *echoes(n, "@bot:hs")):
+            await n._mx_event(ev)
+
+    with caplog.at_level(logging.ERROR, logger="notify"):
+        run(body())
+    assert slept == [5, 10, 20, 40, 80, 160, 300, 300, 300]  # bounded: 5 s doubling to 5 min
+    assert n.chat.sent("mx", "/sync") == [] and n.mx_self is None
+    assert n.d.calls == [] and n.dg.calls == []
+    status = matrix_status(n)
+    assert status["configured"] is True and status["reason"] == notify.MX_PAUSED  # messages still go out
+    assert caplog.text.count("matrix whoami failed: M_UNKNOWN_TOKEN") == 9
+
+
+def test_matrix_whoami_without_a_user_id_counts_as_failed(make, monkeypatch, caplog):
+    n = make(MX)
+    n.chat.whoami = [{}, {"user_id": ""}, {"user_id": ["@me:hs"]}, asyncio.CancelledError()]
+
+    async def sleep(_seconds):
+        pass
+
+    monkeypatch.setattr(notify.asyncio, "sleep", sleep)
+
+    async def body():
+        with pytest.raises(asyncio.CancelledError):
+            await n._mx_sync()
+
+    with caplog.at_level(logging.ERROR, logger="notify"):
+        run(body())
+    assert n.mx_self is None and n.chat.sent("mx", "/sync") == []
+    assert "matrix whoami failed: 'user_id'" in caplog.text and "no user_id in the answer" in caplog.text
+
+
+def test_matrix_whoami_errors_never_carry_the_token(make, monkeypatch, caplog):
+    n = make({**MX, "MATRIX_ACCESS_TOKEN": "syt_secret"})
+    n.chat.whoami = [RuntimeError("GET http://hs/whoami?access_token=syt_secret failed"), asyncio.CancelledError()]
+
+    async def sleep(_seconds):
+        pass
+
+    monkeypatch.setattr(notify.asyncio, "sleep", sleep)
+
+    async def body():
+        with pytest.raises(asyncio.CancelledError):
+            await n._mx_sync()
+
+    with caplog.at_level(logging.ERROR, logger="notify"):
+        run(body())
+    assert "syt_secret" not in caplog.text and "access_token=<token>" in caplog.text
+
+
+def test_matrix_bot_as_allowed_user_with_whoami_failing_approves_nothing(make, monkeypatch, caplog):
+    """The reviewer's case: the operator's own account is the bot and the allowed user, and whoami fails
+    when control starts. The homeserver echoes the prompts and the pre-seeded reactions (👍 first) with that
+    account as sender: none of them may reach the gateway, neither while whoami fails nor after it works."""
+    n = make({**MX, "MATRIX_ALLOWED_USERS": "@me:hs"})
+    n.chat.whoami = [RuntimeError("upstream timeout"), {"user_id": "@me:hs"}]
+    slept = []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+        for ev in echoes(n, "@me:hs"):  # even if the echoes were handed in during the pause
+            await n._mx_event(ev)
+
+    monkeypatch.setattr(notify.asyncio, "sleep", sleep)
+
+    async def body():
+        await prompts(n)
+        assert len(echoes(n, "@me:hs")) == 8  # 2 prompts, 3 + 3 reactions
+        await n._mx_sync()  # returns once whoami has answered: this account must not decide
+        for ev in (*echoes(n, "@me:hs"), reaction("$e1", "👍"), text("approve 2"), text("revoke 2")):
+            await n._mx_event(ev)
+
+    with caplog.at_level(logging.ERROR, logger="notify"):
+        run(body())
+    assert n.d.calls == [] and n.dg.calls == [] and n.rg.calls == []
+    assert slept == [5] and n.chat.sent("mx", "/sync") == []
+    assert caplog.text.count("bot user @me:hs must not be in MATRIX_ALLOWED_USERS - Matrix approvals disabled") == 1
+    status = matrix_status(n)
+    assert status["configured"] is True and status["reason"] == notify.MX_SELF_ALLOWED.format(user="@me:hs")
+    assert "paused" not in status["reason"]
+
+
+def test_matrix_own_events_are_never_decisions_whatever_whoami_said(make, caplog):
+    """Independent of whoami: control remembers the ids of what it sent. Such an event is skipped, and its
+    sender is the bot. If that sender is an allowed user (whoami named another account, e.g. behind a
+    bridge or a proxy that answers for someone else), approvals go off as in the configuration check."""
+    n = make({**MX, "MATRIX_ALLOWED_USERS": "@me:hs,@alex:hs"})
+    n.mx_self = "@other:hs"  # what a wrong whoami left behind
+
+    async def body():
+        await prompts(n)
+        await n._mx_event({**reaction("$e1", "👍", "@alex:hs"), "event_id": "$alex1"})  # a real user: counts
+        for ev in echoes(n, "@me:hs"):
+            await n._mx_event(ev)
+        await n._mx_event({**reaction("$e1", "✅", "@me:hs"), "event_id": "$later"})  # not ours by id, but by sender
+        await n._mx_event({**text("approve 2", "@alex:hs"), "event_id": "$alex2"})  # off for everyone now
+
+    with caplog.at_level(logging.ERROR, logger="notify"):
+        run(body())
+    assert n.d.calls == [("p1", "once", "matrix:@alex:hs")] and n.dg.calls == []
+    assert n.mx_blocked and n.mx_senders == {"@me:hs"}
+    assert caplog.text.count("must not be in MATRIX_ALLOWED_USERS") == 1
+    assert matrix_status(n)["reason"] == notify.MX_SELF_ALLOWED.format(user="@me:hs")
+
+
+def test_matrix_own_events_by_a_bot_that_is_no_allowed_user_change_nothing(make):
+    n = mx_ready(make)
+
+    async def body():
+        await n._on_ask(pending("p2"))
+        await asyncio.gather(*n.tasks)
+        for ev in echoes(n, "@bot:hs"):
+            await n._mx_event(ev)
+        await n._mx_event({**reaction("$e1", "👎"), "event_id": "$user"})
+
+    run(body())
+    assert not n.mx_blocked and n.mx_senders == {"@bot:hs"} and "matrix" not in n.paused
+    assert n.d.calls == [("p2", "deny", "matrix:@me:hs")]
+
+
+def test_matrix_memory_of_own_events_is_bounded(make, monkeypatch):
+    n = mx_ready(make)
+    monkeypatch.setattr(notify, "MX_OWN_MAX", 3)
+
+    async def body():
+        for i in range(5):
+            await n._mx_put(f"/rooms/x/send/m.room.message/t{i}", {"msgtype": "m.notice", "body": "x"})
+        n.chat.fail.add("/broken")
+        with pytest.raises(RuntimeError):
+            await n._mx_put("/broken", {})  # nothing sent: nothing remembered
+
+        async def odd(method, path, body=None, params=None):
+            return ["no", "event", "id"]
+
+        n._mx = odd
+        await n._mx_put("/rooms/x/send/m.room.message/t9", {})
+        for i in range(10):  # the set of senders seen on own events cannot grow without bound either
+            await n._mx_event({"type": "m.room.message", "sender": f"@s{i}:hs", "event_id": "$e5", "content": {}})
+
+    run(body())
+    assert list(n.mx_own) == ["$e3", "$e4", "$e5"] and len(n.mx_senders) == 8
+
+
+def test_matrix_loop_restart_forgets_the_old_account(make, caplog):
+    """A changed token restarts the loop (reconfigure): pause, refusal and the learned senders start over."""
+    n = make({**MX, "MATRIX_ALLOWED_USERS": "@me:hs"})
+    n.chat.whoami = {"user_id": "@me:hs"}
+    run(n._mx_sync())
+    assert n.mx_blocked and "matrix" in n.paused
+    n.chat.whoami = {"user_id": "@bot:hs"}  # now a separate bot account
+    n.chat.script = [{"next_batch": "s1"}, {"next_batch": "s2", **room(text("allow 1"))}, asyncio.CancelledError()]
+
+    async def body():
+        await n._on_ask(pending("p1"))
+        with pytest.raises(asyncio.CancelledError):
+            await n._mx_sync()
+
+    run(body())
+    assert not n.mx_blocked and n.mx_senders == set() and "matrix" not in n.paused
+    assert n.d.calls == [("p1", "once", "matrix:@me:hs")]
 
 
 # ---------------------------------------------------------------- digest (#73)

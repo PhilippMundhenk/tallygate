@@ -73,6 +73,19 @@ CHANNEL_LABELS = {
     "pushover": "Pushover",
     "webpush": "Web Push",
 }
+# Matrix (#238): the bot must know its own account before any event may count as a decision, because the
+# homeserver echoes the bot's own prompts and pre-seeded reactions back in /sync. whoami is retried with
+# these delays (first, cap; seconds, doubling) for as long as it fails; meanwhile approvals are paused.
+MX_WHOAMI_BACKOFF = (5, 300)
+MX_OWN_MAX = 2000  # event ids control sent itself that are remembered (prompts, reactions, notices)
+MX_PAUSED = (
+    "Matrix approvals paused: cannot verify the bot's own account (whoami failed, retrying). "
+    "Messages are still sent; decide in the UI meanwhile."
+)
+MX_SELF_ALLOWED = (
+    "Matrix approvals off: the bot's own account ({user}) is in the allowed users. "
+    "Use a separate bot account, or remove it from the allowed users."
+)
 CHANNEL_ENV = {
     "telegram": "TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALLOWED_USER_IDS",
     "matrix": "MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN, MATRIX_ROOM_ID, MATRIX_ALLOWED_USERS",
@@ -178,6 +191,11 @@ class Notifier:
         self.public_url = os.environ.get("PUBLIC_URL", "")
         self.config: NotifyConfig = config or NotifyConfig(None)  # UI values over the environment (#201)
         self.problems: dict[str, str] = {}  # channel -> why it is off although it has settings
+        self.paused: dict[str, str] = {}  # channel -> why a configured channel takes no decisions right now
+        self.mx_self: str | None = None  # the bot's own user id; None until whoami has succeeded
+        self.mx_blocked = False  # the bot's own account is an allowed user: no Matrix event is a decision
+        self.mx_own: dict[str, None] = {}  # event ids control sent itself, oldest first (bounded)
+        self.mx_senders: set[str] = set()  # senders seen on those events: the bot, whatever whoami said
         self._load()
         # pending id -> {"tg": message_id, "mx": event_id, "short": n, "text": str}
         self.msgs: dict[str, dict] = {}
@@ -255,7 +273,7 @@ class Notifier:
             else:
                 source = self.config.source(key)
                 if configured:
-                    reason = SOURCE_TEXT[source]
+                    reason = self.paused.get(key) or SOURCE_TEXT[source]
                 elif key in self.problems:
                     reason = self.problems[key]
                 elif source != "unset":
@@ -866,7 +884,21 @@ class Notifier:
             return data
 
     async def _mx_put(self, path: str, body: dict):
-        return await self._mx("PUT", path, body)
+        """Send an event and remember its id: what control sent itself is never a decision (#238)."""
+        res = await self._mx("PUT", path, body)
+        event_id = res.get("event_id") if isinstance(res, dict) else None
+        if isinstance(event_id, str) and event_id:
+            self.mx_own[event_id] = None
+            while len(self.mx_own) > MX_OWN_MAX:
+                del self.mx_own[next(iter(self.mx_own))]
+        return res
+
+    def _mx_refuse_self(self, user: str) -> None:
+        """The bot's own account is an allowed user: it would approve its own pre-seeded reactions."""
+        if not self.mx_blocked:
+            log.error("bot user %s must not be in MATRIX_ALLOWED_USERS - Matrix approvals disabled", user)
+        self.mx_blocked = True
+        self.paused["matrix"] = MX_SELF_ALLOWED.format(user=user)
 
     async def _mx_send(self, p: dict, short: int, timeout: int) -> str:
         first = ask_buttons(self._first(), p)  # in the configured order (#212)
@@ -891,15 +923,43 @@ class Notifier:
         self._background(self._mx_seed(event_id, [REACTIONS[s] for s, _ in first]))
         return event_id
 
+    async def _mx_whoami(self) -> str:
+        """The bot's own user id. Retried until it succeeds (#238): without it the bot's own events cannot
+        be told from an allowed user's, so nothing is read from the room before."""
+        delay, cap = MX_WHOAMI_BACKOFF
+        while True:
+            try:
+                user = (await self._mx("GET", "/account/whoami"))["user_id"]
+                if not isinstance(user, str) or not user:
+                    raise RuntimeError("no user_id in the answer")
+                return user
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                log.error(
+                    "matrix whoami failed: %s - Matrix approvals paused until the bot's own account is verified "
+                    "(next try in %s s)",
+                    self.redact(str(e)),
+                    delay,
+                )
+                self.paused["matrix"] = MX_PAUSED
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, cap)
+
     async def _mx_sync(self) -> None:
-        try:
-            self.mx_self = (await self._mx("GET", "/account/whoami"))["user_id"]
-        except Exception as e:  # noqa: BLE001
-            log.error("matrix whoami failed: %s", e)
-            self.mx_self = None
-        if self.mx_self in self.mx_users:
-            log.error("bot user %s must not be in MATRIX_ALLOWED_USERS - Matrix approvals disabled", self.mx_self)
+        # a (re)started loop knows nothing: the token, and with it the bot's account, may have changed
+        self.mx_self, self.mx_blocked, self.mx_senders = None, False, set()
+        self.paused.pop("matrix", None)
+        user = await self._mx_whoami()
+        if "matrix" in self.paused:
+            log.info("matrix: bot account verified (%s), approvals resume", user)
+        self.paused.pop("matrix", None)
+        self.mx_self = user
+        if user in self.mx_users:
+            self._mx_refuse_self(user)
             return
+        # Starts without `since`, so what happened in the room before this point (also while whoami was
+        # failing) is skipped, never replayed as decisions: such a prompt stays open for the UI.
         flt = json.dumps(
             {
                 "room": {"rooms": [self.mx_room], "timeline": {"limit": 50}},
@@ -929,7 +989,17 @@ class Notifier:
 
     async def _mx_event(self, ev: dict) -> None:
         sender = ev.get("sender")
-        if sender == getattr(self, "mx_self", None) or sender not in self.mx_users:
+        if ev.get("event_id") in self.mx_own:
+            # Our own prompt, reaction or notice, echoed by the homeserver: never a decision, and its sender
+            # is the bot, whatever whoami said. If that account is an allowed user, approvals go off.
+            if isinstance(sender, str) and sender not in self.mx_senders and len(self.mx_senders) < 8:
+                self.mx_senders.add(sender)
+            if sender in self.mx_users:
+                self._mx_refuse_self(sender)
+            return
+        if self.mx_self is None or self.mx_blocked or self.mx_self in self.mx_users:
+            return  # fail closed: the bot's own account is not verified, or it is an allowed user
+        if sender == self.mx_self or sender in self.mx_senders or sender not in self.mx_users:
             return
         content = ev.get("content", {})
         pid = scope = None
