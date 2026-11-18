@@ -33,6 +33,32 @@ All notable changes to this project are documented here. The format follows
   example `http://` in `NTFY_URL` behind a reverse proxy that redirects to `https://`), it now fails with
   *answered with a redirect, which control never follows*: enter the final URL
   ([troubleshooting](docs/operations.md#troubleshooting)).
+- **Every request is checked against its own destination, also on a reused connection (#236, high).** Found
+  by the security review of v0.4.0. After one allowed plain-HTTP request to a grant target, a second request
+  on the same keep-alive connection that named the target's **IP address** was forwarded without any check:
+  any method and path on a read-only, path-limited grant, and into a blocked range if the target named a
+  device there. The cause: mitmproxy reuses an open upstream connection whose address equals the host and
+  port a request names, without asking the gateway again, and the request check trusted a request it had no
+  connection decision for. The stack itself (the locked ranges) was not reachable this way. Now:
+  - A plain-HTTP proxy request is decided on its own destination with the policy, and it is only sent on a
+    connection that was checked for exactly that destination. A request that names an address on a
+    connection that was opened for a name gets `403 request for … on a connection that was checked for …`.
+    Open a new connection to the proxy for it; it is then decided like any new destination.
+  - The fixed address of an active grant's target is not opened by the grant: reach the target by its name,
+    where the grant's limits apply. By IP it is refused without a prompt unless a rule allows the address.
+  - A request on an open connection is never asked about. If the destination needs your approval again (an
+    approved IP literal whose time ran out, on a connection that is still open), the request is refused and
+    the next connection asks.
+  - A grant on an IP-literal target that is revoked or expires also ends on a connection that is still open.
+  - Inside a CONNECT tunnel, over SOCKS5 and on intercepted TLS, an HTTP/1 request whose request line names
+    another server (`GET http://other.example/…` with the checked `Host`) is refused like a wrong `Host`
+    header: `403 request target does not match the checked target`.
+  - A grant that starts or ends in the moment between the check of a request and the opening of its
+    connection refuses that connection (`… changed while the request was checked: send it again`).
+
+  Unchanged: a first request to a destination you are asked about is held until you answer, and keep-alive
+  to one destination works as before. See threat T50 in [docs/threat-model.md](docs/threat-model.md) and
+  [what is checked per connection and what per request](docs/architecture.md#what-is-checked-per-connection-and-what-per-request).
 
 ## [0.4.0] - 2026-11-18
 

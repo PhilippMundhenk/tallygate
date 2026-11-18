@@ -124,7 +124,9 @@ class Data:
         from types import SimpleNamespace
 
         self.server = Server(host, port)
-        self.client = SimpleNamespace(proxy_mode=SimpleNamespace(type_name="regular"), peername=("10.0.0.10", 1))
+        self.client = SimpleNamespace(
+            id="c1", proxy_mode=SimpleNamespace(type_name="regular"), peername=("10.0.0.10", 1)
+        )
 
 
 def connect(g, host, port=443, ips=("93.184.216.34",)):
