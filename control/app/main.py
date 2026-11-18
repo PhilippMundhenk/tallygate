@@ -278,9 +278,11 @@ async def security(request: web.Request, handler):
     ):
         resp = await handler(request)
     elif path == PUSH_ACT:
-        # No session (a phone's session may have expired), but the same CSRF rule as every other API call;
-        # the action token in the body is the authentication (see app/webpush.py).
-        if request.method != "POST" or request.headers.get("X-Tallygate") != "1" or not _same_origin(request):
+        # No session (a phone's session may have expired), but the CSRF rule of every other API call, and
+        # stricter: the Origin header must be there (#241). Only the service worker calls this, and every
+        # browser sends Origin with a POST; the action token in the body is the authentication (webpush.py).
+        ours = request.headers.get("Origin") and _same_origin(request)
+        if request.method != "POST" or request.headers.get("X-Tallygate") != "1" or not ours:
             return web.json_response({"error": "csrf check failed"}, status=403)
         resp = await handler(request)
     else:

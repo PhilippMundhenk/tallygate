@@ -6,7 +6,9 @@ opening the UI. They are not approve URLs: each button carries a token that is s
 from the session secret, bound to one pending request, one decision and one subscription, valid for at most
 ACTION_TTL seconds and accepted once. The decision is part of the signed claims, so a token minted for
 *Deny* can never allow, and nothing but the token says what to decide. A token for a button the operator
-has switched off since is refused. The token travels end-to-end encrypted to the subscribed browser (the
+has switched off since is refused, and so is one whose subscription is gone (the device was removed, #241)
+or that was minted before this process started: the claims carry a boot id, because the set of used
+tokens lives in memory and a restart would otherwise make a used token good again. The token travels end-to-end encrypted to the subscribed browser (the
 push service cannot read it) and is sent back by the service worker as a POST with the CSRF header.
 """
 
@@ -43,6 +45,8 @@ PUSH_HOSTS = ("fcm.googleapis.com", "*.push.services.mozilla.com", "*.push.apple
 # redeemed: to the buttons the operator has switched on (redeem(ask=...)).
 DECISIONS = {"ask": tuple(ASK_ACTIONS), "grant": ("approve", "read", "deny")}
 SWITCHED_OFF = "this button is switched off: open tallygate to decide"
+REMOVED = "this device was removed from tallygate: open tallygate to decide"
+RESTARTED = "tallygate was restarted since this notification: open tallygate to decide"
 
 
 def b64u(data: bytes) -> str:
@@ -110,6 +114,7 @@ class WebPush:
         if self.allow_http:
             log.warning("PUSH_TEST_ALLOW_HTTP is set - push endpoints over plain HTTP are accepted (test only)")
         self.used: dict[str, float] = {}  # token nonce -> expiry (single use)
+        self.boot = secrets.token_hex(4)  # in every token: one from before a restart is refused (#241)
         self.subs: list[dict] = []
         try:
             data = json.loads(store.read_text(encoding="utf-8"))
@@ -204,12 +209,13 @@ class WebPush:
         if decision not in DECISIONS.get(kind, ()):
             raise ValueError(f"no such notification action: {kind} {decision}")
         exp = int(min(expires, time.time() + ACTION_TTL))
-        claims = {"k": kind, "i": item_id, "d": decision, "s": sub_id, "e": exp, "n": secrets.token_hex(8)}
+        claims = {"k": kind, "i": item_id, "d": decision, "s": sub_id, "e": exp, "n": secrets.token_hex(8), "b": self.boot}
         raw = b64u(json.dumps(claims, separators=(",", ":")).encode())
         return f"{raw}.{b64u(hmac.new(self.action_key, raw.encode(), hashlib.sha256).digest())}"
 
     def redeem(self, token: str, ask: tuple[str, ...] = DEFAULT_ASK_ACTIONS) -> dict:
-        """The token's claims if it is genuine, unexpired and unused; marks it used. ValueError otherwise.
+        """The token's claims if it is genuine, unexpired, unused, from this run of control and for a device
+        that is still subscribed; marks it used. ValueError otherwise.
         `ask` is the list of buttons switched on for connection requests right now: a token for another
         decision is refused although it is signed (the button was switched off after it was sent)."""
         raw, _, sig = str(token).partition(".")
@@ -221,10 +227,14 @@ class WebPush:
         self.used = {n: e for n, e in self.used.items() if e > now}
         if claims["e"] <= now:
             raise ValueError("this action has expired: open tallygate to decide")
+        if claims.get("b") != self.boot:  # the used-token set of the run that minted it is gone
+            raise ValueError(RESTARTED)
         if claims["n"] in self.used:
             raise ValueError("this action was already used")
         if claims["d"] not in DECISIONS.get(claims["k"], ()):
             raise ValueError("invalid action")
+        if not any(s["id"] == claims["s"] for s in self.subs):  # "Remove" ends a device's buttons at once
+            raise ValueError(REMOVED)
         if claims["k"] == "ask" and claims["d"] not in ask:
             raise ValueError(SWITCHED_OFF)
         self.used[claims["n"]] = claims["e"]
