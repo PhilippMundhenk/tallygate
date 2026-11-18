@@ -743,13 +743,18 @@ class Gateway:
         for key, p in list(self.pending.items()):
             if p.id == pending_id:
                 rule = rule_for_approval(p.host, p.port, scope, ttl)
-                if rule.cidr and rule.action == "allow" and (block := self.policy.blocked_by(p.host, p.port)):
-                    # An IP inside a blocked range is refused without a question, so this request should not
-                    # exist. An approval must never be the rule that opens a blocked range: that takes a
-                    # rule for the address, added on Destinations by someone who sees which range it is in.
+                if (
+                    rule.cidr
+                    and rule.action == "allow"
+                    and (now := self.policy.evaluate(p.host, p.port, [p.host])).action == "deny"
+                ):
+                    # An address the list refuses without a question (a block, a deny rule) should not have a
+                    # request. An approval must never be the rule that opens a blocked range: that takes a rule
+                    # for the address, added on Destinations by someone who sees which range it is in. An
+                    # address that the list only ASKS about (your own ask rule above a block) can be approved.
                     raise ValueError(
-                        f"{p.host} is inside blocked range {block.cidr} (rule {block.id}): an approval cannot "
-                        "open it. Deny the request; to reach the address, add an allow rule for it on Destinations"
+                        f"{p.host} is refused by the list ({now.reason}): an approval cannot open it. Deny the "
+                        "request; to reach the address, add an allow rule for it on Destinations"
                     )
                 self.policy.add_rule(rule, top=True)
                 self.save_policy(by, f"approval {scope} for {p.host}:{p.port}")
