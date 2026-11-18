@@ -62,6 +62,7 @@ class Req:
     host_header: str | None  # the Host header or :authority as sent, None if absent
     pretty_host: str  # mitmproxy's pretty_host: the Host header if present, else the URL host
     connection: str = ""  # the Connection header (for "upgrade")
+    target: str = ""  # the authority in an HTTP/1 request line (absolute-form) that is sent on as it is
 
 
 @dataclass
@@ -151,19 +152,75 @@ class Access:
         names = self.gw.grants.defined_for(host, port)
         return f"available via grant {', '.join(names)} (agent: tallygate request {names[0]})" if names else None
 
-    def request_without_verdict(self, host: str, port: int, scheme: str) -> tuple[Verdict | None, str | None]:
-        """A request on a connection that has no stored verdict: a plain-HTTP proxy request (its hooks run
-        before the server connection exists). The destination is the request's own host, which the agent
-        chose, so it is re-authorised here rather than trusted (#137). Returns (verdict, None), or (None,
-        reason) to refuse."""
+    def request_without_verdict(
+        self, host: str, port: int, scheme: str, proto: str = ""
+    ) -> tuple[Verdict | None, str | None]:
+        """A request that has no connection verdict yet: a plain-HTTP proxy request, whose hooks run before a
+        server connection is assigned. Its destination is the request's own host, which the agent chose, so it
+        is decided here with the policy, not trusted (#137, #236). Nothing is resolved and nobody is asked.
+
+        Returns one of:
+        - (None, reason): refused in every case.
+        - (verdict, None): the policy lets it through as far as that is known without its addresses. The
+          verdict carries the grant, if an active grant covers the destination, so that its limits apply.
+        - (verdict, problem): the policy does not let it through by itself: it denies it (a locked range, a
+          `deny` rule, a blocked range for an IP literal, an invalid name), or it would ask you. Such a
+          request may only go out on a NEW connection, which `server_connect` decides in full, with the
+          addresses and with the prompt. On a connection that is already open it is refused with `problem`
+          (`Gateway._verdict_for`): no prompt can be asked for a request, so `ask` is a refusal there.
+
+        A name is decided on the name alone (ADR-0011). Its addresses are checked by `server_connect`, which
+        always runs for a name: a pooled connection is pinned to an address and carries only requests that
+        name that address."""
         if scheme == "https":
             # A legitimate https request arrives through a CONNECT tunnel, where server_connect has gated the
             # destination and stored a verdict, and TLS is intercepted or bound to the SNI. No verdict here
             # means an absolute-form `https://` proxy request, which skips all of that and would be checked
             # against the host it names rather than the connection's checked target (#137).
             return None, "https over the plain proxy must use CONNECT"
-        m = self.grant_for(host, port)
-        return (Verdict(host, port, m[0].id, m[2]) if m else Verdict(host, port)), None
+        if is_ip(host):
+            ip = host.strip("[]")
+            if why := self.gw.policy.locked(ip, port):
+                return Verdict(host, port), why
+            if m := self.grant_for(host, port):
+                return Verdict(host, port, m[0].id, m[2]), None
+            dec = self.on_addresses(host, port, [ip], proto)
+            hint = self.grant_address_hint(host, port) or self.grant_hint(host, port)
+        else:
+            name = self.checked_name(host)
+            if name is None:
+                return Verdict(host, port), "invalid hostname"
+            host = name
+            if m := self.grant_for(host, port):
+                return Verdict(host, port, m[0].id, m[2]), None
+            dec = self.on_name(host, port)
+            hint = self.grant_hint(host, port)
+        if dec.action == "allow":
+            return Verdict(host, port), None
+        why = (
+            dec.reason
+            if dec.action == "deny"
+            else f"{dec.reason}: needs your approval, which is not asked for on an open connection (use a new one)"
+        )
+        return Verdict(host, port), f"{why}; {hint}" if hint else why
+
+    def grant_address_hint(self, host: str, port: int) -> str | None:
+        """Set if the IP literal `host` is the fixed address of a target of an ACTIVE grant that is named by
+        a name. The grant opens the name, with its limits (paths, level, Host); it does not open the address
+        (#236). Whoever wants the address itself reachable adds a rule for it."""
+        try:
+            addr = ip_addr(host)
+        except ValueError:
+            return None
+        now = time.time()
+        for a in self.gw.grants.active.values():
+            g = self.gw.grants.defs.get(a.name)
+            if g is None or a.expires <= now:
+                continue
+            for t in g.targets:
+                if t.address and not is_ip(t.host) and t.port == port and ip_addr(t.address) == addr:
+                    return f"{host} is the address of {t.host} (grant {g.name}): reach a grant target by its name"
+        return None
 
     @staticmethod
     def grant_addresses(t: Target, host: str) -> list[str] | None:
@@ -301,6 +358,10 @@ class Access:
             # On a shared CDN or virtual-host server the Host picks the site: another name would reach a
             # destination nobody checked (#57). Without a Host the upstream serves its default site.
             return Outcome("Host header does not match the checked target")
+        if r.target and not _same_authority(r.target, lim.host, v.port):
+            # The request line names a server too (absolute-form), and a server uses that before the Host
+            # header (RFC 9112, 3.2.2): it is bound to the checked target like the Host (#236).
+            return Outcome(f"request target does not match the {'granted' if lim.grant else 'checked'} target")
         if lim.paths is not None and not path_ok(r.path, lim.paths):
             return Outcome(f"path not covered by grant {lim.grant}")
         method = r.method.upper()
@@ -327,6 +388,14 @@ def is_write(method: str, path: str, post_is_write: bool, read_posts) -> bool:
     (except on the `read_posts` paths: POSTs that only read, e.g. a search or a batch lookup)."""
     method = method.upper()
     return method in WRITE_METHODS or (method == "POST" and post_is_write and not path_ok(path, list(read_posts)))
+
+
+def _same_authority(authority: str, host: str, port: int) -> bool:
+    """`authority` (host or host:port, as sent) names `host`, and `port` if it names a port."""
+    name, sep, digits = authority.rpartition(":")
+    if not (sep and digits.isdigit()):
+        name, digits = authority, ""
+    return _same_host(name.strip("[]").lower().rstrip("."), host) and (not digits or int(digits) == port)
 
 
 def _same_host(sent: str, host: str) -> bool:

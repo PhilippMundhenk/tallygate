@@ -36,3 +36,19 @@ CONNECT to an allowed name such as `pypi.org` and send the SNI or `Host` of any 
   outer SNI is not the checked name.
 - ⚠️ A refused TLS connection shows up in the client as a handshake failure, not as an HTTP error. The
   reason is in the event log.
+
+## Amendment (2026-11-18): the request line, and reused connections (#236)
+
+The third security review showed two ways around the Host binding, both closed in the same spirit:
+
+- **The request line names a server too.** Inside a tunnel mitmproxy forwards an HTTP/1 request line in
+  absolute-form as it is, and a server uses its authority before the `Host` header (RFC 9112, 3.2.2). It is
+  now bound to the checked target like the `Host`: the host must be the checked one, and the port too if one
+  is named. HTTP/2 has no request line; its `:authority` is the `Host`.
+- **A request is bound to the connection that carries it.** "The checked target" is the verdict of the
+  upstream connection. A plain-HTTP proxy request has no connection when it is checked, and mitmproxy then
+  reuses an open one by address. Such a request is decided on its own destination and is never sent on a
+  connection that was checked for another one
+  ([architecture](../architecture.md#what-is-checked-per-connection-and-what-per-request), threat T50).
+  [ADR-0003](0003-single-enforcement-hook.md) stands: the decision for a connection is made in
+  `server_connect` only; the request hooks refuse, they never open anything.

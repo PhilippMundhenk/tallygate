@@ -133,6 +133,12 @@ address opens a blocked range ([why](rules.md#why-a-name-rule-cannot-open-a-bloc
 target is checked like a name rule: set the fixed address on the target, or add an allow rule for the
 address above the block on *Destinations*, which opens the address for the target too.
 
+**A fixed address opens the name, not the address.** With `ha.lan` at `192.168.1.20`, the agent reaches
+`http://ha.lan:8123/…`, where the grant's paths and level apply. `http://192.168.1.20:8123/…` is not part of
+the grant: it is decided by the rule list like any IP, and refused without a prompt unless a rule allows the
+address (`… is the address of ha.lan (grant …): reach a grant target by its name`). Only a target whose host
+is the IP itself is reached by IP.
+
 **A target that names an address is not subject to the blocked ranges or to your `deny` rules at all**, only
 to the locked ranges. That includes addresses you may not think of as "a device": loopback (`127.0.0.1`, the
 gateway container itself, on ports that are not its own listeners), the cloud metadata address

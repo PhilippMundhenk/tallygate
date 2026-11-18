@@ -70,6 +70,27 @@
 > | A `PUT /policy` without `seeded` built from a current `GET` is migrated again (denies move to the top, blocks are seeded a second time). | **Accepted.** Stricter, not looser; send what `GET /policy` returned, with `seeded`. |
 > | With `allow_private` and the default `ask`, approving the prompt for a service target's address adds an address rule that also applies on the proxy and SOCKS ports. | **Accepted**, as for every approved address. |
 > | `CONNECT` to port 0 matches rules for every port. | **Accepted.** The connection itself fails. |
+>
+> **Note, 2026-11-18: third review, of v0.4.0 (gateway part), finding 1 (#236, high).** The per-request checks
+> did not hold on a reused connection. mitmproxy keeps the upstream connections of a client connection and
+> reuses the one whose address equals the host and port a plain-HTTP proxy request names, without
+> `server_connect`; a connection is pinned to its checked address. After one allowed request to a grant
+> target by name, a request on the same keep-alive connection that named the pinned **address** was
+> forwarded with no check: the request gate gave a request without a connection verdict a verdict of its own
+> without asking the policy, and for an IP literal one without any limits. Confirmed by the reviewer against
+> the real gateway process: `DELETE` on another path on a read-only, path-limited grant, and into a blocked
+> range the grant target named. The locked ranges were not reachable this way. The earlier fix for #137
+> ("re-authorised on its own destination") had only looked up the grant.
+>
+> | What | Outcome |
+> |---|---|
+> | The request gate trusted a request without a connection verdict | **Fixed.** It decides the request's own destination with the policy and binds the request to the connection that carries it: never one that was checked for another destination; a new connection is decided by `server_connect` as before (threat model T50, [architecture](architecture.md#what-is-checked-per-connection-and-what-per-request)). |
+> | The fixed address of an active grant's target, by IP literal | **Decided:** the grant opens the name, not the address. The literal is decided by the rule list and refused without a prompt unless a rule allows it. |
+> | A grant on an IP-literal target that is revoked while its connection is open | **Fixed** with the above (found while testing): the next request on the reused connection was forwarded. |
+> | The authority in an HTTP/1 request line inside a tunnel (CONNECT, SOCKS5, intercepted TLS) | **Fixed** (found while checking the other paths): mitmproxy forwards an absolute-form request line as it is, and a server uses it before the `Host` header, so another site on the same address could be named there. It must be the checked target now. |
+> | A grant that starts or ends between the check of a plain-HTTP request and the opening of its connection | **Fixed** (found by reading): the connection is refused, the request was checked against the wrong limits. |
+> | A name gets a new upstream connection for every plain-HTTP request on a keep-alive connection | **Unchanged**, noted: each is decided by `server_connect`; they stay open until the client connection ends. |
+> | A rule that is removed while a tunnel is open | **Unchanged**, as before: the tunnel stays (a grant that ends does close it). |
 
 Severity scale: **Critical**: the agent gains control of the operator plane or fully escapes the policy.
 **High**: a security boundary is bypassed or weakened in a realistic setup. **Medium**: an exploitable

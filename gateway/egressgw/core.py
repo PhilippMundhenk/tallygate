@@ -9,11 +9,20 @@ Allowed hostnames are pinned to the checked IP to defeat DNS rebinding. TLS is p
 untouched when its SNI matches the checked name, except for hosts configured for credential injection
 or read-only access, which are intercepted (the agent never sees injected secrets; its own credentials
 for those hosts are stripped). HTTP requests must name the checked target in their Host header.
+
+What is checked when (#236):
+- per upstream connection, in `server_connect`: the whole decision (locked ranges, the rule list on the name
+  and on every address, grants, the prompt). Its result is a `Verdict`, stored for that connection.
+- per request, in `requestheaders`/`request`: the limits of the connection's verdict. A request with no
+  connection yet (a plain-HTTP proxy request) is decided on its own destination, and the connection that
+  will carry it must be one that was checked for exactly that destination: a pooled connection that was
+  checked for another one never carries it, and a new one is decided by `server_connect`.
 """
 
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import functools
 import inspect
@@ -142,6 +151,40 @@ def _body_buffered(req: http.Request) -> bool:
 
 
 @dataclass
+class Upstream:
+    """An upstream connection that `server_connect` allowed: what it was checked for and where it goes."""
+
+    client: str  # id of the client connection it belongs to (mitmproxy pools per client connection)
+    verdict: Verdict
+    address: tuple[str, int]  # where it really goes: the pinned address
+    seq: int  # order of admission, to tell a connection opened for a request from an older one
+
+
+@dataclass(frozen=True)
+class Gated:
+    """What the request gate assumed for a plain-HTTP proxy request (kept in the flow's metadata)."""
+
+    host: str
+    port: int
+    grant: str | None
+    seq: int  # connections admitted before the request was checked
+    reuse: bool  # an open connection that was checked for this very destination will carry it
+
+
+GATED = "tallygate_gated"  # key in flow.metadata
+UPSTREAMS_KEPT = 1024  # closed upstream connections that are remembered for responses still on their way
+
+
+def _addr_key(host: str, port: int) -> tuple:
+    """An address as a comparable key: IP literals by value (so `::ffff:a.b.c.d` equals `a.b.c.d`)."""
+    host = str(host).strip("[]").lower().rstrip(".")
+    try:
+        return ip_addr(host), port
+    except ValueError:
+        return host, port
+
+
+@dataclass
 class Pending:
     host: str
     port: int
@@ -257,6 +300,14 @@ class Gateway:
         # What was decided per upstream connection (server connection id -> Verdict), and the one model that
         # says what follows from it: interception, and what each request may do (ADR-0014, model.py).
         self.verdicts: dict[str, Verdict] = {}
+        # The same connections with what binds a request to them (#236): every allowed upstream connection by
+        # its id (kept a while after it closed), the open ones per client connection (mitmproxy's pool), and
+        # what the request gate assumed for a plain-HTTP request whose connection is still to be opened.
+        self.upstreams: dict[str, Upstream] = {}
+        self.pool: dict[str, dict[str, Upstream]] = {}
+        self.gated: dict[str, dict[tuple, str | None]] = {}
+        self._closed: collections.deque[str] = collections.deque()
+        self._admitted = 0
         self.access = Access(self)
         # IPs the configured intercept hosts (inject / read-only / scoped GitHub) resolve to. Interception is
         # keyed on the NAME, so an IP-literal connection to one of these would skip credential strip/injection
@@ -974,8 +1025,9 @@ class Gateway:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(ev.wait(), timeout)
 
-    async def _grant_connect(self, data, host: str, port: int, proto: str, client: str, block) -> bool:
-        """Handle a connection covered by an active grant. Returns True if handled (allowed or blocked)."""
+    async def _grant_connect(self, data, host: str, port: int, proto: str, client: str, block, gated=...) -> bool:
+        """Handle a connection covered by an active grant. Returns True if handled (allowed or blocked).
+        `gated`: the grant the request gate assumed for a plain-HTTP request, see `_gate_changed`."""
         m = self.access.grant_for(host, port)
         if not m:
             return False
@@ -987,7 +1039,7 @@ class Gateway:
             except OSError as e:
                 block(self._reason(e))
                 return True
-        if problem := self.access.grant_problem(g, t, host, port, ips):
+        if problem := self.access.grant_problem(g, t, host, port, ips) or self._gate_changed(gated, a.id):
             block(problem, ips)
             return True
         self.record(
@@ -1000,11 +1052,41 @@ class Gateway:
             action="allow",
             reason=f"grant {g.name} ({a.level})",
         )
-        self.verdicts[data.server.id] = Verdict(host, port, a.id, t)
         data.server.address = (ips[0], port)
         if t.scheme == "https" and not is_ip(host):
             data.server.sni = host
+        self._admit(data, Verdict(host, port, a.id, t))
         return True
+
+    def _gated(self, data, host: str, port: int):
+        """What the request gate assumed for the plain-HTTP request this connection is opened for: the id of
+        the grant that carries the destination or None; `...` if no request announced the connection (a
+        CONNECT tunnel, SOCKS5, a service port)."""
+        return self.gated.get(data.client.id, {}).pop(_addr_key(host, port), ...)
+
+    @staticmethod
+    def _gate_changed(gated, grant: str | None) -> str | None:
+        """The request gate checked a plain-HTTP request against the limits it found then (`_verdict_for`).
+        If the destination is carried by another grant now, or by none, those were the wrong limits for the
+        connection that is opened for it: refuse, the client sends the request again."""
+        if gated is ... or gated == grant:
+            return None
+        return "the grants for this destination changed while the request was checked: send it again"
+
+    def _admit(self, data, v: Verdict) -> None:
+        """Store what was decided for an allowed upstream connection. Called after the address was pinned."""
+        self._admitted += 1
+        up = Upstream(data.client.id, v, (str(data.server.address[0]), data.server.address[1]), self._admitted)
+        self.verdicts[data.server.id] = v
+        self.upstreams[data.server.id] = up
+        self.pool.setdefault(up.client, {})[data.server.id] = up
+
+    def _pooled(self, client: str, host: str, port: int) -> list[Upstream]:
+        """The open upstream connections of this client connection that mitmproxy may reuse for a request to
+        host:port. mitmproxy reuses a connection whose address equals the request's host and port (as text;
+        IP literals are compared by value here, which finds more, never less)."""
+        key = _addr_key(host, port)
+        return [up for up in self.pool.get(client, {}).values() if _addr_key(*up.address) == key]
 
     @fail_closed
     async def server_connect(self, data: server_hooks.ServerConnectionHookData) -> None:
@@ -1023,10 +1105,13 @@ class Gateway:
             )
 
         if is_ip(host):
-            if await self._grant_connect(data, host, port, proto, client, block):
+            gated = self._gated(data, host, port)
+            if await self._grant_connect(data, host, port, proto, client, block, gated):
                 return
             ips = [host.strip("[]")]
-            if hint := self.access.grant_hint(host, port):
+            # the address of an active grant's target is reached by the target's name, where the grant's
+            # limits apply: the address is not asked about (#236)
+            if hint := self.access.grant_address_hint(host, port) or self.access.grant_hint(host, port):
                 dec = self.access.on_addresses(host, port, ips, proto)
                 if dec.action != "allow":
                     self._hit(dec)
@@ -1037,7 +1122,8 @@ class Gateway:
             if name is None:
                 return block("invalid hostname")
             host = name
-            if await self._grant_connect(data, host, port, proto, client, block):
+            gated = self._gated(data, host, port)
+            if await self._grant_connect(data, host, port, proto, client, block, gated):
                 return
             # 1) decide on the name alone, where no address can change the result (`early`): denied and
             #    not-yet-approved names are then never resolved
@@ -1066,6 +1152,8 @@ class Gateway:
                     self._hit(dec)
                     return block(f"{dec.reason}; {hint}", ips)
             dec = await self.decide(host, port, ips, proto, client, learning=learning)
+        if dec.action == "allow" and (changed := self._gate_changed(gated, None)):
+            dec = Decision("deny", changed)
         reason = dec.reason
         self._hit(dec)
         if dec.action != "allow":
@@ -1077,7 +1165,6 @@ class Gateway:
         )
         if dec.action != "allow":
             return
-        self.verdicts[data.server.id] = Verdict(host, port)
         # Pin to the checked address (anti DNS-rebinding: no second resolution after the decision).
         # For intercepted hosts the upstream SNI is set explicitly, so the upstream certificate is
         # still verified against the hostname, not the IP.
@@ -1086,6 +1173,7 @@ class Gateway:
             if self.access.intercepted(host):
                 data.server.sni = host
                 self._note_intercept_ips(ips)  # record the IPs so an IP-literal route to them is refused
+        self._admit(data, Verdict(host, port))
 
     def _intercept_names(self) -> set[str]:
         """Exact (resolvable) host names that are intercepted; wildcards and IP literals are skipped."""
@@ -1122,6 +1210,20 @@ class Gateway:
     def server_disconnected(self, data: server_hooks.ServerConnectionHookData) -> None:
         self.verdicts.pop(data.server.id, None)
         self.tls_refused.discard(data.server.id)
+        # Out of the pool at once. What it was checked for is kept a while: the hook for a response that
+        # arrived just before the connection closed may run after this one (`responseheaders`).
+        if (up := self.upstreams.get(data.server.id)) is not None and data.server.id not in self._closed:
+            mine = self.pool.get(up.client, {})
+            mine.pop(data.server.id, None)
+            if not mine:
+                self.pool.pop(up.client, None)
+            self._closed.append(data.server.id)
+            while len(self._closed) > UPSTREAMS_KEPT:
+                self.upstreams.pop(self._closed.popleft(), None)
+
+    @fail_closed
+    def client_disconnected(self, client) -> None:
+        self.gated.pop(client.id, None)
 
     @fail_closed
     def server_connected(self, data: server_hooks.ServerConnectionHookData) -> None:
@@ -1242,7 +1344,17 @@ class Gateway:
             return (req.host or "?").lower().rstrip("."), req.port, refuse
         out = self.access.check(
             v,
-            Req(req.method, req.scheme, req.path, req.host_header, req.pretty_host, req.headers.get("connection", "")),
+            Req(
+                req.method,
+                req.scheme,
+                req.path,
+                req.host_header,
+                req.pretty_host,
+                req.headers.get("connection", ""),
+                # HTTP/1 absolute-form inside a tunnel: mitmproxy forwards the request line as it is. (For a
+                # plain proxy request it has made it origin-form by now; in HTTP/2 it is the Host.)
+                req.authority if req.http_version.startswith("HTTP/1") else "",
+            ),
         )
         if out.refuse:
             return v.host, (v.port if v.grant else req.port), out.refuse
@@ -1253,15 +1365,66 @@ class Gateway:
         return None
 
     def _verdict_for(self, flow: http.HTTPFlow) -> tuple[Verdict | None, str | None]:
-        """(verdict, None), or (None, reason) to refuse. A request on a connection with a stored verdict is
-        checked against it. A request with none - a plain-HTTP proxy request (its hooks run before the server
-        connection exists), or an absolute-form https proxy request - is re-authorised on its own destination
-        rather than trusted (#137)."""
+        """(verdict, None), or (None, reason) to refuse.
+
+        A request on a connection with a stored verdict (a CONNECT tunnel, SOCKS5, a streamed request whose
+        connection was just opened) is checked against that verdict.
+
+        A request with none is a plain-HTTP proxy request: its hooks run before mitmproxy picks the upstream
+        connection, and mitmproxy picks an open one of this client connection whose address equals the host
+        and port the request names, without `server_connect`. So the request is decided here on its own
+        destination (`Access.request_without_verdict`), and it is bound to the connection that will carry it
+        (#236):
+        - an open connection that was checked for ANOTHER destination (a name that was pinned to this
+          address, a grant target) never carries it: refused;
+        - an open connection that was checked for this destination carries it with that connection's
+          verdict, if the policy still lets the request through by itself (no prompt is asked here);
+        - otherwise mitmproxy opens a new connection, and `server_connect` decides it in full, prompt
+          included. What was assumed here is handed to it (`_gate_changed`) and checked again when the
+          response arrives (`responseheaders`)."""
+        req = flow.request
+        gate: Gated | None = flow.metadata.get(GATED)
         v = self.verdicts.get(flow.server_conn.id)
         if v is not None:
+            if gate is not None and (why := self._unbound(flow, gate)):
+                return None, why  # a streamed request: the connection it got is not the one it was checked for
             return v, None
-        host = (flow.request.host or "").lower().rstrip(".")
-        return self.access.request_without_verdict(host, flow.request.port, flow.request.scheme)
+        host = (req.host or "").lower().rstrip(".")
+        proto = getattr(flow.client_conn.proxy_mode, "type_name", "")
+        v, problem = self.access.request_without_verdict(host, req.port, req.scheme, proto)
+        if v is None:
+            return None, problem
+        client = flow.client_conn.id
+        pooled = self._pooled(client, req.host or "", req.port)
+        if pooled:
+            here = f"{v.host}:{v.port}"
+            for up in pooled:
+                if _addr_key(up.verdict.host, up.verdict.port) != _addr_key(v.host, v.port):
+                    why = f"request for {here} on a connection that was checked for {up.verdict.host}:{up.verdict.port}"
+                    return None, f"{why}; {here} itself: {problem}" if problem else why
+            if problem:
+                return None, f"{here} is not allowed on this connection any more: {problem}"
+            if any(up.verdict.grant != v.grant for up in pooled):
+                return None, f"the grants for {here} changed: use a new connection"
+            v = pooled[0].verdict
+        else:
+            self.gated.setdefault(client, {})[_addr_key(v.host, v.port)] = v.grant
+        flow.metadata[GATED] = Gated(v.host, v.port, v.grant, self._admitted, bool(pooled))
+        return v, None
+
+    def _unbound(self, flow: http.HTTPFlow, gate: Gated) -> str | None:
+        """Why the upstream connection of this plain-HTTP request is not one that was checked for it, or
+        None: it must have been checked for the destination and with the grant the request was checked
+        with, and be either the open connection the gate saw or one that was opened after the gate."""
+        up = self.upstreams.get(flow.server_conn.id)
+        if up is None:
+            return "the connection was not checked"
+        v = up.verdict
+        if _addr_key(v.host, v.port) != _addr_key(gate.host, gate.port) or v.grant != gate.grant:
+            return f"request for {gate.host}:{gate.port} on a connection that was checked for {v.host}:{v.port}"
+        if not gate.reuse and up.seq <= gate.seq:
+            return f"request for {gate.host}:{gate.port} on a connection that was open before it was checked"
+        return None
 
     def _enforce(self, flow: http.HTTPFlow, early: bool) -> None:
         refusal = self._checks(flow)
@@ -1269,6 +1432,7 @@ class Gateway:
             return
         host, port, why = refusal
         req = flow.request
+        flow.metadata.pop(GATED, None)  # answered here: no upstream connection carries it
         if req.stream or (early and not _body_buffered(req)):
             # A response cannot replace a streamed body: mitmproxy refuses to combine the two, and a body
             # that grows past stream_large_bodies later would be streamed. Cut the request instead.
@@ -1296,6 +1460,28 @@ class Gateway:
         """Second line, with the complete request. A response set here means: refused in requestheaders."""
         if flow.response is None:
             self._enforce(flow, early=False)
+
+    @fail_closed
+    def responseheaders(self, flow: http.HTTPFlow) -> None:
+        """Last line for a plain-HTTP proxy request (#236). No hook runs between mitmproxy picking the upstream
+        connection and sending the request, so the request gate works out beforehand which connection that
+        will be. Here the connection is known: if it is not one that was checked for this request, the
+        response is withheld and the event is logged. This cannot happen as long as mitmproxy pools
+        connections the way `_pooled` assumes; it is here in case that changes."""
+        gate: Gated | None = flow.metadata.get(GATED)
+        if gate is None:
+            return
+        if why := self._unbound(flow, gate):
+            flow.kill()
+            self.record(
+                kind="conn",
+                proto="http",
+                client=flow.client_conn.peername[0] if flow.client_conn.peername else "?",
+                host=gate.host,
+                port=gate.port,
+                action="deny",
+                reason=f"response withheld: {why}: {flow.request.method} {flow.request.path[:120]}",
+            )
 
     @fail_closed
     def dns_request(self, flow: dns.DNSFlow) -> None:

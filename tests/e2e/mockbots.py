@@ -13,6 +13,8 @@ import threading
 
 from aiohttp import web
 
+MX_DEFAULTS = {"bot": "@bot:hs", "whoami_failures": 0, "echo": False}
+
 
 class MockBots:
     def __init__(self) -> None:
@@ -26,6 +28,9 @@ class MockBots:
         self.plan: dict = {}
         # outages for sending: {"telegram" | "matrix": "error" | "slow" | "slow-reactions"}
         self.fail: dict[str, str] = {}
+        # Matrix homeserver behaviour: the bot's user id, how many whoami calls fail first, and whether what
+        # the bot sends comes back in /sync with the bot as sender (as on a real homeserver)
+        self.mx: dict = dict(MX_DEFAULTS)
         self._ids = itertools.count(100)
         self._tg_updates: list = []
         self._mx_events: list = []
@@ -158,7 +163,11 @@ class MockBots:
 
     # ---------------------------------------------------------------- Matrix
     async def _mx_whoami(self, _request):
-        return web.json_response({"user_id": "@bot:hs"})
+        if self.mx["whoami_failures"] > 0:
+            self.mx["whoami_failures"] -= 1
+            self.log.append(("mx.whoami", "failed"))
+            return web.json_response({"errcode": "M_UNKNOWN", "error": "upstream timeout"}, status=502)
+        return web.json_response({"user_id": self.mx["bot"]})
 
     async def _mx_send(self, request: web.Request) -> web.Response:
         body = await request.json()
@@ -167,6 +176,9 @@ class MockBots:
         if self.fail.get("matrix") == "error":
             return web.json_response({"errcode": "M_UNKNOWN", "error": "service unavailable"}, status=503)
         eid = f"$e{next(self._ids)}"
+        if self.mx["echo"]:
+            echo = {"type": request.match_info["type"], "sender": self.mx["bot"], "event_id": eid, "content": body}
+            self._mx_events.append(echo)
         if request.match_info["type"] == "m.room.message":
             self.log.append(("mx.msg", body["body"]))
             plan = self.plan.get("matrix")

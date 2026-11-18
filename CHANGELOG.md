@@ -6,10 +6,62 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Two findings of the deployment review of 0.4.0. The first changes how you reach the UI: read
+Fixes for the findings of the security review of 0.4.0. One of them changes how you reach the UI: read
 [Upgrading from 0.4.0](#upgrading-from-040) before you update.
 
 ### Security
+- **The Matrix bot can no longer approve requests itself (#238, Medium).** The check that the bot's account is
+  not one of the allowed users depended on one `whoami` call when the control plane started. If that call
+  failed (homeserver not up yet after a reboot, a 5xx) and the bot used an allowed user's token, the control
+  plane took the reactions it pre-seeds on every prompt (👍 first), echoed by the homeserver, for that user's
+  decision: every connection request was allowed and every grant request approved at the requested level.
+  Now nothing from the room counts until `whoami` has succeeded: it is retried (5 s doubling to 5 min), the
+  channel row under **Setup → Notifications** says *Matrix approvals paused* meanwhile, and what happened in
+  the room during the pause is not applied afterwards (the request stays open for the UI). A bot account that
+  is an allowed user switches Matrix approvals off on every path, and the row says so. Independently, the
+  control plane remembers the events it sent itself and never takes them, or anything by their sender, as a
+  decision. Telegram was checked and is not affected. **If you run the bot with your own account's token:**
+  create a separate bot account ([user guide](docs/user-guide.md#matrix-approvals)).
+- **The control plane never follows a redirect (#230, High).** The agent's status server and ttyd run as the
+  agent user, so a hostile agent could replace them and answer the control plane's calls (status every 30 s
+  while *Overview* is open, version, setup, files, console) with `302 Location: <any URL>`. Control, which
+  has a route to the local network and the internet, fetched that URL itself: a path around the gateway with
+  no policy, no approval and no log entry, including data in URLs and, with 307/308, re-sent POST and DELETE
+  requests. Now every HTTP client of the control plane refuses any 3xx before a second request is built
+  (HTTP and the console WebSocket alike), and the browser gets `502` with a fixed text. The client for the
+  agent connects to `AGENT_HOST` on the status and console ports only, the one for the gateway to `GW_URL`
+  only. Threat T49 in [docs/threat-model.md](docs/threat-model.md).
+  **Check after upgrading:** calls to GitHub and to the notification services (ntfy, Gotify, Pushover,
+  Telegram, Matrix, Web Push) are not followed either. If a channel worked only through a redirect (for
+  example `http://` in `NTFY_URL` behind a reverse proxy that redirects to `https://`), it now fails with
+  *answered with a redirect, which control never follows*: enter the final URL
+  ([troubleshooting](docs/operations.md#troubleshooting)).
+- **Every request is checked against its own destination, also on a reused connection (#236, high).** Found
+  by the security review of v0.4.0. After one allowed plain-HTTP request to a grant target, a second request
+  on the same keep-alive connection that named the target's **IP address** was forwarded without any check:
+  any method and path on a read-only, path-limited grant, and into a blocked range if the target named a
+  device there. The cause: mitmproxy reuses an open upstream connection whose address equals the host and
+  port a request names, without asking the gateway again, and the request check trusted a request it had no
+  connection decision for. The stack itself (the locked ranges) was not reachable this way. Now:
+  - A plain-HTTP proxy request is decided on its own destination with the policy, and it is only sent on a
+    connection that was checked for exactly that destination. A request that names an address on a
+    connection that was opened for a name gets `403 request for … on a connection that was checked for …`.
+    Open a new connection to the proxy for it; it is then decided like any new destination.
+  - The fixed address of an active grant's target is not opened by the grant: reach the target by its name,
+    where the grant's limits apply. By IP it is refused without a prompt unless a rule allows the address.
+  - A request on an open connection is never asked about. If the destination needs your approval again (an
+    approved IP literal whose time ran out, on a connection that is still open), the request is refused and
+    the next connection asks.
+  - A grant on an IP-literal target that is revoked or expires also ends on a connection that is still open.
+  - Inside a CONNECT tunnel, over SOCKS5 and on intercepted TLS, an HTTP/1 request whose request line names
+    another server (`GET http://other.example/…` with the checked `Host`) is refused like a wrong `Host`
+    header: `403 request target does not match the checked target`.
+  - A grant that starts or ends in the moment between the check of a request and the opening of its
+    connection refuses that connection (`… changed while the request was checked: send it again`).
+
+  Unchanged: a first request to a destination you are asked about is held until you answer, and keep-alive
+  to one destination works as before. See threat T50 in [docs/threat-model.md](docs/threat-model.md) and
+  [what is checked per connection and what per request](docs/architecture.md#what-is-checked-per-connection-and-what-per-request).
 - **The UI is published on the Docker host only (`CONTROL_PUBLISH=127.0.0.1:8080`)** instead of every
   interface. The UI is plain HTTP, so on `0.0.0.0:8080` the generated password and the session crossed the
   network in clear text, and a port published by Docker is not filtered by host firewalls such as ufw. Other
