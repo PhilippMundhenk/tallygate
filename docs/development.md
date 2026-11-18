@@ -87,7 +87,8 @@ Run a subset: `pytest tests/e2e -k injection -x -vv`. Process logs end up in pyt
 ```bash
 # terminal 1: gateway
 cd gateway && DATA_DIR=/tmp/sg CA_EXPORT_DIR=/tmp/sg/ca GW_LISTEN_HOST=127.0.0.1 GW_DNS_PORT=5353 \
-  GW_API_HOST=127.0.0.1 GW_API_TOKEN=dev-token-dev-token-dev-token python3 run.py
+  GW_API_HOST=127.0.0.1 GW_API_TOKEN=dev-token-dev-token-dev-token GW_TEST_NO_INTERNAL_NETS=1 python3 run.py
+#   (GW_TEST_NO_INTERNAL_NETS=1: no compose stack here, so no networks to lock; development only)
 # terminal 2: control
 cd control && GW_URL=http://127.0.0.1:8081 GW_API_TOKEN=dev-token-dev-token-dev-token \
   CONTROL_BIND_HOST=127.0.0.1 CONTROL_PASSWORD=dev SESSION_SECRET=dev COOKIE_SECURE=0 \
