@@ -7,6 +7,7 @@ import importlib.util
 import json
 import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -261,3 +262,18 @@ def test_note_is_sent_as_activity(cli, fake, capsys):
     assert "noted" in capsys.readouterr().out
     fake.on("POST", "/v1/activity", (429, {"error": "rate limited"}))
     assert cli.main(["note", "again"]) == 2
+
+
+# ---------------------------------------------------------------- the gateway has no connection (#218)
+def test_grants_says_when_the_gateway_has_no_connection(cli, fake, capsys):
+    since = time.time() - 600
+    fake.on("GET", "/v1/grants", (200, {"grants": [], "network": {"down": True, "since": since}}))
+    assert cli.main(["grants"]) == 0
+    out = capsys.readouterr().out
+    assert "no connection since" in out and "not a policy decision" in out
+    fake.on("GET", "/v1/grants", (200, {"grants": [], "network": {"down": True, "since": None}}))
+    cli.main(["grants"])
+    assert "since ?" in capsys.readouterr().out
+    fake.on("GET", "/v1/grants", (200, {"grants": [], "network": {"down": False, "since": None}}))
+    cli.main(["grants"])
+    assert "no connection" not in capsys.readouterr().out
