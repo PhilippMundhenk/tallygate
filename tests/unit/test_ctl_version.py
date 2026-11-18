@@ -66,7 +66,9 @@ def test_update_available_with_links_built_by_control(load_main):  # noqa: F811
         "tallygate": "0.4.0",
         "claude_code": "2.1.304",
         "changelog": "https://github.com/PhilippMundhenk/tallygate/blob/main/CHANGELOG.md",
-        "upgrade": "docker compose pull && docker compose up -d",
+        "upgrade": "cp -p compose.yaml compose.yaml.previous && "
+        "curl -fsSLO https://github.com/PhilippMundhenk/tallygate/releases/latest/download/compose.yaml && "
+        "docker compose pull && docker compose up -d",
         "check": "ok",
         "latest": {
             "version": "0.5.0",

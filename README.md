@@ -77,7 +77,9 @@ only then let through, turned back, or held for you to decide.
 - **Away mode and quiet hours.** When you can't answer, new destinations are refused at once with a clear
   message to the agent instead of waiting for you, and you get one digest of what was refused afterwards.
 - **Hardened by default.** Non-root everywhere, `cap_drop: ALL`, `no-new-privileges`, read-only root
-  filesystems, no `docker.sock`, pinned dependencies and checksum-verified downloads.
+  filesystems, no `docker.sock`, pinned dependencies and checksum-verified downloads. The UI is published
+  on the host's loopback address only, and release images are signed and pinned by the release's
+  `compose.yaml`.
 - **Tested.** Unit tests, end-to-end tests of every enforcement path (including SNI spoofing and upstream
   certificate verification), and a Docker-based isolation test in CI.
 
@@ -103,7 +105,8 @@ subscription.
 ### With Docker Compose (recommended)
 
 tallygate runs as three containers from prebuilt images: the gateway, the control plane and the agent with
-Claude Code. All you need is [`compose.yaml`](compose.yaml):
+Claude Code. All you need is the `compose.yaml` of the latest release. It is pinned to the images of that
+release (the [`compose.yaml`](compose.yaml) in this repository follows `main` and pulls `:latest`):
 
 ```bash
 mkdir tallygate && cd tallygate
@@ -112,16 +115,27 @@ docker compose up -d
 docker compose logs control | grep -A1 password    # generated UI password (change it after login)
 ```
 
-Open `http://<host>:8080` from any machine on your network. Plain HTTP is fine for a first look on a
-trusted LAN (the UI says so); for real use put a TLS reverse proxy in front
-([details](docs/operations.md#reaching-the-ui)). The agent cannot reach the UI either way. Then follow **Setup**: GitHub token → `claude auth login` → git
-identity → confirm Remote Control → self-test. Your session then appears in the Claude app under **Code**.
+Open `http://127.0.0.1:8080` **on the Docker host**. The UI is plain HTTP, so by default it is published on
+the host's loopback address only. From another machine, choose one
+([details](docs/operations.md#reaching-the-ui)):
+
+- **SSH tunnel** (nothing to set up): `ssh -L 8080:127.0.0.1:8080 <host>`, then open `http://127.0.0.1:8080`.
+- **TLS reverse proxy** on the host (recommended for daily use), see the `.env` example below.
+- **The whole network, unencrypted:** `CONTROL_PUBLISH=0.0.0.0:8080` in `.env`, then `http://<host>:8080`.
+  This was the default up to 0.4.0. It is not any more because the password and the session then cross the
+  network in clear text, and because a port published by Docker is not filtered by host firewalls such as
+  ufw: use it only on a network you trust.
+
+The agent cannot reach the UI in any of these setups. Then follow **Setup**: GitHub token →
+`claude auth login` → git identity → confirm Remote Control → self-test. Your session then appears in the
+Claude app under **Code**.
 
 No configuration is needed to start: secrets are created on first start and kept in Docker volumes. Optional
 settings go into a `.env` file next to `compose.yaml`, for example:
 
 ```bash
 # .env
+CONTROL_PUBLISH=127.0.0.1:8080             # the default: only this host (your reverse proxy) reaches the port
 PUBLIC_URL=https://tallygate.example.org   # behind your TLS reverse proxy
 TRUST_FORWARDED_FOR=1
 TRUSTED_PROXIES=172.31.12.1/32
@@ -132,8 +146,8 @@ TELEGRAM_ALLOWED_USER_IDS=...
 ```
 
 All settings: [`.env.example`](.env.example) and [docs/configuration.md](docs/configuration.md). Reverse
-proxy, host directories, your own agent image, upgrades and backups:
-[docs/operations.md](docs/operations.md).
+proxy, host directories, your own agent image, upgrades (download the new release's `compose.yaml`), image
+signatures and backups: [docs/operations.md](docs/operations.md).
 
 ### From source
 

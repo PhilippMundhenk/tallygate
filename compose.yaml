@@ -2,10 +2,17 @@
 #
 #   docker compose up -d
 #   docker compose logs control | grep -A1 password      # first start: the generated UI password
-#   open http://<this host>:8080 and follow Setup (behind a TLS reverse proxy for real use)
+#   open http://127.0.0.1:8080 on this host and follow Setup. From another machine: a TLS reverse proxy
+#   or `ssh -L 8080:127.0.0.1:8080 <this host>` (docs/operations.md#reaching-the-ui)
 #
 # Works without any configuration: secrets are created on first start and kept in volumes. Every
 # setting below can be changed in a `.env` file next to this file (see docs/configuration.md).
+#
+# Images: this file and the images belong together (the networks, GW_INTERNAL_NETS and the hardening below
+# are the isolation). The compose.yaml attached to a release starts the images of that release: its image
+# lines default to that version. The file in the repository (main) defaults to the newest release and is
+# meant for building from source. Upgrade by replacing this file with the new release's, then
+# `docker compose pull && docker compose up -d` (docs/operations.md#upgrading-and-rolling-back).
 #
 # ${NAME:-default} values are compose variables: set NAME in `.env` (or as a stack variable in
 # Portainer), or change the default here. Putting NAME under a service's `environment:` does NOT
@@ -48,6 +55,7 @@ services:
       GW_API_PORT: "8081"
       GW_GRANTS_PORT: "8079"             # grant request API for the agent (agent network)
       # The stack's own networks (see `networks:` below) are locked: no rule and no grant can open them.
+      # Keep it in step with the subnets below. The gateway does not start when it is empty.
       GW_INTERNAL_NETS: 172.31.10.0/24,172.31.11.0/24,172.31.12.0/24,172.31.13.0/24
       GW_API_TOKEN: ${GW_API_TOKEN:-}    # empty: created on first start in the gw-token volume
       TZ: ${TZ:-}                        # time zone for quiet hours, e.g. Europe/Berlin (empty: UTC)
@@ -112,9 +120,11 @@ services:
       - gw-token:/run/tallygate/gw:ro
       - ttyd:/run/tallygate/ttyd                   # console credential, shared read-only with the agent
     ports:
-      # The UI on all interfaces of this host (LAN). Behind a reverse proxy on this host, use
-      # CONTROL_PUBLISH=127.0.0.1:8080. The agent cannot reach it either way (control listens on mgmt only).
-      - "${CONTROL_PUBLISH:-0.0.0.0:8080}:8080"
+      # The UI on this host only (loopback): plain HTTP, so the password and the session must not cross a
+      # network unencrypted, and a port published by Docker is NOT filtered by ufw/firewalld. Reach it through
+      # a TLS reverse proxy on this host or an SSH tunnel. CONTROL_PUBLISH=0.0.0.0:8080 publishes it on every
+      # interface (trusted network only). The agent cannot reach it either way (control listens on mgmt only).
+      - "${CONTROL_PUBLISH:-127.0.0.1:8080}:8080"
     networks:
       mgmt: {ipv4_address: 172.31.12.3}
       control-net: {ipv4_address: 172.31.11.3}

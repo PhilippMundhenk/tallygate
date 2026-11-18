@@ -36,6 +36,7 @@ def weak_gateway(tmp_path, upstream):
         GW_API_HOST="127.0.0.1",
         GW_API_PORT=ports["api"],
         GW_API_TOKEN="too-short",
+        GW_TEST_NO_INTERNAL_NETS="1",  # no compose stack: no networks of a stack to lock
         PRESET_DIR=ROOT / "gateway" / "presets",
         GW_GRANTS_PORT=ports["grants"],
         PYTHONUNBUFFERED="1",  # the warnings are checked in the log while the gateway runs

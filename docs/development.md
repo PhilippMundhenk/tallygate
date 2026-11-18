@@ -69,6 +69,11 @@ The e2e suite (`tests/e2e`) needs no Docker and no root:
   port (`GW_DNS_PORT`) and test-only static name resolution (`GW_TEST_STATIC_HOSTS`) instead of
   `/etc/hosts`. With `GW_TEST_FLOOR_REPLACE=1` and `never` entries in the test config, the built-in blocks
   are not seeded, because the upstreams run on loopback.
+- An empty `GW_INTERNAL_NETS` stops the gateway. The unit tests (`tests/unit/conftest.py`) and the e2e
+  harness (`tests/e2e/conftest.py`) run gateways outside the compose stack, where there are no networks of a
+  stack to lock, and set `GW_TEST_NO_INTERNAL_NETS=1` for that. It is for tests and for running the gateway
+  by hand during development only: `compose.yaml` never sets it, and the gateway logs a warning when it is
+  on. Tests of the locked ranges set `GW_INTERNAL_NETS` instead.
 - Upstreams are local HTTP/HTTPS echo servers with a throwaway certificate.
 - The control plane runs as a real process; Telegram, Matrix, a Web Push service, ntfy, Gotify and Pushover are
   mocked (`tests/e2e/mockbots.py`).
@@ -82,7 +87,8 @@ Run a subset: `pytest tests/e2e -k injection -x -vv`. Process logs end up in pyt
 ```bash
 # terminal 1: gateway
 cd gateway && DATA_DIR=/tmp/sg CA_EXPORT_DIR=/tmp/sg/ca GW_LISTEN_HOST=127.0.0.1 GW_DNS_PORT=5353 \
-  GW_API_HOST=127.0.0.1 GW_API_TOKEN=dev-token-dev-token-dev-token python3 run.py
+  GW_API_HOST=127.0.0.1 GW_API_TOKEN=dev-token-dev-token-dev-token GW_TEST_NO_INTERNAL_NETS=1 python3 run.py
+#   (GW_TEST_NO_INTERNAL_NETS=1: no compose stack here, so no networks to lock; development only)
 # terminal 2: control
 cd control && GW_URL=http://127.0.0.1:8081 GW_API_TOKEN=dev-token-dev-token-dev-token \
   CONTROL_BIND_HOST=127.0.0.1 CONTROL_PASSWORD=dev SESSION_SECRET=dev COOKIE_SECURE=0 \
@@ -137,9 +143,17 @@ Every Python module in `gateway/`, `control/`, `agent/` and `tools/` is gated th
    section).
 2. Commit, tag `vX.Y.Z`, push the tag.
 3. CI builds and pushes the images (`linux/amd64`, `linux/arm64`) to GHCR as `X.Y.Z`, `X.Y` and `latest`,
-   and creates the GitHub release with `compose.yaml`, `.env.example`, `gateway.yaml` and `bypass.sh`
-   attached. Every push to `main` also publishes `:main` and `:sha-<commit>`.
-4. Check the release page and pull the new images once (`TALLYGATE_VERSION=X.Y.Z docker compose pull`).
+   signs each pushed image digest with cosign (keyless, job `images`), and creates the GitHub release with
+   `compose.yaml`, `compose.digests.yaml`, `.env.example`, `gateway.yaml` and `bypass.sh` attached. The
+   attached `compose.yaml` is not the file from the checkout: `tools/pin_compose.py` writes the version into
+   its image lines (`${TALLYGATE_VERSION:-X.Y.Z}`) and the digests of the `images` job into
+   `compose.digests.yaml`. The script refuses a compose file whose image lines it does not recognise, which
+   fails the release job: keep the three `image:` lines of `compose.yaml` in the form
+   `ghcr.io/…/tallygate-<name>:${TALLYGATE_VERSION:-latest}`. Every push to `main` also publishes `:main`
+   and `:sha-<commit>`, signed the same way.
+4. Check the release page: download the attached `compose.yaml`, check that its images name the new version,
+   pull them once (`docker compose pull`) and verify a signature
+   ([operations.md](operations.md#verifying-the-images)).
 
 **Claude Code updates.** The agent image pins Claude Code (`ARG CLAUDE_VERSION` in `agent/Dockerfile`)
 and has no auto-updater. Every Monday, `.github/workflows/claude-code.yml` compares it with the latest
