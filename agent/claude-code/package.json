@@ -1,0 +1,9 @@
+{
+  "name": "tallygate-agent-claude-code",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pins Claude Code for the agent image. package-lock.json carries the integrity hashes npm ci checks.",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.325"
+  }
+}

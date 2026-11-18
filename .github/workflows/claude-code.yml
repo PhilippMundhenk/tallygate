@@ -1,6 +1,7 @@
 name: Claude Code update
 
-# Opens a PR when a newer @anthropic-ai/claude-code is on npm than the version pinned in agent/Dockerfile.
+# Opens a PR when a newer @anthropic-ai/claude-code is on npm than the version locked in agent/claude-code
+# (package.json and package-lock.json: the version and the integrity hashes `npm ci` checks in the image build).
 on:
   schedule:
     - cron: "17 5 * * 1"     # Mondays
@@ -25,7 +26,7 @@ jobs:
       - name: Compare versions
         id: v
         run: |
-          current=$(sed -n 's/^ARG CLAUDE_VERSION=//p' agent/Dockerfile)
+          current=$(jq -er '.dependencies["@anthropic-ai/claude-code"]' agent/claude-code/package.json)
           latest=$(npm view @anthropic-ai/claude-code version)
           echo "current=$current latest=$latest"
           [[ $latest =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "unexpected version '$latest'"; exit 1; }
@@ -45,11 +46,20 @@ jobs:
           if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
             echo "branch $branch exists already"; exit 0
           fi
-          sed -i "s/^ARG CLAUDE_VERSION=.*/ARG CLAUDE_VERSION=$LATEST/" agent/Dockerfile
+          # The new version and the registry's integrity hashes for it and its platform packages go into the
+          # lock file; nothing is installed and no script runs here. From then on every build must get these bytes.
+          (cd agent/claude-code && npm install --package-lock-only --ignore-scripts --no-fund --no-audit \
+             --save-exact "@anthropic-ai/claude-code@$LATEST")
+          jq -e --arg v "$LATEST" '.dependencies["@anthropic-ai/claude-code"] == $v' agent/claude-code/package.json
+          jq -e --arg v "$LATEST" '[.packages | to_entries[] | select(.key != "") | .value
+            | (.version == $v and (.integrity // "" | startswith("sha512-"))
+               and (.resolved // "" | startswith("https://registry.npmjs.org/@anthropic-ai/")))]
+            | length >= 3 and all' agent/claude-code/package-lock.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git commit -am "build(agent): Claude Code $CURRENT -> $LATEST"
+          git add agent/claude-code
+          git commit -m "build(agent): Claude Code $CURRENT -> $LATEST"
           git push -u origin "$branch"
           body="Bumps the Claude Code version in the agent image from \`$CURRENT\` to \`$LATEST\`.
 
@@ -62,7 +72,7 @@ jobs:
             # "Allow GitHub Actions to create and approve pull requests"). Then ask a human to open it.
             gh issue create --label dependencies --label agent --title "Claude Code $LATEST is available" \
               --body "Branch \`$branch\` bumps the agent image from \`$CURRENT\` to \`$LATEST\`, but this workflow may not open
-          pull requests here. Open one: https://github.com/${{ github.repository }}/compare/main...$branch
+          pull requests here. Open one: https://github.com/$GITHUB_REPOSITORY/compare/main...$branch
 
           (To let the workflow do it, enable *Settings -> Actions -> General -> Allow GitHub Actions to create and
           approve pull requests*.)"

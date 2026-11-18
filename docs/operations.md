@@ -433,7 +433,7 @@ docker compose exec control python -m app.passwd --print-hash   # prints scrypt:
 |---|---|
 | tallygate (Compose) | The UI shows **Update: X.Y.Z** in the header when a newer release exists (Overview → *Versions*; switch the check off with `UPDATE_CHECK=0`). Read the [CHANGELOG](../CHANGELOG.md), including its *Upgrading* notes → **download the `compose.yaml` of the new release** → `docker compose pull && docker compose up -d` → self-test or `bash bypass.sh`. Steps and rollback: [Upgrading and rolling back](#upgrading-and-rolling-back). When the networks changed (as in 0.4.0), run `docker compose down` first: a plain `up -d` keeps the running containers on the wrong addresses. |
 | tallygate (from source) | `git pull` → read `CHANGELOG.md` → `make up` → `make bypass-test`. |
-| Claude Code | Part of the agent image, which has no auto-updater by design. New Claude Code versions arrive as tallygate patch releases: update tallygate. From source, set `CLAUDE_VERSION` in `.env` and run `make up`. |
+| Claude Code | Part of the agent image, which has no auto-updater by design. New Claude Code versions arrive as tallygate patch releases: update tallygate. From source, set `CLAUDE_VERSION` in `.env` and run `make up` (that version is installed without the pinned hashes of the locked one, see [configuration](configuration.md)). |
 | Base images / dependencies | Published images are rebuilt for every release. From source: `docker compose -f compose.yaml -f compose.build.yaml build --pull && make up`. |
 
 Remote Control comes back as the same environment with the same session after a restart of the agent, an
