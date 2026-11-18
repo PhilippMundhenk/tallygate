@@ -193,17 +193,19 @@ def test_the_list_decides(case):
         assert d.reason == "default"
 
 
-def test_a_shadowed_name_rule_says_so_and_how_to_fix_it():
+def test_a_shadowed_name_rule_says_so_without_advice_how_to_open_the_range():
     """ADR-0019 "Why a name rule cannot open a blocked range": visible, not only documented."""
     p = policy([allow("n", host="nas.example")])
     d = p.evaluate("nas.example", 443, ["192.168.1.10"])
     assert d.action == "deny" and d.rule_id == LAN16
     assert d.reason == (
         "name allowed by rule n, but it resolves to 192.168.1.10, inside blocked range 192.168.0.0/16 "
-        f"(rule {LAN16}): add an allow for the address above that rule"
+        f"(rule {LAN16}): a name rule cannot open a blocked range"
     )
     assert d.shadow == {"rule": "n", "address": "192.168.1.10", "by": LAN16, "range": "192.168.0.0/16"}
-    # the way out the reason names: an allow for the address, added at the top like every new rule
+    # the agent reads this text too: it says what happened, not how to open the range (the UI explains that)
+    assert "add an allow" not in d.reason and "above" not in d.reason
+    # the way out: an allow for the address, added at the top like every new rule
     p.add_rule(Rule(action="allow", cidr="192.168.1.10/32", id="dev"))
     d = p.evaluate("nas.example", 443, ["192.168.1.10"])
     assert (d.action, d.rule_id, d.shadow) == ("allow", "n", None)  # the address is open, the name rule decides
@@ -234,7 +236,7 @@ def test_for_a_name_the_position_of_the_name_rule_among_address_rules_does_not_m
         # the allow is for one address: the name's other address is still inside the block
         d = policy(order).evaluate("nas.example", 443, ["192.168.1.10", "192.168.1.11"])
         assert (d.action, d.rule_id, d.shadow["rule"]) == ("deny", LAN16, "n")
-        assert d.reason.endswith("add an allow for the address above that rule")
+        assert d.reason.endswith("a name rule cannot open a blocked range")
     # the address rule must stand above the BLOCK, as for a literal: below it, it opens nothing
     p = policy([allow("n", host="nas.example")])
     p.rules.append(Rule(action="allow", cidr="192.168.1.10/32", id="low"))
@@ -318,7 +320,7 @@ def test_an_ip_literal_below_a_catch_all_name_rule_is_decided_by_its_address_rul
     assert d.shadow == {"rule": "any", "address": "192.168.44.2", "by": LAN16, "range": "192.168.0.0/16"}
     assert d.reason == (
         "name allowed by rule any, but the address 192.168.44.2 is inside blocked range 192.168.0.0/16 "
-        f"(rule {LAN16}): add an allow for the address above that rule"
+        f"(rule {LAN16}): a name rule cannot open a blocked range"
     )
     assert p.evaluate("192.168.44.1", 80, []).rule_id == LAN16  # the wildcard is for 443: the block is the first match
     # a name is not touched by this: the wildcard allows it by name, the address rules say what is open
@@ -412,7 +414,17 @@ def test_locked_listeners_are_one_address_and_port():
         ("::ac1f:b02", "172.31.11.2"),  # IPv4-compatible (deprecated)
         ("::172.31.11.2", "172.31.11.2"),
         ("::ffff:172.31.11.2", None),  # IPv4-mapped: already normalised to the IPv4 address itself
-        ("64:ff9b:1::ac1f:b02", None),  # the local-use NAT64 prefix carries no fixed position
+        ("64:ff9b:1::ac1f:b02", "172.31.11.2"),  # the local-use NAT64 prefix (RFC 8215): the last 32 bits
+        ("64:ff9b:1:ffff:ffff:ffff:ac1f:b02", "172.31.11.2"),  # ... anywhere in its /48
+        ("64:ff9b:2::ac1f:b02", None),  # next to it: not NAT64
+        ("::ffff:0:ac1f:b02", "172.31.11.2"),  # IPv4-translated (::ffff:0:a.b.c.d)
+        ("::ffff:0:172.31.11.2", "172.31.11.2"),
+        # not recognised (documented limit): ISATAP, Teredo (the address is stored inverted), a NAT64 prefix
+        # of the operator's own
+        ("fe80::5efe:ac1f:b02", None),
+        ("2001:db8::5efe:172.31.11.2", None),
+        ("2001:0:ac1f:b02::53e0:f4fd", None),
+        ("2001:db8:64::ac1f:b02", None),
         ("2001:db8::ac1f:b02", None),
         ("::1", None),  # loopback is not an embedded 0.0.0.1
         ("::", None),
@@ -431,19 +443,31 @@ def test_locked_ranges_also_match_the_ipv6_forms_that_carry_a_locked_ipv4_addres
     or tunnel. The built-in blocks close these prefixes - but blocks can be deleted, the lock cannot."""
     nets = [ipaddress.ip_network(c) for c in STACK]
     socks = [(ipaddress.ip_network("203.0.113.5/32"), 8081)]
-    for form in ("64:ff9b::ac1f:b02", "2002:ac1f:b02::1", "::172.31.11.2", "[64:ff9b::ac1f:b02]"):
+    carried = ("64:ff9b::ac1f:b02", "2002:ac1f:b02::1", "::172.31.11.2", "[64:ff9b::ac1f:b02]")
+    carried += ("64:ff9b:1::ac1f:b02", "[64:ff9b:1::172.31.11.2]", "::ffff:0:172.31.11.2", "::ffff:0:ac1f:b02")
+    for form in carried:
         why = locked_reason(form, 8081, nets, socks)
         assert why == f"locked: {form} belongs to the tallygate stack itself (172.31.11.0/24)", form
     # the gateway's own listener, by its port only
-    for form in ("64:ff9b::cb00:7105", "2002:cb00:7105::", "::203.0.113.5"):
+    for form in (
+        "64:ff9b::cb00:7105",
+        "2002:cb00:7105::",
+        "::203.0.113.5",
+        "64:ff9b:1::cb00:7105",
+        "::ffff:0:cb00:7105",
+    ):
         assert locked_reason(form, 8081, nets, socks) == f"locked: {form}:8081 is the gateway itself"
         assert locked_reason(form, 443, nets, socks) is None
     # the same forms of an address that is not locked are not locked
-    for form in ("64:ff9b::808:808", "2002:808:808::1", "::8.8.8.8", "64:ff9b:1::ac1f:b02", "2001:db8::ac1f:b02"):
+    for form in ("64:ff9b::808:808", "2002:808:808::1", "::8.8.8.8", "64:ff9b:1::808:808", "::ffff:0:8.8.8.8"):
+        assert locked_reason(form, 8081, nets, socks) is None, form
+    # the documented limit: ISATAP, Teredo and a NAT64 prefix of the operator's own are not unwrapped. Only a
+    # rule for that IPv6 range closes them (the built-in block 2001::/32 covers Teredo, fe80::/10 ISATAP link-local)
+    for form in ("2001:db8::ac1f:b02", "2001:db8:64::172.31.11.2", "2001:db8::5efe:ac1f:b02", "2001:0:ac1f:b02::1"):
         assert locked_reason(form, 8081, nets, socks) is None, form
     # in the evaluation: with every block deleted and an allow for everything, by literal and behind a name
     p = policy(EVERYTHING, "allow", seed=False, locked=STACK)
-    for form in ("64:ff9b::ac1f:b02", "2002:ac1f:b02::1", "::172.31.11.2"):
+    for form in ("64:ff9b::ac1f:b02", "2002:ac1f:b02::1", "::172.31.11.2", "64:ff9b:1::ac1f:b02", "::ffff:0:ac1f:b02"):
         assert p.evaluate(f"[{form}]", 8080, []).rule_id == LOCKED
         d = p.evaluate("rebind.example", 8080, [PUBLIC, form])
         assert (d.action, d.rule_id) == ("deny", LOCKED) and d.reason.startswith(f"locked: {form} belongs to")
@@ -1002,3 +1026,18 @@ def test_policy_documents_are_strict():
         "default": "ask", "ask_timeout": 60, "seeded": ["10.0.0.0/8"],
         "rules": [{"id": "a", "action": "deny", "cidr": "10.0.0.0/8"}],
     }  # fmt: skip
+
+
+def test_a_name_deny_that_matches_an_ip_literal_as_text_is_final_above_the_address_rule():
+    """docs/rules.md, "Name rules and address rules": a host pattern is compared with the destination as text,
+    so `*` or `8.8.*` also matches an IP literal. An `allow`/`ask` is provisional; a `deny` above the first
+    address rule that contains the address is final, below it it is never reached."""
+    dev = allow("dev", cidr="8.8.8.8/32")
+    for pattern in ("*", "8.8.*", "8.8.8.8"):
+        above = policy([deny("no", host=pattern), dev]).evaluate("8.8.8.8", 443, [])
+        assert (above.action, above.rule_id) == ("deny", "no"), pattern
+        below = policy([dev, deny("no", host=pattern)]).evaluate("8.8.8.8", 443, [])
+        assert (below.action, below.rule_id) == ("allow", "dev"), pattern
+    # a pattern that does not match the literal is not involved, and a name is decided by its name rules
+    assert policy([deny("no", host="9.9.*"), dev]).evaluate("8.8.8.8", 443, []).rule_id == "dev"
+    assert policy([dev, deny("no", host="8.8.*")]).evaluate("x.example", 443, ["8.8.8.8"]).reason == "default"

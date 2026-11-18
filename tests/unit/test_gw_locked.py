@@ -450,7 +450,7 @@ def test_a_pre_0014_file_goes_through_both_migrations(make, tmp_path):
     # the CIDR deny wins against the name allow as before; the reason now names both rules
     assert connect(g, "api.github.com", ips=("140.82.112.3",))[0] == (
         "egress policy: blocked (name allowed by rule gh, but it resolves to 140.82.112.3, inside blocked range "
-        "140.82.112.0/20 (rule d): add an allow for the address above that rule)"
+        "140.82.112.0/20 (rule d): a name rule cannot open a blocked range)"
     )
     assert connect(g, "140.82.112.3")[0] == "egress policy: blocked (rule d)"
 
@@ -606,7 +606,7 @@ def test_denied_and_unapproved_names_are_not_resolved_and_allowed_ones_are_check
     err, _, _ = connect(g, "ok.example", ips=(PUBLIC, "192.168.1.10"))
     assert err == (
         "egress policy: blocked (name allowed by rule ok, but it resolves to 192.168.1.10, inside blocked range "
-        "192.168.0.0/16 (rule block-192.168.0.0_16): add an allow for the address above that rule)"
+        "192.168.0.0/16 (rule block-192.168.0.0_16): a name rule cannot open a blocked range)"
     )
     ev = g.events.recent(1)[0]
     assert ev["action"] == "deny" and ev["reason"] == err[len("egress policy: blocked (") : -1]  # in the log too
@@ -688,11 +688,10 @@ def test_a_name_that_resolves_into_an_address_allow_is_decided_by_its_name(make)
     err, _, _ = connect(g, "ok.example", ips=("192.168.1.20",))
     assert err == (
         "egress policy: blocked (name allowed by rule ok, but it resolves to 192.168.1.20, inside blocked range "
-        "192.168.0.0/16 (rule block-192.168.0.0_16): add an allow for the address above that rule)"
+        "192.168.0.0/16 (rule block-192.168.0.0_16): a name rule cannot open a blocked range)"
     )
     assert g.pending == {}
-    err, _, seen = connect_and_answer(g, "192.168.1.20", scope="once")  # the literal is asked about
-    assert err is None and seen[0]["ips"] == ["192.168.1.20"]
+    # (the literal 192.168.1.20 is asked about: test_an_address_you_set_to_ask_above_a_block_can_be_approved)
     # deny mode: the address allow lets no name through
     assert admin(g, "PATCH", "/policy", {"default": "deny"})[0] == 200
     err, resolved, _ = connect(g, "third-site.example")
@@ -743,7 +742,7 @@ def test_an_approval_never_opens_a_blocked_range(make):
     assert (rule.host, rule.source) == ("nas.example", "approval")  # the approval is a name rule at the top
     assert err == (
         f"egress policy: blocked (name allowed by rule {rule.id}, but it resolves to 192.168.1.10, inside blocked "
-        "range 192.168.0.0/16 (rule block-192.168.0.0_16): add an allow for the address above that rule)"
+        "range 192.168.0.0/16 (rule block-192.168.0.0_16): a name rule cannot open a blocked range)"
     )
     assert g.shadow_stats()[rule.id]["address"] == "192.168.1.10"
     # with a public address the same approval is all it takes
@@ -756,6 +755,23 @@ def test_an_approval_never_opens_a_blocked_range(make):
     # an address in a blocked range is never asked about: the block is the first match and it is final
     err, _, seen = connect_and_answer(g, "192.168.1.30", 8080)
     assert err == "egress policy: blocked (rule block-192.168.0.0_16 (built-in block))" and seen == []
+
+
+def test_an_address_you_set_to_ask_above_a_block_can_be_approved(make):
+    """An `ask` rule for an address above a block is your decision to be asked about that address (IP literals
+    only, docs/rules.md). The question must be answerable with yes.
+
+    FAILS since the second security review: `Gateway.answer` refuses every address approval for which
+    `Policy.blocked_by` finds a block - and that skips `ask` rules, so it finds the block BELOW the rule that
+    asked. The request is shown and "allow" answers with 400. Left failing on purpose (gateway/ is not
+    changed with the tests); see the report of the test work."""
+    g = make(config={}, policy={
+        "default": "deny", "ask_timeout": 5, "seeded": [],
+        "rules": [{"id": "q", "action": "ask", "cidr": "192.168.1.20/32"}],
+    })  # fmt: skip
+    err, _, seen = connect_and_answer(g, "192.168.1.20", scope="once")  # the literal is asked about
+    assert err is None and seen[0]["ips"] == ["192.168.1.20"]
+    assert g.policy.rules[0].cidr == "192.168.1.20/32" and g.policy.rules[0].action == "allow"
 
 
 def test_an_approval_is_given_on_the_name_and_checked_against_the_addresses_afterwards(make):

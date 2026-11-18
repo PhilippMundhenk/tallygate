@@ -35,6 +35,7 @@ import contextlib
 import fnmatch
 import functools
 import ipaddress
+import math
 import re
 import time
 import uuid
@@ -88,17 +89,23 @@ DEFAULT_HARD_DENY = [
 DEFAULT_NEVER = ["0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "::/96", "fe80::/10", "ff00::/8"]
 
 _LABEL = re.compile(r"(?!-)[a-z0-9_-]{1,63}(?<!-)")
+# A last label that is a number (decimal or 0x…): the whole name is an IPv4 address in one of its spellings
+# (192.168.1.1. with a trailing dot, 127.1, 2130706433, 0x7f.1), as browsers and resolvers read it.
+_NUMBER = re.compile(r"[0-9]+|0x[0-9a-f]*")
 
 
 def valid_hostname(host: str) -> bool:
     """Strict DNS name syntax: ASCII letters/digits/'-'/'_', labels 1..63, total <= 253.
     Non-ASCII (IDN) names must arrive as punycode; anything else is refused before it can be
-    resolved or shown to a human in an approval prompt."""
+    resolved or shown to a human in an approval prompt. A name that ends in a number is refused too: it is
+    an IP address in disguise, which must not be asked about as a name - the approval would become a rule for
+    the address, above the blocked ranges."""
     h = host.lower()
     h = h[:-1] if h.endswith(".") else h
     if not h or len(h) > 253 or not h.isascii():
         return False
-    return all(_LABEL.fullmatch(label) for label in h.split("."))
+    labels = h.split(".")
+    return all(_LABEL.fullmatch(label) for label in labels) and not _NUMBER.fullmatch(labels[-1])
 
 
 @functools.lru_cache(maxsize=1)
@@ -117,15 +124,19 @@ def ip_addr(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
 
 
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
+_NAT64_LOCAL = ipaddress.ip_network("64:ff9b:1::/48")  # RFC 8215, used with a /96: the address is the last 32 bits
+_SIIT = ipaddress.ip_network("::ffff:0:0:0/96")  # IPv4-translated (RFC 2765)
 _COMPAT = ipaddress.ip_network("::/96")
 
 
 def embedded_v4(addr) -> ipaddress.IPv4Address | None:
-    """The IPv4 address an IPv6 address stands for on a host with a translator or tunnel: NAT64
-    (64:ff9b::/96), 6to4 (2002::/16) and the old IPv4-compatible form (::a.b.c.d) - or None."""
+    """The IPv4 address an IPv6 address stands for on a host with a translator or tunnel: NAT64 (64:ff9b::/96
+    and the local-use 64:ff9b:1::/48), IPv4-translated (::ffff:0:a.b.c.d), 6to4 (2002::/16) and the old
+    IPv4-compatible form (::a.b.c.d) - or None. A NAT64 prefix of the operator's own, ISATAP and Teredo are
+    not recognised."""
     if not isinstance(addr, ipaddress.IPv6Address):
         return None
-    if addr in _NAT64 or (addr in _COMPAT and int(addr) > 1):
+    if addr in _NAT64 or addr in _NAT64_LOCAL or addr in _SIIT or (addr in _COMPAT and int(addr) > 1):
         return ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF)
     return addr.sixtofour
 
@@ -297,6 +308,8 @@ class Rule:
             raise ValueError(f"rule {self.id}: invalid action {self.action!r}")
         if not self.host and not self.cidr:
             raise ValueError(f"rule {self.id}: needs 'host' or 'cidr'")
+        if self.host is not None and not isinstance(self.host, str):
+            raise ValueError(f"rule {self.id}: host must be a text")
         if self.host and self.cidr:
             raise ValueError(f"rule {self.id}: use either 'host' or 'cidr', not both")
         if self.cidr:
@@ -309,7 +322,11 @@ class Rule:
         items = self.port if isinstance(self.port, (list, tuple)) else [self.port]
         if not items or not all(valid_port_spec(p) for p in items):
             raise ValueError(f'rule {self.id}: invalid port {self.port!r} (use 443, [80, 443], "8000-8100" or "*")')
-        if self.expires is not None and (isinstance(self.expires, bool) or not isinstance(self.expires, (int, float))):
+        if self.expires is not None and (
+            isinstance(self.expires, bool)
+            or not isinstance(self.expires, (int, float))
+            or not math.isfinite(self.expires)  # NaN never expires and cannot be stored
+        ):
             raise ValueError(f"rule {self.id}: expires must be a unix time or null")
         if not isinstance(self.source, str) or not _SOURCE.fullmatch(self.source):
             raise ValueError(f"rule {self.id}: invalid source {self.source!r}")
@@ -516,9 +533,11 @@ class Policy:
         """A name rule cannot open a blocked range: say so, with the way out (ADR-0019)."""
         verb = "allowed" if held.action == "allow" else "matched"
         what = f"the address {ip} is" if literal else f"it resolves to {ip},"
+        # no advice how to open it here: the agent reads this text too. The UI explains the way out, after
+        # the warning that a name pointing into a blocked range is what DNS rebinding looks like.
         reason = (
             f"name {verb} by rule {held.id}, but {what} inside blocked range {block.cidr} (rule {block.id}): "
-            "add an allow for the address above that rule"
+            "a name rule cannot open a blocked range"
         )
         shadow = {"rule": held.id, "address": ip, "by": block.id, "range": block.cidr}
         return Decision("deny", reason, block.id, shadow=shadow)

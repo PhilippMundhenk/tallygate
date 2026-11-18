@@ -21,7 +21,8 @@ def rule_usage(
         n, last = unflushed.get(r.id, (0, None))
         hits, last = s["hits"] + n, max(x for x in (s["last"], last, 0) if x is not None) or None
         stale = r.expires is None and s["since"] <= limit and (last is None or last < limit)
-        stale = stale and r.source not in SEEDED_SOURCES
+        # ... and no other address `deny` either: it may be a block you edited (then it is yours, not seeded)
+        stale = stale and r.source not in SEEDED_SOURCES and not (r.cidr and r.action == "deny")
         out.append({**r.to_dict(), "pos": pos, "hits": hits, "last": last, "since": s["since"], "stale": stale})
     return out
 

@@ -25,6 +25,24 @@ earlier entry ends with *Replaced in this release*. The state you get:
   *Quick start* was renamed *Quick settings*. Grant definitions are on the *Grants* tab.
 
 ### Security
+- **An IP address written like a name is refused:** a host such as `192.168.1.1.` (trailing dot), `127.1`,
+  `2130706433` or `0x7f.1` is an IPv4 address for resolvers, but was asked about as a name, and the
+  approval became an allow rule for the address at the top of the list, above the built-in blocks. Such
+  hosts are now refused as invalid host names (not asked about, not resolved, not covered by learning
+  mode), an approval for an address inside a blocked range is refused, and *Allow for 1 h* in the away
+  digest takes a second click for an address. Found by the review of the ADR-0019 amendment
+  ([docs/security-review.md](docs/security-review.md)), like the next five entries.
+- **Replacing the whole policy says what is open inside the blocks:** `PUT /policy`, restore and import
+  record the address rules that stand above a block and reach into it (the import preview warns before
+  applying), and the gateway logs them at every start.
+- **`expires` must be a finite number:** `NaN` in `PUT /policy` answered `400` with the new policy in force
+  and not saved. It is refused before anything changes, as is a `host` that is not a string.
+- **The reason for a name stopped by a blocked range no longer says how to open the range:** the agent
+  reads it too. It ends `a name rule cannot open a blocked range`.
+- **Locked ranges:** the local-use NAT64 prefix `64:ff9b:1::/48` and IPv4-translated addresses
+  (`::ffff:0:a.b.c.d`) that carry a locked IPv4 address are locked too.
+- **A `deny` rule for an address or range is never offered as unused,** so *remove unused rules* cannot
+  delete a block that was edited and edited back.
 - **Read-only hosts refuse protocol upgrades:** a WebSocket (or any `Upgrade`) to a read-only host was a
   channel the gateway could not inspect, so writes could flow; it is now refused, like a write method.
 - **Request paths with `#` or `;` are refused** (grants, read-only `read_posts`, `github_repos`): they were
@@ -415,6 +433,9 @@ earlier entry ends with *Replaced in this release*. The state you get:
   (#17, #18).
 
 ### Fixed
+- **Approval requests for the GitHub CLI's own traffic**: `gh` sends usage telemetry to `cafe.github.com` and
+  checks for updates, which showed up as approval requests nobody wanted. The agent image switches both off
+  (`GH_TELEMETRY=false`, `GH_NO_UPDATE_NOTIFIER=1`, `GH_NO_EXTENSION_UPDATE_NOTIFIER=1`).
 - **Remote Control session lost after a long outage** (#214): after more than about four hours without the
   gateway or the network, Claude Code discarded its record of the environment it serves. The *rc* console
   then repeated `This folder is already served …`, and later a new environment was registered: the session

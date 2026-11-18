@@ -427,9 +427,16 @@ What to check afterwards:
    and the migration entry in the Log name each one (`NOTE grant …: target … names the address … inside blocked range …. It was
    refused before; now it is reachable while the grant is active`, with `approval for … is automatic` where
    that applies). Delete the target, or the grant, if that is not wanted.
-3. **The table.** *Destinations* shows the list in the order it is checked; the line under it counts the
+3. **Address rules that are open inside a blocked range.** At every start the gateway logs the address
+   `allow` and `ask` rules that stand above a built-in or config block and reach into it
+   (`docker compose logs egress-gw | grep "open inside blocked ranges"`): `policy: open inside blocked
+   ranges: 192.168.44.1/32 (allow rule 3f9a1c2e)`. Rules you added for a device belong there. A rule you
+   do not recognise does not: this is also how an installation shows that ran a pre-release build of the
+   rule list, whose migration put old address rules above the blocks, and a `never` entry added to
+   `gateway.yaml` after such a rule existed. Delete the rule, or move the block above it.
+4. **The table.** *Destinations* shows the list in the order it is checked; the line under it counts the
    built-in and config blocks. *Test a destination* shows what decides for one host and port.
-4. **`gateway.yaml`**: delete `grants_lan_allow`, rename `hard_deny_floor` / `grants_never` to `never`.
+5. **`gateway.yaml`**: delete `grants_lan_allow`, rename `hard_deny_floor` / `grants_never` to `never`.
 
 **Going back to the older release:** the older gateway refuses the migrated `policy.yaml` (it stops at the
 key `seeded`), so put the backups back before you start it. Changes made after the migration are lost.
@@ -512,6 +519,7 @@ to a new gateway, the CA changes. That's harmless: the agent re-reads the CA on 
 | Symptom | Cause / fix |
 |---|---|
 | A session in the app shows *environment deleted*, or the *rc* console repeats `This folder is already served by a terminal claude remote-control on this device` | Remote Control lost its record of the environment (in earlier releases: after more than about four hours without the gateway). The agent now restores it by itself. To continue the old conversation, run `claude --resume` in the *claude* console. To start over with a new environment, delete `~/.claude/tallygate-rc-pointer.json` in `agent-home` and restart the agent. |
+| Approval requests keep coming, although Claude is in `bypassPermissions` | They are two different things. `bypassPermissions` is Claude Code's own prompt for tools and file access; tallygate's approvals are about *destinations* the agent connects to and are decided by the mode under **Settings** (ask / deny / allow). Look at the host in the request: telemetry and update checks (`cafe.github.com`, `cli.github.com` from the GitHub CLI, `http-intake.logs.*.datadoghq.com` from Claude Code) are the usual repeat visitors. The agent image switches the `gh` ones off. For the rest choose **Deny permanently** once: it becomes a rule and stops the prompts. |
 | Remote Control session not visible in the app | Open the *rc* console: is it waiting for `Enable Remote Control? (y/n)`? Not logged in (`claude auth login`)? Same claude.ai account in the app? Look under **Code**, tab *Active*. |
 | `Remote Control requires feature-flag evaluation …` | A settings file or env sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_GROWTHBOOK` or (older versions) `DISABLE_TELEMETRY`. tallygate's agent image sets none of them; check `~/.claude/settings.json` in `agent-home`. |
 | Remote Control keeps restarting, the agent sees *proxy refused the connection*, and the Log shows `dns failure: [Errno -3] Temporary failure in name resolution` (and no allowed connection) | The **host's network** is down, not a policy: the gateway cannot resolve or reach anything. *Overview* and *Log* then show *No connection from the gateway since …* (after about 2 minutes), the Log has an event when it started, and the refusals say `no connection: dns failure`. Fix the host's network or its resolver (`docker exec egress-gw getent hosts api.anthropic.com`); the warning clears by itself at the first success and the agent recovers without a restart. If no warning appears: fewer than 5 failures or one name only, or the control probe (`connectivity_probe_hosts`) works, then the cause is that name, not the network ([configuration](configuration.md#connectivity)). |

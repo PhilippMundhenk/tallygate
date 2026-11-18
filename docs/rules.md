@@ -42,7 +42,9 @@ does not match or its time limit has passed.
 
 1. **Locked ranges first.** An address in a locked range is denied before the list is looked at, whatever
    the list says.
-2. **The first address rule that contains the address decides**: `allow`, `ask` or `deny`.
+2. **The first address rule that contains the address decides**: `allow`, `ask` or `deny`. (A name pattern
+   that also matches the address as text, such as `*`, is covered under
+   [Name rules and address rules](#name-rules-and-address-rules).)
 3. **Nothing matched: the default.** `ask` holds the connection and asks you, `deny` refuses it, `allow` lets
    it through (still logged).
 
@@ -80,7 +82,7 @@ A rule matches either a name or an address, never both, and the two kinds do dif
 | | Address rule | Name rule |
 |---|---|---|
 | Matches | an IP address or a range (CIDR), e.g. `192.168.44.1/32`, `198.51.100.0/24` | a host pattern, e.g. `github.com`, `*.example.com`, `*` |
-| For a destination given as an IP | the first one that contains the address decides: `allow`, `ask` or `deny` | not involved; a catch-all pattern (`*`) decides only when no address rule contains the address |
+| For a destination given as an IP | the first one that contains the address decides: `allow`, `ask` or `deny` | involved only when its pattern matches the address as text (`*`, `198.51.*`): see below |
 | For a destination given by name | second check, per resolved address: the first `allow` or `deny` that contains it says whether the address is open. `ask` is skipped | first check: the first one that matches the name decides `allow`, `ask` or `deny`; `deny` and `ask` before the lookup |
 
 So, as in other firewalls:
@@ -91,12 +93,17 @@ So, as in other firewalls:
   rule (or approval) for the name, and the address `allow` above the block
   ([example a](#a-allow-one-local-device)).
 
-A catch-all name rule such as `*` (the *Allow web* shortcut is `allow *` on ports 80 and 443) also matches a
-destination given as an IP. It does not change the above: the first address rule that contains the address
-decides, wherever the `*` rule stands, and only when no address rule contains the address does the `*` rule
-decide. One exception keeps a catch-all `ask` meaningful: when the `*` rule stands above the address rule,
-the more restrictive of the two decides, so `ask *` above `allow 192.0.2.7` still asks. `allow *` never
-opens a blocked range for an IP either.
+A host pattern is compared with the destination as text, so a pattern such as `*` (the *Allow web* shortcut
+is `allow *` on ports 80 and 443) or `198.51.*` also matches a destination given as an IP. What such a name
+rule does for an IP destination depends on its action:
+
+- **`allow` or `ask`** does not change the above: the first address rule that contains the address decides,
+  wherever the name rule stands, and only when no address rule contains the address does the name rule
+  decide. One exception keeps a catch-all `ask` meaningful: when the name rule stands above the address
+  rule, the more restrictive of the two decides, so `ask *` above `allow 192.0.2.7` still asks. `allow *`
+  never opens a blocked range for an IP either.
+- **`deny`** is final when the rule stands **above** the first address rule that contains the address:
+  `deny *` above `allow 192.0.2.7` denies `192.0.2.7`. Below that address rule it is never reached.
 
 An IP address typed into the *Host* field of the rule form is stored as an address rule.
 
@@ -116,15 +123,18 @@ the agent gets (`egress policy: blocked (…)`):
 
 ```text
 name allowed by rule 3f9a1c2e, but it resolves to 192.168.44.1, inside blocked range 192.168.0.0/16
-(rule block-192.168.0.0_16): add an allow for the address above that rule
+(rule block-192.168.0.0_16): a name rule cannot open a blocked range
 ```
+
+The text says what happened, not how to open the range: the agent reads it too. What you can do is below
+and in the UI, after the warning.
 
 Variants of the same message:
 
 | Part | When |
 |---|---|
 | `name matched by rule …` | the rule that matched says `ask` instead of `allow` |
-| `the address 192.168.44.1 is inside blocked range …` | the destination was the IP itself, a `*` name rule matched it and an address `deny` rule contains the address |
+| `the address 192.168.44.1 is inside blocked range …` | the destination was the IP itself, a name rule whose pattern matches it (such as `*`) allowed or asked, and an address `deny` rule contains the address |
 | `resolves to 192.168.44.1, inside blocked range 192.168.0.0/16 (rule …)` | no name rule matched the name (the default is `allow`, or learning mode let it through) |
 | `grant ha: name allowed by the grant, but it resolves to …: set a fixed address on the grant target` | a grant target that is only a name ([grants.md](grants.md#local-targets-and-name-only-targets)) |
 
@@ -170,13 +180,18 @@ They are rules like any other:
 - **A block takes no time limit.** It would be removed when the time is over and, being remembered as added,
   never come back. To open a range for a while, add an allow rule with a time limit above the block.
 - **A block whose action you change** (to `allow` or `ask`) or that you narrow to a port is no longer the
-  block it was: it is listed as your own rule from then on.
+  block it was: it is listed as your own rule from then on, also after you change it back to `deny` on
+  every port. It then blocks the range again and *Restore built-in blocks* counts it as present, but as a
+  rule of yours it accepts a time limit, and the `allow_private` exception of a service port does not skip
+  it.
 - **Restore built-in blocks** (button above the table) adds back, at the bottom, every built-in or config
   block that is no longer in the list as a permanent `deny` for exactly that range on every port. A block you
-  narrowed (a port, another action) counts as missing and gets a fresh rule next to it. **It does not close
+  narrowed (a port, another action) counts as missing and gets a fresh rule at the bottom of the list; the
+  narrowed rule stays where it is. **It does not close
   what an address rule above the blocks opens:** an `allow` for `192.168.44.1` keeps deciding for that
   address. The message after the click lists the ranges that are still open by such rules.
-- They never show up as "unused" in *Rule usage*.
+- They never show up as "unused" in *Rule usage*, and neither does any other address `deny` rule (a block
+  you edited, a range you blocked yourself): a block that never matched is doing its job.
 
 Prefer an allow rule above a block over deleting the block: without the block of `192.168.0.0/16`, every name
 rule and the *Allow web* shortcut reach whatever a name resolves to in that range, and learning mode or the
@@ -191,9 +206,12 @@ Two things are not in the list and cannot be opened by any rule, grant or API ca
 - the **gateway's own listeners** (management API, grant API, proxy and SOCKS ports).
 
 They are checked before the list is walked, for every resolved address, on every path (proxy, SOCKS, service
-ports, grants), also for an IPv6 address that carries a locked IPv4 address (NAT64, 6to4, the old
-IPv4-compatible form). The table shows them as the last rows before the default, marked *locked*, with no
-actions.
+ports, grants), also for an IPv6 address that carries a locked IPv4 address: NAT64 with the prefixes
+`64:ff9b::/96` and `64:ff9b:1::/48`, IPv4-translated (`::ffff:0:a.b.c.d`), 6to4 and the old IPv4-compatible
+form. Not recognised are ISATAP, Teredo and a NAT64 prefix of your own. This only matters on a gateway host
+with such a translator or tunnel and IPv6 egress, which the Compose stack does not have; there, add a `deny`
+rule for the prefix. The table shows the locked ranges as the last rows before the default, marked *locked*,
+with no actions.
 The reason is structural: an agent that could reach the gateway API or the control UI could delete every
 other rule. A denial reads `locked: 172.31.11.2 belongs to the tallygate stack itself (172.31.11.0/24)` or
 `locked: <address>:<port> is the gateway itself`.
@@ -225,7 +243,11 @@ exist, name `deny` rules included. What they cannot do:
   own go away either: the second check applies to every name.
 - An approval for an **IP address** adds an address rule for exactly that address and port: a rule that
   names the address. It allows connections to that IP, not names that resolve to it. An IP address inside a
-  blocked range is denied without a prompt, so this only concerns addresses that no block covers.
+  blocked range is denied without a prompt, so this only concerns addresses that no block covers. An
+  approval is never the rule that opens a blocked range: where a request for a blocked address exists all
+  the same (an address `ask` rule of yours stands above the block), allowing it is refused with a message
+  that names the range. Deny it, and add an allow rule for the address on *Destinations* if the agent
+  should reach it.
 - *Allow* on a log line for an IP address adds an address rule at the top, which opens the address even
   inside a blocked range. It therefore takes a second click.
 
@@ -288,6 +310,11 @@ range as a string (`"8000-8100"`), `"*"` or a list of those (`[22, "8000-8100"]`
 | 13 | One public IP | `allow 198.51.100.10/32:443` | The agent may connect to `198.51.100.10:443` by IP. A name that resolves to it is not allowed by this rule: it needs a name rule or your approval. |
 | 14 | Block a hosting provider's range | `deny 198.51.100.0/24` | Refuses IPs in the range and every name that resolves into it. An address `allow` above it still opens its part; a name rule does not, wherever it stands. |
 | 15 | The same IP written as IPv6 | (nothing to do) | IPv4-mapped forms like `[::ffff:198.51.100.10]` are treated as the IPv4 address, so rules 13 and 14 cover them. tallygate has no IPv6 egress. |
+| 16 | The same IP in another IPv4 spelling | (nothing to do) | A host whose last label is a number is an IPv4 address for resolvers and browsers: `198.51.100.10.` (trailing dot), `198.51.25610`, `3325256714`, `0xc6.0x33.0x64.0xa`. The gateway refuses these as `invalid hostname`: not asked about, not resolved, not covered by learning mode. Write the address as `198.51.100.10`. |
+
+**Write rule ranges in their own family.** Example 15 is about destinations. A rule whose *range* is written
+in the IPv4-mapped form (`::ffff:198.51.100.0/120`) is accepted and never matches anything, because
+destinations are compared as IPv4 addresses: write `198.51.100.0/24`.
 
 The addresses in these examples are placeholders from the documentation ranges, which the built-in blocks
 cover: put a real public address or range in their place (as written, rule 13 would open that one address of
@@ -303,11 +330,11 @@ Give address `allow` rules a port: `allow 192.168.44.1/32` without one opens eve
 
 | # | Goal | How |
 |---|---|---|
-| 16 | Allow something for one hour | add the rule with *TTL* `3600` (a UI field; the API takes `expires`, a unix time), or approve the prompt with *Allow for … min* and `60` |
-| 17 | Open the web for 15 minutes during setup | *Quick settings → Internet → Allow web for 15 min* |
-| 18 | Strict allowlist, no prompts | default `deny` (*Settings → Mode*), then allow rules for what is needed (or *Quick settings → Tool ecosystems*) |
-| 19 | Everything public allowed, but logged | default `allow`; add `deny` or `ask` rules for exceptions. The built-in blocks still keep the local network closed |
-| 20 | Let one rule win over another of the same kind (name over name, address over address) | it must be **above** it: *Move up* / *Move down* ([which order matters](#order-of-the-list)) |
+| 17 | Allow something for one hour | add the rule with *TTL* `3600` (a UI field; the API takes `expires`, a unix time), or approve the prompt with *Allow for … min* and `60` |
+| 18 | Open the web for 15 minutes during setup | *Quick settings → Internet → Allow web for 15 min* |
+| 19 | Strict allowlist, no prompts | default `deny` (*Settings → Mode*), then allow rules for what is needed (or *Quick settings → Tool ecosystems*) |
+| 20 | Everything public allowed, but logged | default `allow`; add `deny` or `ask` rules for exceptions. The built-in blocks still keep the local network closed |
+| 21 | Let one rule win over another of the same kind (name over name, address over address) | it must be **above** it: *Move up* / *Move down* ([which order matters](#order-of-the-list)) |
 
 Rules from approvals are tagged `approval`, rules from shortcuts `preset:<name>`, rules saved from learning
 mode `learning`, accepted suggestions `suggestion`, the blocks `builtin` and `config`. Expired rules are
@@ -414,8 +441,8 @@ Details: [grants.md](grants.md#local-targets-and-name-only-targets).
 
 | # | Goal | How |
 |---|---|---|
-| 21 | Let the agent read Home Assistant's API on request | a grant as in example d |
-| 22 | Reach a database on the LAN from a client that cannot use a proxy | a service port: `{name: pg, listen: 15432, target: db.lan:5432, allow_private: true}`; the agent connects to `egress-gw:15432`. `allow_private` exempts exactly this target, on this service port, from the built-in and config blocks; your own rules and the locked ranges still apply |
+| 22 | Let the agent read Home Assistant's API on request | a grant as in example d |
+| 23 | Reach a database on the LAN from a client that cannot use a proxy | a service port: `{name: pg, listen: 15432, target: db.lan:5432, allow_private: true}`; the agent connects to `egress-gw:15432`. `allow_private` exempts exactly this target, on this service port, from the built-in and config blocks; your own rules and the locked ranges still apply |
 
 ## When a name is resolved
 
