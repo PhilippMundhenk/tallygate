@@ -217,28 +217,53 @@ def test_a_grant_that_names_the_stack_itself_is_refused_when_it_is_saved(tmp_pat
     assert g.upsert_ui("cam", {"targets": [{**cam, "address": "192.168.5.2"}]})  # port 80 there is not the listener
 
 
-def test_an_empty_gw_internal_nets_is_a_warning_in_the_log(tmp_path, monkeypatch, caplog):
+def test_an_empty_gw_internal_nets_stops_the_gateway(tmp_path, monkeypatch, caplog):
     """Without the stack's networks nothing is locked: only the built-in blocks stand between the agent and the
-    control plane, and those can be deleted. compose.yaml sets it; a start without it must be loud."""
+    control plane, and those can be deleted. compose.yaml sets it; a start without it is refused (#232), e.g.
+    new images under a compose.yaml from before the setting existed."""
+    monkeypatch.delenv("GW_TEST_NO_INTERNAL_NETS")
+    for switch in (None, "", "0", "true"):  # only the exact test switch "1" lets it start
+        if switch is not None:
+            monkeypatch.setenv("GW_TEST_NO_INTERNAL_NETS", switch)
+        for value in ("", " ", ","):
+            monkeypatch.setenv("GW_INTERNAL_NETS", value)
+            with pytest.raises(ValueError, match="GW_INTERNAL_NETS is empty: no network of the stack") as e:
+                make(tmp_path)
+            assert "Set it to the stack's networks as compose.yaml does" in str(e.value), (switch, value)
+        monkeypatch.delenv("GW_INTERNAL_NETS")
+        with pytest.raises(ValueError, match="GW_INTERNAL_NETS is empty"):  # not set at all: the same
+            make(tmp_path)
+    # set: starts without the switch and says nothing
+    monkeypatch.delenv("GW_TEST_NO_INTERNAL_NETS")
+    monkeypatch.setenv("GW_INTERNAL_NETS", "172.31.11.0/24")
+    with caplog.at_level(logging.WARNING, "egressgw"):
+        g = make(tmp_path)
+    assert [str(n) for n in g.internal] == ["172.31.11.0/24"] and "GW_INTERNAL_NETS" not in caplog.text
+
+
+def test_the_test_switch_starts_a_gateway_without_stack_networks_and_says_so(tmp_path, monkeypatch, caplog):
+    """The unit and e2e suites run gateways outside the compose stack: GW_TEST_NO_INTERNAL_NETS=1, loud."""
+    monkeypatch.setenv("GW_TEST_NO_INTERNAL_NETS", "1")
     for value in ("", " ", ","):
         monkeypatch.setenv("GW_INTERNAL_NETS", value)
         caplog.clear()
         with caplog.at_level(logging.WARNING, "egressgw"):
             g = make(tmp_path)
-        errors = [r for r in caplog.records if r.levelno == logging.WARNING and "GW_INTERNAL_NETS" in r.getMessage()]
-        assert g.internal == [] and len(errors) == 1, value
-        assert errors[0].getMessage().startswith("GW_INTERNAL_NETS is empty: no network of the stack is locked.")
-        assert "Set it to the stack's networks (compose.yaml does)" in errors[0].getMessage()
-    monkeypatch.delenv("GW_INTERNAL_NETS")
-    caplog.clear()
-    with caplog.at_level(logging.WARNING, "egressgw"):
+        notes = [r for r in caplog.records if r.levelno == logging.WARNING and "GW_INTERNAL_NETS" in r.getMessage()]
+        assert g.internal == [] and len(notes) == 1, value
+        assert notes[0].getMessage() == (
+            "GW_TEST_NO_INTERNAL_NETS is set - GW_INTERNAL_NETS is empty and no network of the stack is locked "
+            "(test only)"
+        )
+    # the switch does not excuse a broken value, and is silent when the networks are set
+    monkeypatch.setenv("GW_INTERNAL_NETS", "nonsense")
+    with pytest.raises(ValueError, match="invalid CIDR"):
         make(tmp_path)
-    assert "GW_INTERNAL_NETS is empty" in caplog.text  # not set at all: the same
     monkeypatch.setenv("GW_INTERNAL_NETS", "172.31.11.0/24")
     caplog.clear()
     with caplog.at_level(logging.WARNING, "egressgw"):
-        g = make(tmp_path)
-    assert [str(n) for n in g.internal] == ["172.31.11.0/24"] and "GW_INTERNAL_NETS" not in caplog.text
+        make(tmp_path)
+    assert "GW_INTERNAL_NETS" not in caplog.text
 
 
 def test_local_notes_name_the_address_targets_that_start_working_with_the_upgrade(tmp_path):

@@ -42,7 +42,7 @@
 > | L3 | Built-in blocks could vanish through `PUT /policy`, import or restore without a record. | **Fixed.** The admin event and the import preview list the blocks that are not in force. (Blocks that are present but outranked by an address rule: F2 in the next note.) |
 > | L4 | The hint on a name rule stopped by a blocked range steered towards opening the address. | **Fixed** in the UI: it leads with the DNS-rebinding warning. (The reason text in the log and to the agent: F4 in the next note.) |
 > | L5 | A time limit on a seeded block deleted the block for good when it ran out. | **Fixed.** A time limit on a seeded block is refused. |
-> | L6 | The locked ranges depend on the environment. | **Partly.** An empty `GW_INTERNAL_NETS` is logged as a warning, and NAT64, 6to4 and IPv4-compatible forms of a locked address are matched. Not done: the gateway does not refuse to start, and its own interface addresses are not added. |
+> | L6 | The locked ranges depend on the environment. | **Fixed, except one point.** NAT64, 6to4 and IPv4-compatible forms of a locked address are matched, and since the deployment review of 0.4.0 (#232) the gateway refuses to start with an empty `GW_INTERNAL_NETS` (only the test switch `GW_TEST_NO_INTERNAL_NETS=1` starts it without). Not done: its own interface addresses are not added. |
 >
 > **Note, 2026-11-17: review of the amendment (the second review of ADR-0019, PR #211 as merged).** The two checks, the decision
 > before DNS, the migration and the locked ranges held everywhere they were attacked (differential runs

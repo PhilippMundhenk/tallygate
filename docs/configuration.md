@@ -16,12 +16,12 @@ All variables are optional. Secrets are created on first start when they are not
 
 | Variable | Default | Description |
 |---|---|---|
-| `TALLYGATE_VERSION` | `latest` | Image tag of all three images, e.g. `0.4` (minor version) or `0.4.0`. |
+| `TALLYGATE_VERSION` | the release the `compose.yaml` belongs to | Image tag of all three images. The `compose.yaml` attached to a release defaults to that release, so normally leave it unset and [upgrade by replacing the file](operations.md#upgrading-and-rolling-back). Set it for a release up to 0.4.0 (`0.4.0`), or to follow a minor version (`0.4`); it overrides the version in the file. The `compose.yaml` on the `main` branch defaults to `latest`. See [versions and pinning](operations.md#versions-and-pinning). |
 | `GATEWAY_DATA` | volume `gateway-data` | Gateway state. A host path makes it a bind mount (owner uid 10001, mode 700). |
 | `AGENT_HOME` | volume `agent-home` | Agent home (Claude login, settings). A host path makes it a bind mount (owner uid 1000). |
 | `WORKSPACE` | volume `workspace` | Agent workspace. A host path makes it a bind mount (owner uid 1000). |
 | `CONTROL_DATA` | volume `control-data` | UI password hash and session secret. A host path makes it a bind mount (owner uid 10002, mode 700). See [host directories](operations.md#host-directories). |
-| `CONTROL_PUBLISH` | `0.0.0.0:8080` | Host address:port the UI is published on. `127.0.0.1:8080` with a reverse proxy on the same host; see [reaching the UI](operations.md#reaching-the-ui). |
+| `CONTROL_PUBLISH` | `127.0.0.1:8080` | Host address:port the UI (plain HTTP) is published on. The default is the Docker host's loopback address: the host itself, a reverse proxy on it and an SSH tunnel reach it. `0.0.0.0:8080` (the default up to 0.4.0) or `<LAN address>:8080` publishes it to the network, unencrypted and past host firewalls such as ufw: only on a network you trust. See [reaching the UI](operations.md#reaching-the-ui). |
 | `PUBLIC_URL` | – | External UI URL, included in notifications. |
 | `TZ` | UTC | Time zone of the gateway and control, e.g. `Europe/Berlin`: quiet hours and times in notifications use it. |
 | `COOKIE_SECURE` | `auto` | `auto`: the session cookie is `Secure` exactly when the browser uses HTTPS (directly, or `X-Forwarded-Proto` from a trusted proxy). `1` / `0` force it on or off. |
@@ -80,7 +80,7 @@ State in host directories, a smaller agent, and a pinned version:
 
 ```sh
 # .env (create the directories with ./setup.sh /srv/tallygate)
-TALLYGATE_VERSION=0.4
+TALLYGATE_VERSION=0.4                   # follow 0.4.x; without it the release's compose.yaml decides
 GATEWAY_DATA=/srv/tallygate/gateway
 AGENT_HOME=/srv/tallygate/agent-home
 WORKSPACE=/srv/tallygate/workspace
@@ -442,11 +442,12 @@ one that `compose.yaml` does not list, add it to that service's `environment:` b
 | egress-gw | `GW_HTTP_PORT` / `GW_SOCKS_PORT` / `GW_DNS_PORT` | Listener ports (3128 / 1080 / 53). |
 | egress-gw | `GW_API_HOST` / `GW_API_PORT` | API address on control-net / port (8081). |
 | egress-gw | `GW_GRANTS_PORT` | Agent grant API port on agent-net (8079). |
-| egress-gw | `GW_INTERNAL_NETS` | The **locked ranges**: the stack's own networks as comma-separated CIDRs (compose: the four `172.31.1x.0/24` networks). They are denied before the rule list is walked, for every connection and every grant; no rule, grant or API call opens them ([rules.md](rules.md#locked-ranges)). Empty or unset, no network of the stack is locked and the gateway logs a warning at start. The gateway's own listeners (`GW_API_HOST`/`GW_API_PORT`, `GW_LISTEN_HOST` with the grant, proxy and SOCKS ports) are locked the same way, without a setting. Change it together with the `networks:` subnets; an invalid entry stops the gateway. |
+| egress-gw | `GW_INTERNAL_NETS` | The **locked ranges**: the stack's own networks as comma-separated CIDRs (compose: the four `172.31.1x.0/24` networks). They are denied before the rule list is walked, for every connection and every grant; no rule, grant or API call opens them ([rules.md](rules.md#locked-ranges)). Empty or unset, the gateway **does not start** (`GW_INTERNAL_NETS is empty` in its log): without it only the built-in blocks, which can be deleted, would stand between the agent and the stack. `compose.yaml` always sets it; the message means the compose file is older than the images. The gateway's own listeners (`GW_API_HOST`/`GW_API_PORT`, `GW_LISTEN_HOST` with the grant, proxy and SOCKS ports) are locked the same way, without a setting. Change it together with the `networks:` subnets; an invalid entry stops the gateway. |
 | egress-gw | `GW_CONFIG`, `DATA_DIR`, `CA_EXPORT_DIR`, `PRESET_DIR` | Paths. |
 | egress-gw | `GW_EXTRA_ARGS` | Extra mitmdump arguments (advanced). |
 | egress-gw, control | `GW_API_TOKEN_FILE` | Token file in the `gw-token` volume (`/run/tallygate/gw/api-token`), used when `GW_API_TOKEN` is not set. |
 | egress-gw | `GW_TEST_STATIC_HOSTS` | **Test suite only.** Never set in production (logged as a warning). |
+| egress-gw | `GW_TEST_NO_INTERNAL_NETS` | **Test suite and development only.** `1` = start although `GW_INTERNAL_NETS` is empty, for a gateway run outside the compose stack, where there are no networks of a stack to lock. Never set in production (logged as a warning): nothing of the stack is locked then. |
 | egress-gw | `GW_TEST_FLOOR_REPLACE` | **Test suite only.** `1` = with `never` entries in the config, the built-in blocks are not seeded (the e2e upstreams run on loopback). Never set in production (logged as a warning). |
 | control | `CONTROL_BIND_HOST` / `CONTROL_PORT` | UI bind address (mgmt network only) / port. |
 | control | `GW_URL` | Gateway API base URL. |

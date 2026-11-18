@@ -418,14 +418,20 @@ def test_the_migration_names_the_grant_targets_that_start_working(make, tmp_path
     assert "NOTE grant" not in caplog.text and g2.events.recent(1, kind=["admin"])[0]["reason"] == reason
 
 
-def test_a_start_without_the_stacks_networks_is_a_warning_in_the_log(make, monkeypatch, caplog):
+def test_a_start_without_the_stacks_networks_is_refused(make, monkeypatch, caplog):
+    """#232: the whole gateway does not come up (addon.py then refuses every connection and mitmdump exits)."""
     monkeypatch.setenv("GW_INTERNAL_NETS", "")
+    monkeypatch.delenv("GW_TEST_NO_INTERNAL_NETS")
+    with pytest.raises(ValueError, match="GW_INTERNAL_NETS is empty: no network of the stack would be locked"):
+        make(policy={"default": "allow", "seeded": [], "rules": []})
+    # with the test switch it starts, loudly, and shows what the refusal is for
+    monkeypatch.setenv("GW_TEST_NO_INTERNAL_NETS", "1")
     with caplog.at_level(logging.WARNING, "egressgw"):
         g = make(policy={"default": "allow", "seeded": [], "rules": []})
-    errors = [
+    notes = [
         r.getMessage() for r in caplog.records if r.levelno == logging.WARNING and "GW_INTERNAL_NETS" in r.getMessage()
     ]
-    assert len(errors) == 1 and errors[0].startswith("GW_INTERNAL_NETS is empty: no network of the stack is locked.")
+    assert len(notes) == 1 and notes[0].startswith("GW_TEST_NO_INTERNAL_NETS is set - GW_INTERNAL_NETS is empty")
     assert g.policy.locked_nets == []
     # what the message warns of: only the block stands in the way, and it can be deleted
     assert "rule block-172.16.0.0_12" in connect(g, CONTROL, 8080)[0]

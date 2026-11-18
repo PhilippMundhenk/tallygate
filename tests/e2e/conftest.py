@@ -277,6 +277,9 @@ class GatewayStartError(TimeoutError):
 def _start_gateway(data: Path, upstream: dict, ports: dict | None, wait: bool, **env):
     ports = ports or {k: free_port() for k in ("http", "socks", "dns", "api", "grants")}
     ca_dir = data / "ca"
+    # no compose stack here, so no networks of a stack to lock: without the test switch an empty
+    # GW_INTERNAL_NETS stops the gateway (#232). A test passes its own value to override either.
+    env = {"GW_TEST_NO_INTERNAL_NETS": "1", **env}
     env = clean_env(
         DATA_DIR=data,
         CA_EXPORT_DIR=ca_dir,

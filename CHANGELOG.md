@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Fixes for the findings of the security review of 0.4.0. One of them changes how you reach the UI: read
+[Upgrading from 0.4.0](#upgrading-from-040) before you update.
+
 ### Security
 - **Automatic grants while you are away are no longer silent (#237, Info).** A grant level with
   `approval: auto` is activated at once, also in away mode and in quiet hours. That stays so: you authorised
@@ -70,6 +73,57 @@ All notable changes to this project are documented here. The format follows
   Unchanged: a first request to a destination you are asked about is held until you answer, and keep-alive
   to one destination works as before. See threat T50 in [docs/threat-model.md](docs/threat-model.md) and
   [what is checked per connection and what per request](docs/architecture.md#what-is-checked-per-connection-and-what-per-request).
+- **The UI is published on the Docker host only (`CONTROL_PUBLISH=127.0.0.1:8080`)** instead of every
+  interface. The UI is plain HTTP, so on `0.0.0.0:8080` the generated password and the session crossed the
+  network in clear text, and a port published by Docker is not filtered by host firewalls such as ufw. Other
+  machines reach the UI through a TLS reverse proxy on the host or an SSH tunnel; publishing it to the
+  network is an explicit `CONTROL_PUBLISH` setting. The reverse-proxy examples in the README and in
+  docs/operations.md now show `CONTROL_PUBLISH`, so the plain port does not stay open next to the proxy.
+  No other port of the stack is published (#231).
+- **The `compose.yaml` of a release starts the images of that release.** It used to pull `:latest` whatever
+  release it was downloaded from, so the images moved with every `docker compose pull` while the isolation
+  settings in the file (networks, `GW_INTERNAL_NETS`, hardening) stayed behind. The release job now writes
+  the version into the attached file (`${TALLYGATE_VERSION:-X.Y.Z}`, `tools/pin_compose.py`) and attaches
+  `compose.digests.yaml`, an override that pins the three images by digest (#232).
+- **Images are signed.** Every image pushed to GHCR (releases, `:main`, `:sha-…`) is signed by digest with
+  cosign, keyless, bound to this repository's CI workflow. How to check:
+  [docs/operations.md](docs/operations.md#verifying-the-images) (#232).
+- **The gateway does not start without `GW_INTERNAL_NETS`.** An empty value was only a warning, and then no
+  network of the stack was locked: the case of new images under an old compose file. It now stops the
+  gateway like an invalid value does. `compose.yaml` always sets it, so installations from a release file
+  are not affected (#232).
+
+### Changed
+- **Upgrading means replacing `compose.yaml`,** not only `docker compose pull`: download the file of the new
+  release, then pull and start. To go back, put the previous file back. Both are described in
+  [docs/operations.md](docs/operations.md#upgrading-and-rolling-back), and the update notice in the UI
+  shows the new command.
+- The first-start message in the control log, `setup.sh` and the UI's *Access to this UI* check name the new
+  default address and how other machines reach the UI.
+- `TALLYGATE_VERSION` is optional with a release's `compose.yaml`; it still overrides the version in the
+  file. The `compose.yaml` on `main` keeps `:latest` as its default, for building from source and trying
+  `main`.
+- Development: a gateway run outside the compose stack (unit and e2e tests, by hand) needs
+  `GW_TEST_NO_INTERNAL_NETS=1`; the test harness sets it (docs/development.md).
+
+### Upgrading from 0.4.0
+
+1. **Replace `compose.yaml`** with the one of the new release
+   ([steps](docs/operations.md#upgrading-and-rolling-back)), and re-apply your own changes to it if you made
+   any. If `.env` sets `TALLYGATE_VERSION`, remove the line or raise it.
+2. **The UI no longer answers on `http://<host>:8080` from other machines.** With the new file it is
+   published on `127.0.0.1:8080`. Choose one:
+   - open it on the Docker host, or through `ssh -L 8080:127.0.0.1:8080 <host>` at `http://127.0.0.1:8080`;
+   - put a TLS reverse proxy in front ([docs/operations.md](docs/operations.md#reverse-proxy));
+   - **keep the old behaviour:** `CONTROL_PUBLISH=0.0.0.0:8080` in `.env` (or `<LAN address>:8080` for one
+     interface). The password and the session then cross your network unencrypted, and ufw or firewalld do
+     not filter the port: only on a network you trust.
+
+   A `.env` that already sets `CONTROL_PUBLISH` keeps its value. With a reverse proxy on the host, check
+   that it is `127.0.0.1:8080` (0.4.0 published on every interface unless you set it).
+3. **If you changed the subnets** in `compose.yaml`, keep `GW_INTERNAL_NETS` in step with them, as before. A
+   gateway without it now stops with `GW_INTERNAL_NETS is empty` in its log.
+4. Start: `docker compose pull && docker compose up -d`, then the self-test or `bash bypass.sh`.
 
 ## [0.4.0] - 2026-11-18
 

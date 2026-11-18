@@ -30,3 +30,5 @@ if [[ -n "${1:-}" ]]; then
 fi
 echo "Next: docker compose up -d   (or 'make up' to build from this checkout)"
 echo "      docker compose logs control | grep -A1 password   (first start: generated UI password)"
+echo "      open http://127.0.0.1:8080 on this host (from another machine: TLS reverse proxy or"
+echo "      'ssh -L 8080:127.0.0.1:8080 <this host>', see docs/operations.md#reaching-the-ui)"
