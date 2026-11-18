@@ -173,6 +173,27 @@ def test_digest_is_due_only_while_away_with_items(tmp_path):
     assert not a.digest_due(now + 120)  # only when back
 
 
+def test_automatic_grants_are_their_own_kind_and_survive_a_flood_of_refusals(tmp_path, monkeypatch):
+    from egressgw import availability
+
+    monkeypatch.setattr(availability, "MAX_MISSED", 2)
+    a = make(tmp_path)
+    a.note_auto("nas", "read")
+    a.note("conn", "a.example", 443, "away")
+    a.note("conn", "b.example", 443, "away")
+    a.note("conn", "c.example", 443, "away")  # beyond the cap, which counts refusals only
+    a.note_auto("nas", "read")
+    a.note_auto("nas", "write")  # kept although the list is full: at most one entry per grant level
+    d = a.describe()
+    auto = {(m["host"], m["level"]): m for m in d["missed"] if m["kind"] == "auto_grant"}
+    assert {k: m["count"] for k, m in auto.items()} == {("nas", "read"): 2, ("nas", "write"): 1}
+    assert set(auto["nas", "read"]) == {"kind", "host", "port", "level", "first", "last", "count"}  # no reason
+    assert d["missed_dropped"] == 1 and len(d["missed"]) == 4
+    assert a.digest_due(time.time()) is False  # not away
+    items, more = a.take()
+    assert len(items) == 4 and more == 1 and not a.missed
+
+
 # ---------------------------------------------------------------- the gateway
 pytest.importorskip("mitmproxy")
 from egressgw import core  # noqa: E402
@@ -222,6 +243,59 @@ def test_grant_requests_that_need_a_human_are_refused_auto_ones_still_work(gw):
     assert not gw.grants.pending()
     assert gw.request_grant("nas", "read", None, "check", "10.0.0.1").status == "approved"  # auto, logged
     assert [e["action"] for e in gw.events.recent(5, kind=["grant"])] == ["allow", "deny"]
+
+
+SECRET_REASON = "please-do-not-show-this-reason"
+
+
+def test_automatic_grant_while_away_is_activated_and_listed_in_the_digest(gw):
+    """#237: the operator allowed the level beforehand, so it stays automatic, but never silently."""
+    gw.availability.set_away(True, None, "x")
+    gw.availability_tick()
+    published(gw)
+    for _ in range(2):
+        assert gw.request_grant("nas", "read", None, SECRET_REASON, "10.0.0.1").status == "approved"
+    assert [a.name for a in gw.grants.active.values()] == ["nas"]
+    item = gw.availability.missed[("auto_grant", "nas", "read")]
+    assert (item["kind"], item["host"], item["port"], item["level"], item["count"]) == (
+        "auto_grant",
+        "nas",
+        0,
+        "read",
+        2,
+    )
+    assert {"type": "availability"} in published(gw)  # the UI list reloads
+    with pytest.raises(Unavailable):  # a level that needs a person: refused and noted as before
+        gw.request_grant("w", "write", None, SECRET_REASON, "10.0.0.1")
+    assert gw.availability.missed[("grant", "w", 0)]["count"] == 1 and not gw.grants.pending()
+    gw.availability.set_away(False, None, "x")
+    gw.availability_tick()
+    digest = next(e for e in published(gw) if e["type"] == "digest")
+    assert sorted((i["kind"], i["host"], i.get("level")) for i in digest["items"]) == [
+        ("auto_grant", "nas", "read"),
+        ("grant", "w", None),
+    ]
+    assert SECRET_REASON not in str(digest) and not gw.availability.missed
+
+
+def test_automatic_grant_in_quiet_hours_is_listed_too(gw, monkeypatch):
+    monkeypatch.setattr(gw.availability, "mode", lambda now=None: ("quiet", time.time() + 60))
+    assert gw.request_grant("nas", "read", None, "check", "10.0.0.1").status == "approved"
+    assert gw.availability.missed[("auto_grant", "nas", "read")]["count"] == 1
+
+
+def test_automatic_grant_while_available_is_not_listed(gw):
+    assert gw.request_grant("nas", "read", None, "check", "10.0.0.1").status == "approved"
+    assert not gw.availability.missed and {"type": "availability"} not in published(gw)
+
+
+def test_emergency_stop_suspends_automatic_grants_while_away(gw):
+    gw.availability.set_away(True, None, "x")
+    gw.grants.suspend_auto("web:admin")
+    with pytest.raises(Unavailable):
+        gw.request_grant("nas", "read", None, "check", "10.0.0.1")
+    assert not gw.grants.active and not gw.grants.pending()
+    assert [m["kind"] for m in gw.availability.describe()["missed"]] == ["grant"]  # refused, not activated
 
 
 def test_going_away_denies_what_waits_and_coming_back_sends_the_digest(gw):

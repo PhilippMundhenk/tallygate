@@ -25,6 +25,17 @@ Fixes for the findings of the security review of 0.4.0. One of them changes how 
   `[A-Za-z0-9_:.-/]` and sends the path byte for byte. Matrix (reactions and replies name a prompt by event
   or number, never by id) and Web Push (signed tokens, id checked) were checked and needed no change.
   Threat T53 in [docs/threat-model.md](docs/threat-model.md). Nothing to do after upgrading.
+- **Automatic grants while you are away are no longer silent (#237, Info).** A grant level with
+  `approval: auto` is activated at once, also in away mode and in quiet hours. That stays so: you authorised
+  the level beforehand, away mode is about requests that need a person, and the emergency stop suspends
+  automatic approval. But until now nothing told you that it had happened. Every such activation is now
+  listed under **While you were away** (the former *Refused while you were away*) as *activated
+  automatically*, with the grant, the level, how often and when last, without an *Allow* button, and it is
+  part of the digest, apart from what was refused. The entry holds only the grant's name and level, never
+  the agent's reason, and a flood of refused destinations cannot push it out of the list. The threat model
+  (T40), [grants](docs/grants.md) and the [user guide](docs/user-guide.md#away-mode-and-quiet-hours) now
+  name the exemption. API: `missed` of `GET /availability` and the `digest` event have a third kind,
+  `auto_grant`.
 - **The Matrix bot can no longer approve requests itself (#238, Medium).** The check that the bot's account is
   not one of the allowed users depended on one `whoami` call when the control plane started. If that call
   failed (homeserver not up yet after a reboot, a 5xx) and the bot used an allowed user's token, the control

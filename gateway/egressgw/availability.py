@@ -7,6 +7,10 @@ ever allowed automatically because nobody can answer: this only turns "ask" into
 What was refused is collected and sent as one digest: when quiet hours end, when away mode ends, and while
 away every `digest_minutes`. An ask holds a connection for at most `ask_timeout`, so it cannot wait for a
 digest; the digest lists the destinations so that the operator can allow them afterwards.
+
+Grant levels with `approval: auto` are the exception the operator chose beforehand: they are still activated
+(the emergency stop suspends them). They are not silent: each one is listed in the same digest as its own
+kind, "activated automatically", with the grant's name and level only (#237).
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from egressgw.store import atomic_write
 log = logging.getLogger("egressgw")
 
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+AUTO_GRANT = "auto_grant"  # digest entry: activated automatically while away, not refused (#237)
 MAX_MISSED = 200  # distinct destinations kept for the digest; more are counted only
 MAX_AWAY = 30 * 86400  # an away period with an end lasts at most this long
 
@@ -123,7 +128,8 @@ class Availability:
         self.quiet: QuietHours | None = self.config_quiet
         self.quiet_source = "config"
         self.away: dict | None = None  # {"since", "by", "until"}
-        self.missed: dict[tuple[str, str, int], dict] = {}
+        # refused requests by (kind, host, port); automatic grants by ("auto_grant", name, level) (#237)
+        self.missed: dict[tuple, dict] = {}
         self.missed_dropped = 0
         self.last_digest = time.time()
         if self.path.exists():
@@ -202,11 +208,34 @@ class Availability:
         if item:
             item["count"] += 1
             item["last"] = now
-        elif len(self.missed) < MAX_MISSED:
+        elif sum(1 for i in self.missed.values() if i["kind"] != AUTO_GRANT) < MAX_MISSED:
             self.missed[key] = {"kind": kind, "host": host, "port": port, "first": now, "last": now, "count": 1}
         else:
             self.missed_dropped += 1
         log.debug("refused while unavailable: %s %s:%s (%s)", kind, host, port, reason)
+
+    def note_auto(self, name: str, level: str) -> None:
+        """Remember a grant that was activated automatically (`approval: auto`) while nobody was there (#237).
+
+        Not a refusal: its own kind, so that no consumer offers to allow it or counts it as refused. The entry
+        holds only the grant's name and level (both set by the operator) and counts, never the agent's reason.
+        There is at most one entry per grant level, so these are kept beyond MAX_MISSED: a flood of refused
+        destinations cannot push them out of the digest."""
+        key = (AUTO_GRANT, name, level)
+        now = time.time()
+        if item := self.missed.get(key):
+            item["count"] += 1
+            item["last"] = now
+        else:
+            self.missed[key] = {
+                "kind": AUTO_GRANT,
+                "host": name,
+                "port": 0,
+                "level": level,
+                "first": now,
+                "last": now,
+                "count": 1,
+            }
 
     def take(self) -> tuple[list[dict], int]:
         """The collected items (newest first) and how many more were not kept; clears both."""

@@ -17,7 +17,10 @@ CONFIG = {
     "hard_deny_floor": ["10.0.0.0/8"],
     "grant_api_rate": 1000,
     "digest_minutes": 0,
-    "grants": {"w": {"targets": [{"host": "w.test", "port": 443}], "levels": ["write"]}},
+    "grants": {
+        "w": {"targets": [{"host": "w.test", "port": 443}], "levels": ["write"]},
+        "docs": {"targets": [{"host": "docs.test", "port": 443}], "approval": {"read": "auto"}},
+    },
 }
 TG = {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "777", "TELEGRAM_ALLOWED_USER_IDS": "4242"}
 
@@ -52,6 +55,34 @@ def test_away_refuses_at_once_with_a_message_and_lists_what_was_missed(gw):
     _, av, _ = gw["api"].call("PATCH", "/availability", {"away": False, "by": "e2e"})
     assert av["mode"] == "available"
     assert any(e["reason"] == "back by e2e" for e in events(gw) if e["kind"] == "admin")
+
+
+def test_automatic_grant_while_away_is_activated_and_listed_not_refused(gw):
+    """#237: `approval: auto` stays automatic while away, but it is listed for the digest as its own kind."""
+    reason = "reason-written-by-the-agent"
+    status, r, _ = gw["agent"].call("POST", "/v1/grants/docs/request", {"level": "read", "reason": reason})
+    assert status == 200 and r["status"] == "approved"
+    assert gw["api"].call("GET", "/availability")[1]["missed"] == []  # available: nothing to report
+    gw["api"].call("PATCH", "/availability", {"away": True, "by": "e2e"})
+    for _ in range(2):
+        status, r, _ = gw["agent"].call("POST", "/v1/grants/docs/request", {"level": "read", "reason": reason})
+        assert status == 200 and r["status"] == "approved"
+    _, av, _ = gw["api"].call("GET", "/availability")
+    assert [(m["kind"], m["host"], m["port"], m["level"], m["count"]) for m in av["missed"]] == [
+        ("auto_grant", "docs", 0, "read", 2)
+    ]
+    assert reason not in str(av)
+    assert [a["name"] for a in gw["api"].call("GET", "/grants")[1]["active"]] == ["docs"]
+    # the emergency stop suspends automatic approval: now the same request is refused, and listed as refused
+    assert gw["api"].call("POST", "/emergency-stop", {"by": "e2e"})[0] == 200
+    status, r, _ = gw["agent"].call("POST", "/v1/grants/docs/request", {"level": "read", "reason": reason})
+    assert status == 503 and "operator away" in r["error"]
+    _, av, _ = gw["api"].call("GET", "/availability")
+    assert sorted((m["kind"], m["host"], m["count"]) for m in av["missed"]) == [
+        ("auto_grant", "docs", 2),
+        ("grant", "docs", 1),
+    ]
+    assert gw["api"].call("GET", "/grants")[1]["active"] == []
 
 
 def test_going_away_denies_held_connections(gw):
@@ -114,6 +145,8 @@ def test_digest_reaches_telegram_when_the_operator_is_back(gw, mockbots, tmp_pat
         http_via_proxy(gw["ports"]["http"], f"http://127.0.0.1:{echo}/")
         http_via_proxy(gw["ports"]["http"], f"http://127.0.0.1:{echo}/")
         assert ui.call("GET", "/api/gw/availability")[1]["missed"][0]["count"] == 2
+        status, r, _ = gw["agent"].call("POST", "/v1/grants/docs/request", {"level": "read", "reason": "agent-text"})
+        assert status == 200 and r["status"] == "approved"  # automatic, also while away (#237)
         before = len(mockbots.messages("tg.send"))
         ui.call("PATCH", "/api/gw/availability", {"away": False})
         deadline = time.time() + 5
@@ -121,6 +154,9 @@ def test_digest_reaches_telegram_when_the_operator_is_back(gw, mockbots, tmp_pat
             time.sleep(0.1)
         digest = mockbots.messages("tg.send")[-1]
         assert "digest (away ended)" in digest and f"127.0.0.1:{echo} ×2" in digest
+        assert ": 1 request(s) refused without asking" in digest  # the automatic grant is not counted as refused
+        assert "Activated automatically meanwhile (approval: auto): 1 grant level(s)" in digest
+        assert "  grant docs (read), 1 time, last at " in digest and "agent-text" not in digest
         assert ui.call("DELETE", "/api/gw/availability/missed")[0] == 200
     finally:
         proc.terminate()
