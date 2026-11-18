@@ -7,6 +7,18 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **The Matrix bot can no longer approve requests itself (#238, Medium).** The check that the bot's account is
+  not one of the allowed users depended on one `whoami` call when the control plane started. If that call
+  failed (homeserver not up yet after a reboot, a 5xx) and the bot used an allowed user's token, the control
+  plane took the reactions it pre-seeds on every prompt (👍 first), echoed by the homeserver, for that user's
+  decision: every connection request was allowed and every grant request approved at the requested level.
+  Now nothing from the room counts until `whoami` has succeeded: it is retried (5 s doubling to 5 min), the
+  channel row under **Setup → Notifications** says *Matrix approvals paused* meanwhile, and what happened in
+  the room during the pause is not applied afterwards (the request stays open for the UI). A bot account that
+  is an allowed user switches Matrix approvals off on every path, and the row says so. Independently, the
+  control plane remembers the events it sent itself and never takes them, or anything by their sender, as a
+  decision. Telegram was checked and is not affected. **If you run the bot with your own account's token:**
+  create a separate bot account ([user guide](docs/user-guide.md#matrix-approvals)).
 - **The control plane never follows a redirect (#230, High).** The agent's status server and ttyd run as the
   agent user, so a hostile agent could replace them and answer the control plane's calls (status every 30 s
   while *Overview* is open, version, setup, files, console) with `302 Location: <any URL>`. Control, which

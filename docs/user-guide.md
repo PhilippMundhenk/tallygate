@@ -474,6 +474,21 @@ Each request is posted as `🔐 #3 Agent wants to connect: host:port …` with t
 🌐 domain, ⛔ deny permanently. Or reply `allow 3`, `hour 3`, `always 3`, `domain 3`, `deny 3` or `block 3`. The bot
 confirms the outcome in a reply.
 
+**The bot never decides itself.** The bot account must be a separate account, not one of the allowed users:
+your homeserver sends the bot's own prompts and reactions back to it, and they must not count as your
+decision. The control plane checks this by asking the homeserver which account the token belongs to
+(`whoami`):
+
+- If the bot's account is one of the allowed users (for example because you used your own account's token),
+  Matrix approvals are switched off and **Setup → Notifications** says *Matrix approvals off: the bot's own
+  account … is in the allowed users*. Messages are still posted; decide in the UI, or create a bot account.
+- If the homeserver cannot be asked (not reachable when the control plane starts, or an error), the row says
+  *Matrix approvals paused: cannot verify the bot's own account*. Prompts are still posted, but no reaction or
+  reply is read. The check is repeated (after 5 s, then with growing pauses up to 5 minutes) and approvals
+  resume by themselves once it succeeds.
+- A reaction or reply you sent **while approvals were paused is not applied later**. The request stays open
+  until it times out: answer it in the UI, or react or reply again once the row no longer says *paused*.
+
 ## Notification channels in the web UI
 
 Telegram, Matrix, ntfy, Gotify and Pushover can be set up in **Setup → Notifications** instead of the

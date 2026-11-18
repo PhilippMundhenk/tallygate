@@ -101,6 +101,37 @@ def test_matrix_refuses_bot_in_allowed_users(gateway, mockbots, control_with):
     assert not any("matrix" in (e["reason"] or "") for e in _events(gateway, port))
 
 
+def test_matrix_bot_never_approves_its_own_prompts(gateway, mockbots, control_with):
+    """#238: the operator's own account is the bot and the allowed user, and the homeserver echoes what the
+    bot sends (prompt and pre-seeded reactions, 👍 first) back in /sync. With whoami failing at start the old
+    code took those echoes for the operator's decision; now nothing is read from the room before whoami has
+    succeeded, and afterwards this account is refused as an approver. Either way the request times out."""
+    from .mockbots import MX_DEFAULTS
+
+    env = dict(
+        MATRIX_HOMESERVER=mockbots.base,
+        MATRIX_ACCESS_TOKEN="m",
+        MATRIX_ROOM_ID="!room:hs",
+        MATRIX_ALLOWED_USERS="@me:hs",
+    )
+    mockbots.plan = {}
+    try:
+        for failures in (10**6, 0):  # whoami never answers / answers at once
+            mockbots.mx = {"bot": "@me:hs", "whoami_failures": failures, "echo": True}
+            sent = len(mockbots.messages("mx.reaction"))
+            control_with(**env)
+            port = free_port()
+            status, _ = http_via_proxy(gateway["ports"]["http"], f"http://127.0.0.1:{port}/")
+            assert status == 502  # nobody decided: denied by timeout
+            assert not any("matrix" in (e["reason"] or "") for e in _events(gateway, port))
+            assert len(mockbots.messages("mx.reaction")) >= sent + 3  # the prompt and its reactions did go out
+            if failures:
+                assert mockbots.messages("mx.whoami")  # and whoami was asked, in vain
+    finally:
+        mockbots.mx = dict(MX_DEFAULTS)
+        mockbots._mx_events.clear()
+
+
 def test_telegram_without_allowed_users_is_disabled(mockbots, control_with):
     """TG-06: without TELEGRAM_ALLOWED_USER_IDS any member of a group chat could approve."""
     from .conftest import CONTROL_PASSWORD
