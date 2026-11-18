@@ -2,9 +2,7 @@
 
 The control UI, one picture per surface. All shots use neutral demo data (example hosts, no real
 tokens or addresses). Retake them after a UI change with a clean stack and the same demo data, then
-check each still matches its caption. The pictures are retaken separately (#209): until then some of them
-show the UI from before the ordered rule list (ADR-0019) and the reordered menu; the captions describe the
-UI as it is now.
+check each still matches its caption.
 
 | Picture | Shows |
 |---|---|
