@@ -80,7 +80,7 @@ def connect(g, host, port=443, ips=(PUBLIC,), mode="regular"):
 
     g.resolve = resolve
     server = SimpleNamespace(address=(host, port), error=None, id=f"s-{host}-{port}", sni=None)
-    client = SimpleNamespace(proxy_mode=SimpleNamespace(type_name=mode), peername=("172.31.10.9", 1))
+    client = SimpleNamespace(id="c1", proxy_mode=SimpleNamespace(type_name=mode), peername=("172.31.10.9", 1))
     asyncio.run(asyncio.wait_for(g.server_connect(SimpleNamespace(server=server, client=client)), 10))
     return server.error, resolved, server.address
 
@@ -724,7 +724,7 @@ def connect_and_answer(g, host, port=443, ips=(PUBLIC,), scope="always"):
 
     g.resolve = resolve
     server = SimpleNamespace(address=(host, port), error=None, id="s1", sni=None)
-    client = SimpleNamespace(proxy_mode=SimpleNamespace(type_name="regular"), peername=("172.31.10.9", 1))
+    client = SimpleNamespace(id="c1", proxy_mode=SimpleNamespace(type_name="regular"), peername=("172.31.10.9", 1))
 
     async def go():
         await asyncio.gather(g.server_connect(SimpleNamespace(server=server, client=client)), answer())
