@@ -935,6 +935,7 @@ async def api_setup_checks(request: web.Request):
 # Control asks GitHub's releases API itself (it has egress on mgmt), never through the agent. UPDATE_CHECK=0
 # switches it off. Results are cached: a release for 6 h, a failure for 30 min.
 UPDATE_REPO = "PhilippMundhenk/tallygate"
+UPDATE_COMPOSE = f"https://github.com/{UPDATE_REPO}/releases/latest/download/compose.yaml"
 UPDATE_TTL, UPDATE_RETRY = 6 * 3600, 30 * 60
 UPDATE_MAX_BYTES = 256 * 1024
 RELEASE_TAG = re.compile(r"v?(\d{1,4})\.(\d{1,4})\.(\d{1,6})")
@@ -1000,7 +1001,9 @@ async def api_version(request: web.Request):
         "tallygate": None,
         "claude_code": None,
         "changelog": f"https://github.com/{UPDATE_REPO}/blob/main/CHANGELOG.md",
-        "upgrade": "docker compose pull && docker compose up -d",
+        # the compose file carries the isolation settings of its release and is pinned to its images (#232)
+        "upgrade": f"cp -p compose.yaml compose.yaml.previous && curl -fsSLO {UPDATE_COMPOSE} && "
+        "docker compose pull && docker compose up -d",
         "check": "off",
         "latest": None,
         "update_available": None,
