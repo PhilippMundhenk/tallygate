@@ -366,7 +366,7 @@ targets are passed through.
 | Service ports | 172.31.10.2 | per config | agent-net |
 | Gateway API | 172.31.11.2 | 8081 | control-net (control only) |
 | Grant request API | 172.31.10.2 | 8079 | agent-net (list / request / poll grants, report activity) |
-| Control UI | 172.31.12.3 | 8080 | mgmt / published to `CONTROL_PUBLISH` |
+| Control UI | 172.31.12.3 | 8080 | mgmt / published to `CONTROL_PUBLISH` (default: the host's loopback address) |
 | Agent status | 172.31.10.10 | 7680 | agent-net (control) |
 | ttyd rc/bash/claude | 172.31.10.10 | 7681–7683 | agent-net (control) |
 
