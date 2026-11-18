@@ -4,6 +4,7 @@
 - Date: 2026-11-15
 - Issue: #201
 - Extends: ADR-0010 (outbound-polling bots), ADR-0015 (a backend-owned config)
+- Amended: 2026-11-17 (#212, the notification buttons are stored in the same file)
 
 ## Context
 
@@ -56,3 +57,27 @@ component that uses these tokens anyway.
   the session secret. Back it up and protect it like `.env`.
 - ⚠️ Two sources for one setting. The UI shows the source of every channel and field so it stays clear which
   one is in effect.
+
+## Amendment (2026-11-17, #212): the notification buttons
+
+Which decisions a connection-approval notification offers is a setting of the same kind and lives in the same
+file (`notify.json`, key `ask_actions`): a behaviour setting the UI owns (ADR-0015), written only by the
+control plane, never sent to the agent or the gateway.
+
+- **No environment variable.** Unlike the channel credentials there was no earlier way to set it, so there is
+  one source: the UI. Without a saved value every channel keeps the buttons it had (Web Push: *Allow once*,
+  *Deny*; Telegram and Matrix: *Allow once*, *Allow host permanently*, *Deny* first).
+- **A closed list.** One to four of the gateway's fixed approval scopes (`once`, `hour`, `always`, `domain`,
+  `deny`, `deny_always`), validated by the control plane on write and again on read: a file with anything else
+  means the default, never a wider choice. Durations that need a number stay in the UI.
+- **The setting chooses buttons, not authority.** What a tap may do is still decided by its action token
+  (ADR-0010 for the bots, `app/webpush.py` for Web Push): bound to one request, one decision and one device,
+  single use, short-lived. The control plane mints a token only for a button it offers, refuses a token whose
+  button was switched off since, and offers no allow button for an IP-literal destination in Web Push.
+- **Why here and not in the gateway's settings:** the gateway accepts every scope from the control plane
+  anyway (the UI needs them); which of them a *notification* offers is a property of the notification
+  channels, which only the control plane knows.
+
+Consequence: ⚠️ with a permanent allow among the buttons, one tap on a notification (also on a lock screen
+that shows buttons) adds a permanent rule. It is opt-in and confirmed; see threat model T47 and the residual
+risk *Web Push metadata*.

@@ -3,7 +3,8 @@
 Telegram: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALLOWED_USER_IDS (comma list, required).
 Matrix:   MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN, MATRIX_ROOM_ID, MATRIX_ALLOWED_USERS (comma list, required).
           Use an UNENCRYPTED room (the bot does not do E2EE); host it on your own homeserver.
-Web Push: browsers that subscribed in the UI (app/webpush.py); Allow once / Deny buttons with action tokens.
+Web Push: browsers that subscribed in the UI (app/webpush.py); buttons with action tokens (Allow once / Deny
+          unless the operator chose others, #212).
 ntfy:     NTFY_URL (topic URL), NTFY_TOKEN (optional).  Gotify: GOTIFY_URL, GOTIFY_TOKEN (application token).
 Pushover: PUSHOVER_TOKEN (application), PUSHOVER_USER (user or group key).
           These three only notify (with a link to the UI): deciding needs the UI, a chat bot or Web Push.
@@ -13,6 +14,10 @@ the environment variables above; reconfigure() applies a change without a restar
 
 Two kinds of prompts: connection requests (scopes below) and grant requests (approve / read-only /
 deny, then revoke). Both share one short-number space for Matrix text replies.
+
+Which buttons a connection request shows is a setting (#212, notifyconfig.ASK_ACTIONS): ask_buttons() turns
+it into the buttons of one request. Web Push offers exactly those, and only Deny buttons for an IP address;
+Telegram and Matrix show them first and keep every scope behind "More" (they authenticate the user).
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import html
+import ipaddress
 import json
 import logging
 import os
@@ -29,21 +35,18 @@ import uuid
 
 import aiohttp
 
-from app.notifyconfig import NotifyConfig
+from app.notifyconfig import ASK_ACTIONS, NotifyConfig, ask_label
 
 log = logging.getLogger("notify")
 QUEUE_SIZE = 1000  # gateway events waiting for delivery; beyond that new events are dropped (logged)
 SEND_TIMEOUT = 15  # per chat API call (not the long polls): a hanging API delays later prompts at most this long
 
-BUTTONS = [  # (scope, label, matrix reaction)
-    ("once", "Allow once", "👍"),
-    ("hour", "Allow 1 h", "⏰"),
-    ("always", "Always allow", "✅"),
-    ("domain", "Always (*.domain)", "🌐"),
-    ("deny", "Deny", "👎"),
-    ("deny_always", "Block forever", "⛔"),
-]
-PRIMARY = ("once", "always", "deny")  # offered first; the other scopes are behind "More" (#121)
+REACTIONS = {"once": "👍", "hour": "⏰", "always": "✅", "domain": "🌐", "deny": "👎", "deny_always": "⛔"}
+BUTTONS = [(scope, label, REACTIONS[scope]) for scope, (label, _, _) in ASK_ACTIONS.items()]  # + matrix reaction
+# What Telegram and Matrix offer first while no buttons were chosen in the UI; the other scopes are behind
+# "More" (#121). Once buttons are saved (#212) they are the first choices of these channels too.
+PRIMARY = ("once", "always", "deny")
+IP_NOTE = "\nIP address: it can only be denied from here. To allow it, open tallygate."
 MORE = "More…"
 REACTION_TO_SCOPE = {r: s for s, _, r in BUTTONS}
 GRANT_REACTIONS = {"👍": "approve", "📖": "read", "👎": "deny"}
@@ -124,10 +127,32 @@ def context_line(p: dict) -> str:
     return f"\nAgent says (unverified): {text[:160]}" if text else ""
 
 
-def _scope_label(scope: str, label: str, p: dict) -> str:
-    if scope == "domain":
-        return f"Always (*.{p['domain']})" if p.get("domain") else ""
-    return label
+def is_ip(host: str) -> bool:
+    """An IP literal, as the gateway sees it (egressgw.policy.is_ip): its approval is an address rule."""
+    try:
+        ipaddress.ip_address(str(host).strip("[]"))
+        return True
+    except ValueError:
+        return False
+
+
+def ask_buttons(actions, p: dict, deny_only_for_ip: bool = False) -> list[tuple[str, str]]:
+    """The buttons of one connection request as (scope, label), from the configured actions, in their order.
+
+    - `domain` only when the gateway names a registrable domain for the host (then it would accept the
+      scope), and its label shows the pattern that would be allowed.
+    - deny_only_for_ip (Web Push): an IP-literal destination gets no allow button. Its approval is an address
+      rule on top of the list, which opens the address even inside a blocked range; that is decided in the
+      UI, where the rule list is in view, not from a lock screen."""
+    ip = is_ip(p.get("host", ""))
+    out = []
+    for scope in actions:
+        if scope == "domain" and (ip or not p.get("domain")):
+            continue
+        if deny_only_for_ip and ip and ASK_ACTIONS[scope][2] == "allow":
+            continue
+        out.append((scope, ask_label(scope, p.get("domain"))))
+    return out
 
 
 class Notifier:
@@ -390,7 +415,13 @@ class Notifier:
         self._n = self._n % 999 + 1
         while self._n in self.short:  # never reuse a number that is still open
             self._n = self._n % 999 + 1
-        entry = {"short": self._n, "text": _describe(p), "expires": p.get("expires", now), "domain": p.get("domain")}
+        entry = {
+            "short": self._n,
+            "text": _describe(p),
+            "expires": p.get("expires", now),
+            "host": p.get("host", ""),
+            "domain": p.get("domain"),
+        }
         self.msgs[p["id"]] = entry
         self.short[self._n] = p["id"]
         timeout = int(p["expires"] - time.time())
@@ -619,17 +650,23 @@ class Notifier:
             return r.status
 
     async def _push_ask(self, p: dict, timeout: int) -> bool:
+        """The buttons are the configured ones (#212), in their order; the device shows as many as it can
+        (sw.js). A token is minted only for a button that is offered, and it carries its decision."""
+        actions = self.config.actions()
+        buttons = ask_buttons(actions, p, deny_only_for_ip=True)
+        withheld = is_ip(p.get("host", "")) and any(ASK_ACTIONS[a][2] == "allow" for a in actions)
+
         def make(sub: dict) -> dict:
             def mint(decision: str) -> str:
                 return self.push.mint("ask", p["id"], decision, sub["id"], p["expires"])
 
             return {
                 "title": "🔐 tallygate: approval needed",
-                "body": f"{_describe(p)}{context_line(p)}\nAuto-deny in {timeout}s.",
+                "body": f"{_describe(p)}{context_line(p)}{IP_NOTE if withheld else ''}\nAuto-deny in {timeout}s.",
                 "tag": f"a{p['id']}",
                 "url": "/#approvals",
-                "actions": [{"action": "once", "title": "Allow once"}, {"action": "deny", "title": "Deny"}],
-                "tokens": {"once": mint("once"), "deny": mint("deny")},
+                "actions": [{"action": scope, "title": label} for scope, label in buttons],
+                "tokens": {scope: mint(scope) for scope, _ in buttons},
             }
 
         await self._push_all(make, timeout, f"a{p['id']}")
@@ -706,12 +743,14 @@ class Notifier:
                 raise RuntimeError(f"telegram {method}: {data.get('description')}")
             return data["result"]
 
-    @staticmethod
-    def _tg_keyboard(pid: str, domain: str | None, full: bool = False) -> dict:
-        """Three buttons and "More"; `full` is what "More" turns it into: every scope."""
-        p = {"domain": domain}
-        buttons = [(scope, _scope_label(scope, label, p)) for scope, label, _ in BUTTONS if full or scope in PRIMARY]
-        row = [{"text": label, "callback_data": f"d:{pid}:{scope}"} for scope, label in buttons if label]
+    def _first(self) -> tuple[str, ...]:
+        """The scopes Telegram and Matrix offer first: the buttons saved in the UI (#212), else PRIMARY."""
+        return tuple(self.config.ask_actions or PRIMARY)
+
+    def _tg_keyboard(self, pid: str, p: dict, full: bool = False) -> dict:
+        """The first choices and "More"; `full` is what "More" turns it into: every scope."""
+        buttons = ask_buttons([scope for scope, _, _ in BUTTONS] if full else self._first(), p)
+        row = [{"text": label, "callback_data": f"d:{pid}:{scope}"} for scope, label in buttons]
         if not full:
             row.append({"text": MORE, "callback_data": f"m:{pid}"})
         return {"inline_keyboard": [row[i : i + 2] for i in range(0, len(row), 2)]}
@@ -724,7 +763,7 @@ class Notifier:
             "sendMessage",
             chat_id=self.tg_chat,
             text=text,
-            reply_markup=self._tg_keyboard(p["id"], p.get("domain")),
+            reply_markup=self._tg_keyboard(p["id"], p),
             disable_web_page_preview=True,
         )
         return res["message_id"]
@@ -758,7 +797,7 @@ class Notifier:
                                 "editMessageReplyMarkup",
                                 chat_id=self.tg_chat,
                                 message_id=cq.get("message", {}).get("message_id") or entry.get("tg"),
-                                reply_markup=self._tg_keyboard(parts[1], entry.get("domain"), full=True),
+                                reply_markup=self._tg_keyboard(parts[1], entry, full=True),
                             )
                     elif parts[0] == "g" and len(parts) == 3:
                         result = await self._apply_grant(parts[1], parts[2], f"telegram:{who}")
@@ -805,9 +844,11 @@ class Notifier:
         return await self._mx("PUT", path, body)
 
     async def _mx_send(self, p: dict, short: int, timeout: int) -> str:
-        labels = [(s, r, lbl) for s, label, r in BUTTONS if (lbl := _scope_label(s, label, p))]
-        legend = "  ".join(f"{r} {lbl}" for s, r, lbl in labels if s in PRIMARY)
-        more = "  ".join(f"{r} {lbl}" for s, r, lbl in labels if s not in PRIMARY)
+        first = ask_buttons(self._first(), p)  # in the configured order (#212)
+        shown = {s for s, _ in first}
+        legend = "  ".join(f"{REACTIONS[s]} {lbl}" for s, lbl in first)
+        rest = ask_buttons([s for s, _, _ in BUTTONS if s not in shown], p)
+        more = "  ".join(f"{REACTIONS[s]} {lbl}" for s, lbl in rest)
         body = (
             f"🔐 #{short} Agent wants to connect: {_describe(p)} — auto-deny in {timeout}s.\n"
             f"React: {legend}\nMore: {more}\nor reply: allow|hour|always|domain|deny|block {short}"
@@ -822,7 +863,7 @@ class Notifier:
             {"msgtype": "m.text", "body": body, "format": "org.matrix.custom.html", "formatted_body": html_body},
         )
         event_id = res["event_id"]
-        self._background(self._mx_seed(event_id, [reaction for scope, _, reaction in BUTTONS if scope in PRIMARY]))
+        self._background(self._mx_seed(event_id, [REACTIONS[s] for s, _ in first]))
         return event_id
 
     async def _mx_sync(self) -> None:

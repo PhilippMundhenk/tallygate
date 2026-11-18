@@ -190,9 +190,90 @@ def test_forged_or_foreign_tokens_are_refused(push, tmp_path):
     )
     with pytest.raises(ValueError):
         other.redeem(t)  # another session secret: another key
-    wrong = p.mint("ask", "ab", "always", "s", time.time() + 60)  # never minted by control, but signed
-    with pytest.raises(ValueError, match="invalid action"):
-        p.redeem(wrong)
+    for kind, decision in (
+        ("ask", "approve"),
+        ("ask", "allow"),
+        ("grant", "always"),
+        ("grant", "write"),
+        ("x", "deny"),
+    ):
+        with pytest.raises(ValueError, match="no such notification action"):
+            p.mint(kind, "ab", decision, "s", time.time() + 60)  # control never mints these
+        with pytest.raises(ValueError, match="invalid action"):
+            p.redeem(signed(p, k=kind, d=decision))  # and refuses them even with a good signature
+
+
+def signed(p, **claims):
+    """A token with a valid signature for any claims: what only a holder of the action key could make."""
+    import hashlib
+    import hmac
+
+    base = {"k": "ask", "i": "ab", "d": "deny", "s": "s", "e": int(time.time()) + 60, "n": "feed"}
+    raw = b64u(json.dumps({**base, **claims}).encode())
+    return f"{raw}.{b64u(hmac.new(p.action_key, raw.encode(), hashlib.sha256).digest())}"
+
+
+# ---------------------------------------------------------------- configurable buttons (#212)
+ALL = ("once", "hour", "always", "domain", "deny", "deny_always")
+
+
+def test_every_button_has_its_own_token_and_it_decides_only_that(push):
+    p = push()
+    tokens = {d: p.mint("ask", "abc123", d, "sub1", time.time() + 60) for d in ALL}
+    assert len(set(tokens.values())) == len(ALL)
+    for d, t in tokens.items():
+        claims = p.redeem(t, ask=ALL)
+        assert (claims["k"], claims["i"], claims["d"], claims["s"]) == ("ask", "abc123", d, "sub1")
+        with pytest.raises(ValueError, match="already used"):
+            p.redeem(t, ask=ALL)
+
+
+@pytest.mark.parametrize("target", ["always", "domain", "hour", "once"])
+def test_a_deny_token_cannot_be_turned_into_an_allow(push, target):
+    """The decision is inside the signed claims: swapping it breaks the signature, whatever is switched on."""
+    p = push()
+    for source in ("deny", "deny_always"):
+        raw, sig = p.mint("ask", "abc123", source, "sub1", time.time() + 60).split(".")
+        swapped = b64u(json.dumps({**json.loads(unb64u(raw)), "d": target}, separators=(",", ":")).encode())
+        with pytest.raises(ValueError, match="invalid action"):
+            p.redeem(f"{swapped}.{sig}", ask=ALL)
+        other = p.mint("ask", "abc123", target, "sub1", time.time() + 60).split(".")
+        for mixed in (f"{other[0]}.{sig}", f"{raw}.{other[1]}"):  # claims of one token, signature of another
+            with pytest.raises(ValueError, match="invalid action"):
+                p.redeem(mixed, ask=ALL)
+        assert p.redeem(f"{raw}.{sig}", ask=ALL)["d"] == source  # the untouched token still only denies
+
+
+def test_a_token_is_bound_to_its_request_and_device(push):
+    p = push()
+    raw, sig = p.mint("ask", "abc123", "always", "sub1", time.time() + 60).split(".")
+    for change in ({"i": "ffff"}, {"s": "sub2"}, {"k": "grant"}, {"e": int(time.time()) + 9999}, {"n": "0" * 16}):
+        forged = b64u(json.dumps({**json.loads(unb64u(raw)), **change}, separators=(",", ":")).encode())
+        with pytest.raises(ValueError, match="invalid action"):
+            p.redeem(f"{forged}.{sig}", ask=ALL)
+
+
+def test_a_button_that_is_switched_off_is_refused_and_not_used_up(push):
+    p = push()
+    t = p.mint("ask", "abc123", "always", "sub1", time.time() + 60)
+    with pytest.raises(ValueError, match="switched off"):
+        p.redeem(t)  # the default: Allow once and Deny
+    with pytest.raises(ValueError, match="switched off"):
+        p.redeem(t, ask=("once", "domain", "deny_always"))
+    assert p.redeem(t, ask=("deny", "always"))["d"] == "always"  # switched on (again): the same token works once
+    with pytest.raises(ValueError, match="already used"):
+        p.redeem(t, ask=("deny", "always"))
+    # grant decisions do not depend on the connection buttons
+    assert p.redeem(p.mint("grant", "ab", "read", "s", time.time() + 60), ask=("deny",))["d"] == "read"
+
+
+def test_an_expired_permanent_allow_token_is_refused(push):
+    p = push()
+    with pytest.raises(ValueError, match="expired"):
+        p.redeem(p.mint("ask", "abc123", "always", "sub1", time.time() - 1), ask=ALL)
+    assert json.loads(unb64u(p.mint("ask", "a", "always", "s", time.time() + 86400).split(".")[0]))["e"] <= (
+        time.time() + webpush.ACTION_TTL + 1
+    )
 
 
 def test_host_allowed():

@@ -46,16 +46,21 @@ RUN apt-get update -qq \
 COPY managed-settings.json /etc/claude-code/managed-settings.json
 # managed memory: tells Claude about the gateway and how to request grants
 COPY CLAUDE.md /etc/claude-code/CLAUDE.md
-COPY entrypoint.sh status.py /usr/local/bin/
+COPY entrypoint.sh rc-loop.sh status.py /usr/local/bin/
 COPY tallygate-cli.py /usr/local/bin/tallygate
 # PreToolUse hook (managed-settings.json): tells the gateway what is about to run, shown next to approvals
 COPY tallygate-hook.py /usr/local/bin/tallygate-hook
 # `tallygate install` puts its rootless package prefix on PATH for every login shell (and entrypoint.sh)
 COPY profile.d-tallygate-install.sh /etc/profile.d/tallygate-install.sh
-RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/status.py /usr/local/bin/tallygate /usr/local/bin/tallygate-hook \
+RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/rc-loop.sh /usr/local/bin/status.py /usr/local/bin/tallygate /usr/local/bin/tallygate-hook \
  && chmod 644 /etc/profile.d/tallygate-install.sh
 
-ENV HOME=/home/agent DISABLE_AUTOUPDATER=1 TERM=xterm-256color
+# The GitHub CLI reports usage to cafe.github.com and checks for updates at cli.github.com; the agent never asked
+# for either, and each one is an approval request for a destination nobody needs. (Claude Code's own
+# telemetry is NOT switched off here: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC breaks Remote Control, see
+# docs/operations.md. Deny those hosts instead.)
+ENV HOME=/home/agent DISABLE_AUTOUPDATER=1 TERM=xterm-256color \
+    GH_TELEMETRY=false GH_NO_UPDATE_NOTIFIER=1 GH_NO_EXTENSION_UPDATE_NOTIFIER=1
 USER 1000:1000
 WORKDIR /workspace
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --start-interval=3s \

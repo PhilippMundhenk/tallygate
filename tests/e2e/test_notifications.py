@@ -20,7 +20,7 @@ def _events(gateway, port):
 
 
 def test_telegram_button_approves(gateway, upstream, mockbots, control_with):
-    mockbots.plan = {"telegram": {"scope_label": "Always allow", "user_id": 4242, "chat_id": 777}}
+    mockbots.plan = {"telegram": {"scope_label": "Allow host permanently", "user_id": 4242, "chat_id": 777}}
     control_with(
         TELEGRAM_API_BASE=mockbots.base,
         TELEGRAM_BOT_TOKEN="t",
@@ -40,7 +40,7 @@ def test_telegram_button_approves(gateway, upstream, mockbots, control_with):
 
 
 def test_telegram_unauthorised_user_is_rejected(gateway, mockbots, control_with):
-    mockbots.plan = {"telegram": {"scope_label": "Always allow", "user_id": 9999, "chat_id": 777}}
+    mockbots.plan = {"telegram": {"scope_label": "Allow host permanently", "user_id": 9999, "chat_id": 777}}
     control_with(
         TELEGRAM_API_BASE=mockbots.base,
         TELEGRAM_BOT_TOKEN="t",

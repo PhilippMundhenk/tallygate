@@ -13,6 +13,10 @@ before, or in the web UI. What the UI saves lives in one backend-owned file in t
   and read it there, which would undo "write-only".
 - Telegram and Matrix decide approvals, so they are refused without their allowed users (ADR-0010).
 - If the data volume is not writable the store is read-only and everything stays environment-only.
+
+The same file holds which buttons a connection-approval notification offers (`ask_actions`, #212). It has
+no environment variable: it is a behaviour setting the UI owns (ADR-0015), and what a button may do stays
+bound to its action token (app/webpush.py).
 """
 
 from __future__ import annotations
@@ -92,6 +96,48 @@ CHANNELS: dict[str, tuple[Field, ...]] = {
 # Channels that decide approvals: (the field that switches the channel on, the allowed users it then needs).
 INTERACTIVE = {"telegram": ("bot_token", "allowed_user_ids"), "matrix": ("homeserver", "allowed_users")}
 
+# ---------------------------------------------------------------- notification buttons (#212)
+# What a connection request can be answered with from a notification: the gateway's approval scopes that
+# need no input (gateway/egressgw/policy.py SCOPES; the free durations of the Approvals tab need a number
+# and stay there). action -> (label, what it does, "allow" or "deny"). The words are those of the
+# Approvals tab (docs/ux-concept.md); `domain` is shown with the pattern it allows, see ask_label().
+ASK_ACTIONS: dict[str, tuple[str, str, str]] = {
+    "once": ("Allow once", "this destination for 2 min", "allow"),
+    "hour": ("Allow for 1 h", "this destination for 1 h", "allow"),
+    "always": ("Allow host permanently", "a permanent allow rule for exactly this destination", "allow"),
+    "domain": (
+        "Allow *.domain permanently",
+        "a permanent allow rule for the registrable domain and all its subdomains",
+        "allow",
+    ),
+    "deny": ("Deny", "deny for 2 min", "deny"),
+    "deny_always": ("Deny permanently", "a permanent deny rule", "deny"),
+}
+DEFAULT_ASK_ACTIONS = ("once", "deny")  # what a Web Push notification offered before the setting existed
+# More than any platform shows today (Web Push: 2 on most), and it bounds the tokens in one push message.
+MAX_ASK_ACTIONS = 4
+
+
+def validate_actions(value: object) -> list[str]:
+    """The button list as it is stored: 1 to MAX_ASK_ACTIONS known actions, each once, in the given order."""
+    if not isinstance(value, list) or not all(isinstance(a, str) for a in value):
+        raise ConfigError("actions: expected a list of action names")
+    if not 1 <= len(value) <= MAX_ASK_ACTIONS:
+        raise ConfigError(f"actions: choose 1 to {MAX_ASK_ACTIONS} buttons")
+    for a in value:
+        if a not in ASK_ACTIONS:
+            raise ConfigError(f"actions: unknown action {a[:40]!r} (one of {', '.join(ASK_ACTIONS)})")
+    if len(set(value)) != len(value):
+        raise ConfigError("actions: each button can be chosen once")
+    return list(value)
+
+
+def ask_label(action: str, domain: str | None = None) -> str:
+    """The button text. `domain` names what it opens: "Allow *.example.com permanently"."""
+    label = ASK_ACTIONS[action][0]
+    return label.replace("*.domain", f"*.{domain}") if action == "domain" and domain else label
+
+
 _SECRET = re.compile(r"[\x21-\x7e]{1,1024}")
 _TG_TOKEN = re.compile(r"[0-9]{1,20}:[A-Za-z0-9_-]{10,200}")  # it becomes part of the request path
 _TG_CHAT = re.compile(r"-?[0-9]{1,20}|@[A-Za-z0-9_]{4,64}")
@@ -163,6 +209,7 @@ class NotifyConfig:
     def __init__(self, path: Path | None) -> None:
         self.path = path
         self.overrides: dict[str, dict[str, str]] = {}
+        self.ask_actions: list[str] | None = None  # the buttons saved in the UI; None: not chosen yet (#212)
         self.writable = False
         if path is None:  # environment-only (tests, and callers without a data volume)
             return
@@ -184,6 +231,11 @@ class NotifyConfig:
             kept = {f.name: stored[f.name] for f in fields if isinstance(stored.get(f.name), str) and stored[f.name]}
             if kept:
                 self.overrides[channel] = kept
+        if "ask_actions" in data:
+            try:
+                self.ask_actions = validate_actions(data["ask_actions"])
+            except ConfigError as e:  # never guess a wider choice than the default
+                log.error("notification buttons in %s are invalid (%s): using the default", path, e)
 
     def _probe(self) -> bool:
         try:
@@ -253,20 +305,57 @@ class NotifyConfig:
             )
         return {"writable": self.writable, "channels": channels}
 
+    def actions(self) -> tuple[str, ...]:
+        """The buttons of a connection-approval notification, in order: the saved choice, else the default."""
+        return tuple(self.ask_actions or DEFAULT_ASK_ACTIONS)
+
+    def public_actions(self) -> dict:
+        """The button setting for the UI: the choice in use, whether it was saved here, and what can be chosen
+        (`confirm`: a permanent allow, which the UI asks about before it is switched on)."""
+        return {
+            "value": list(self.actions()),
+            "custom": self.ask_actions is not None,
+            "default": list(DEFAULT_ASK_ACTIONS),
+            "max": MAX_ASK_ACTIONS,
+            "choices": [
+                {"action": a, "label": label, "effect": effect, "kind": kind, "confirm": a in ("always", "domain")}
+                for a, (label, effect, kind) in ASK_ACTIONS.items()
+            ],
+        }
+
     # ---------------------------------------------------------------- writing
-    def _save(self, overrides: dict[str, dict[str, str]]) -> None:
+    _KEEP = object()  # _save(): leave the buttons as they are
+
+    def _save(self, overrides: dict[str, dict[str, str]], actions: object = _KEEP) -> None:
         if not self.writable:
             raise ReadOnlyError("the control data volume is not writable: notification channels are environment-only")
+        ask = self.ask_actions if actions is self._KEEP else actions
+        data: dict = {"version": 1, "channels": overrides}
+        if ask is not None:
+            data["ask_actions"] = ask
         tmp = self.path.with_name(self.path.name + ".tmp")
         try:
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # never readable by others, even briefly
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump({"version": 1, "channels": overrides}, f, indent=1)
+                json.dump(data, f, indent=1)
             tmp.chmod(0o600)
             tmp.replace(self.path)
         except OSError as e:
             raise ReadOnlyError(f"could not write the notification config ({e.strerror or e})") from None
-        self.overrides = overrides
+        self.overrides, self.ask_actions = overrides, ask
+
+    def set_actions(self, value: object) -> list[str]:
+        """Save which buttons a connection-approval notification offers, in order (ConfigError: HTTP 400)."""
+        actions = validate_actions(value)
+        self._save(self.overrides, actions)
+        return actions
+
+    def reset_actions(self) -> bool:
+        """Forget the saved buttons: every channel shows its default again. False if none were saved."""
+        if self.ask_actions is None:
+            return False
+        self._save(self.overrides, None)
+        return True
 
     def update(self, channel: str, body: object) -> list[str]:
         """Save UI values for one channel; returns the names of the fields that changed. A non-secret

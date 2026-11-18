@@ -11,6 +11,12 @@ details.notify-config form{display:grid;grid-template-columns:repeat(auto-fit,mi
 details.notify-config label{margin:0}
 details.notify-config input{width:100%;margin:4px 0 0}
 details.notify-config .btns{grid-column:1/-1;margin-top:0}
+/* notification buttons (#212): one select per button position, in the order the buttons are shown */
+.notify-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 16px;margin:8px 0 12px}
+.notify-actions:empty{display:none}
+.notify-actions label{margin:0}
+.notify-actions select{width:100%;margin:4px 0 0}
+.notify-actions .btns,.notify-actions .notify-actions-state{grid-column:1/-1;margin:0}
 .notify-browser{margin:8px 0 4px}
 .notify-perm{font-size:13px;margin:4px 0 0}
 .notify-perm:empty{display:none}

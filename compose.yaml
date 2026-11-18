@@ -128,6 +128,9 @@ services:
     <<: *hardening
     # To add tools, build your own image FROM this one (docs/operations.md#custom-agent-image).
     image: ghcr.io/philippmundhenk/tallygate-agent:${TALLYGATE_VERSION:-latest}
+    # The Claude app shows this as the device. Without it Docker uses the container id, which changes
+    # whenever the container is recreated.
+    hostname: ${AGENT_HOSTNAME:-tallygate}
     read_only: true
     tmpfs: ["/tmp:size=1g,uid=1000,gid=1000,mode=1777"]
     dns: [172.31.10.2]                    # gateway answers NXDOMAIN for everything: no DNS exfiltration

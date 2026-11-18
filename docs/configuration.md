@@ -39,6 +39,7 @@ All variables are optional. Secrets are created on first start when they are not
 | `TRUST_PROXY_AUTH_HEADER` | – | E.g. `Remote-User`: accept the user from this header set by an authenticating proxy (Authelia, oauth2-proxy). Requires `TRUSTED_PROXIES`; control refuses to start without it. Trust only the proxy container's own address: see [reverse proxy](operations.md#reverse-proxy). |
 | `TRUST_PROXY_SECRET` | – | Shared secret (≥ 16 characters) that the proxy sends as `X-Tallygate-Proxy-Secret`. When set, forwarded and auth headers are believed only from `TRUSTED_PROXIES` **and** with this header (compared in constant time). Recommended with `TRUST_PROXY_AUTH_HEADER`. |
 | `RC_NAME` | `tallygate` | Remote Control session name shown in the Claude app. |
+| `AGENT_HOSTNAME` | `tallygate` | Hostname of the agent container. The Claude app shows it as the device a session runs on; without a fixed one it would be Docker's container id, which changes whenever the container is recreated. |
 | `RC_ENABLE` | `1` | Start `claude remote-control` automatically in the `rc` tmux session. |
 | `RC_ARGS` | – | Extra arguments for `claude remote-control`, e.g. `--spawn worktree`. |
 | `AGENT_PERMISSION_MODE` | `bypassPermissions` | Claude Code permission mode for Remote Control and the `claude` console. Seeded into `~/.claude/settings.json` on first start. |
@@ -435,7 +436,7 @@ one that `compose.yaml` does not list, add it to that service's `environment:` b
 | control | `AGENT_HOST`, `AGENT_STATUS_PORT`, `TERMINALS` | Agent address, status port, `name:port` list of ttyd consoles. |
 | control | `SESSION_TTL`, `LOG_LEVEL` | Session lifetime (s, default 12 h), log level. |
 | control | `SESSION_RECHECK` | Seconds between session re-checks of open event streams and consoles (10). |
-| control | `CONTROL_DATA` | Control state directory inside the container (`/data`): session secret, password hash, VAPID key, push subscriptions, notification settings saved in the UI (`notify.json`). Not the `.env` variable of the same name, which is the host path or volume mounted there. |
+| control | `CONTROL_DATA` | Control state directory inside the container (`/data`): session secret, password hash, VAPID key, push subscriptions, notification settings saved in the UI (`notify.json`: channel settings and the [notification buttons](user-guide.md#notification-buttons), which have no environment variable). Not the `.env` variable of the same name, which is the host path or volume mounted there. |
 | control, agent | `TTYD_CREDENTIAL_FILE` | Credential file in the `ttyd` volume (`/run/tallygate/ttyd/credential`), used when `TTYD_CREDENTIAL` is not set. |
 | control | `GITHUB_API_URL` | Releases API base URL for the update check (the test suite points it at a mock server). |
 | control | `TELEGRAM_API_BASE`, `PUSHOVER_API_BASE` | API base URLs (the test suite points them at mock servers). |

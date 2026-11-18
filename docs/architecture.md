@@ -148,7 +148,7 @@ sequenceDiagram
     G->>G: create pending request (dedupe by host:port, max_pending), hold connection
     G-->>C: SSE event "ask"
     C-->>H: UI card / Telegram buttons / Matrix message
-    H->>C: "Allow 1 h"
+    H->>C: "Allow for 1 h"
     C->>G: POST /pending/{id}/decide {scope: hour, by: telegram:philipp}
     G->>G: insert rule at top (expires in 1 h) · release held connections
     G->>G: resolve · rule list for every resolved IP (a blocked range still denies) · pin IP
@@ -319,7 +319,7 @@ It never becomes an `allow`. Refused destinations are collected and sent as one 
 |---|---|---|
 | egress-gw | `python run.py` → `exec mitmdump` | mitmproxy event loop with the tallygate addon and the aiohttp API server on the same loop |
 | control | `python -m app.main` | aiohttp server, gateway SSE subscriber, Telegram long-poll, Matrix `/sync` loop; outbound Web Push, ntfy, Gotify and Pushover requests |
-| agent | `tini` → `entrypoint.sh` | supervisor loop (5 s) restarting: tmux session `rc` (`claude remote-control` in a restart loop), ttyd × 3, `status.py` |
+| agent | `tini` → `entrypoint.sh` | supervisor loop (5 s) restarting: tmux session `rc` (`rc-loop.sh`: `claude remote-control` in a restart loop that keeps the environment), ttyd × 3, `status.py` |
 
 ## Grants
 
