@@ -57,6 +57,12 @@ def cmd_grants(_args) -> int:
     operator = data.get("operator") or {}
     if operator.get("message"):  # away or quiet hours: requests that need a human are refused at once
         print(f"note: {operator['message']}")
+    network = data.get("network") or {}
+    if network.get("down"):  # not a policy decision: lookups and connections fail for the gateway itself
+        since = time.strftime("%H:%M", time.localtime(network["since"])) if network.get("since") else "?"
+        print(
+            f"note: the gateway has had no connection since {since}; refused connections are an outage of the host's network, not a policy decision"
+        )
     if not data["grants"]:
         print("No grants are defined. Ask the operator to define one.")
     for g in data["grants"]:

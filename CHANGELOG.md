@@ -120,6 +120,18 @@ earlier entry ends with *Replaced in this release*. The state you get:
 - CI: actions pinned to commit SHAs, base images by digest, gitleaks secret scan, Trivy image scan (#18).
 
 ### Added
+- **A hint when the gateway has no connection** (#218). When the host's network is down (DNS or more), the
+  gateway no longer looks like a policy that refuses everything: the *Overview* and the *Log* show *No
+  connection from the gateway since HH:MM (N min): lookups and connections fail. This is a problem of the
+  host's network, not a policy decision.* and clear it by themselves at the first success. It starts when at
+  least five lookups or connections fail over at least two different names for at least two minutes with no
+  success, **and** a control probe (a fixed name, `api.anthropic.com`, by default; at most once every 30 s)
+  fails as well, so an agent that asks for names that do not exist cannot fake an outage. The Log gets an
+  event when it starts and when it ends (with the duration); refusals during it carry the reason prefix
+  `no connection:` and are not counted as denies on *Overview*. `GET /info` has a `connectivity` object, the
+  stream a `connectivity` message, notification channels get one message when it starts and one when it ends,
+  and `tallygate grants` tells the agent. Threat T48; keys `connectivity_*` in `gateway.yaml`
+  ([configuration](docs/configuration.md#connectivity)).
 - **Notification buttons are configurable** (#212): *Setup → Notifications → Notification buttons* chooses
   which decisions a connection request offers in a notification and in which order: one to four of *Allow
   once*, *Allow for 1 h*, *Allow host permanently*, *Allow \*.domain permanently*, *Deny* and *Deny

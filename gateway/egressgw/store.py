@@ -263,12 +263,19 @@ def summarize(path: Path, since: float, top: int = 10, new: int = 20) -> dict:
     thread without touching the writer's connection (WAL allows concurrent readers)."""
     db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
-        counts = dict(
-            db.execute(
-                "SELECT action, COUNT(*) FROM events WHERE kind = 'conn' AND host IS NOT NULL AND ts >= ? GROUP BY action",
-                (since,),
-            )
-        )
+        # a refusal that happened during an outage of the host's network (#218) is no policy decision: it is
+        # counted apart, so that an outage does not show up as thousands of denies
+        counts: dict = {}
+        outage = 0
+        for action, n, tagged in db.execute(
+            "SELECT action, COUNT(*), reason LIKE 'no connection: %' FROM events "
+            "WHERE kind = 'conn' AND host IS NOT NULL AND ts >= ? GROUP BY action, reason LIKE 'no connection: %'",
+            (since,),
+        ):
+            if tagged and action == "deny":
+                outage += n
+            else:
+                counts[action] = counts.get(action, 0) + n
         top_rows = db.execute(
             "SELECT host, port, COUNT(*), SUM(action = 'allow'), SUM(action = 'deny'), SUM(action = 'ask'), MAX(ts) "
             "FROM events WHERE kind = 'conn' AND host IS NOT NULL AND ts >= ? "
@@ -286,6 +293,7 @@ def summarize(path: Path, since: float, top: int = 10, new: int = 20) -> dict:
     return {
         "since": since,
         "counts": {a: counts.get(a, 0) for a in ("allow", "deny", "ask")},
+        "no_connection": outage,
         "top": [
             {"host": h, "port": p, "count": n, "allow": a, "deny": d, "ask": q, "last": last}
             for h, p, n, a, d, q, last in top_rows

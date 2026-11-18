@@ -281,6 +281,23 @@ with a message to the agent; nothing is allowed automatically. A change in the U
 `availability.yaml` in the `gateway-data` volume and wins over this file from then on. An invalid entry here
 stops the gateway; an unreadable `availability.yaml` turns away mode on until you change it (fail closed).
 
+### Connectivity
+
+The gateway notices when its own network is down ([user guide](user-guide.md#no-connection-from-the-gateway)).
+The defaults fit most hosts; the keys are for odd networks and for tests:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `connectivity_probe_hosts` | `[api.anthropic.com]` | The control probe: fixed names (`name` or `name:port`, port 443 by default) that the gateway resolves and connects to when failures look like an outage, and while one is on. The outage only starts when the probe fails too. Use the host your agent needs most. |
+| `connectivity_min_failures` | `5` | Failed lookups or connections needed. |
+| `connectivity_min_names` | `2` | ... over this many different names. |
+| `connectivity_window` | `600` | Seconds a failure counts. |
+| `connectivity_min_age` | `120` | The oldest failure must be this old (seconds). |
+| `connectivity_probe_interval` | `30` | At most one probe per this many seconds, whatever the agent does. |
+
+An invalid probe host stops the gateway. The state is kept in `connectivity.json` in the `gateway-data` volume
+while an outage is on, so that it ends with its whole duration after a restart.
+
 ### Grants
 
 See [grants.md](grants.md) for the concept and examples. Keys in `config/gateway.yaml`:

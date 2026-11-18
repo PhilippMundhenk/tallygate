@@ -199,3 +199,14 @@ def test_the_service_worker_shows_the_buttons_the_server_sends():
     assert 'class="notify-actions-text"' in (STATIC / "push.js").read_text(encoding="utf-8")
     wizard = (STATIC / "wizard.js").read_text(encoding="utf-8")
     assert '"/api/notify/actions"' in wizard and "confirmClick(save" in wizard
+
+
+def test_the_no_connection_hint_is_a_status_set_as_text():
+    """#218: on Overview and the Log tab, announced as a status, and built from numbers with textContent (the
+    state is read-only and has no names, but nothing from the gateway is ever put into the page as HTML)."""
+    js = (STATIC / "connectivity.js").read_text(encoding="utf-8")
+    assert "innerHTML" not in js and "textContent" in js
+    assert "not a policy decision" in js and "/static/connectivity.js" in INDEX
+    for banner in ("netBanner", "netBannerLog"):
+        assert re.search(rf'<p id="{banner}" class="alert warn hidden" role="status">', INDEX)
+    assert INDEX.index('id="netBanner"') < INDEX.index('id="tab-log"') < INDEX.index('id="netBannerLog"')

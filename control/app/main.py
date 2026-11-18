@@ -1313,7 +1313,14 @@ async def watch_gateway(app: web.Application):
                     line = line.decode().strip()
                     if line.startswith("data: "):
                         ev = json.loads(line[6:])
-                        if ev.get("type") in ("ask", "resolved", "grant_request", "grant_resolved", "digest"):
+                        if ev.get("type") in (
+                            "ask",
+                            "resolved",
+                            "grant_request",
+                            "grant_resolved",
+                            "digest",
+                            "connectivity",
+                        ):
                             app["notifier"].enqueue(ev)
         except asyncio.CancelledError:
             raise

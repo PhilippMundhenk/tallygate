@@ -1035,3 +1035,25 @@ def test_the_largest_push_message_still_fits_one_record(pushed):
     payload = json.dumps(m, separators=(",", ":")).encode()
     assert len(payload) < 3000
     webpush.encrypt(payload, webpush.b64u(point), webpush.b64u(b"0123456789abcdef"))  # raises when too large
+
+
+# ---------------------------------------------------------------- the gateway has no connection (#218)
+def test_connectivity_text_is_fixed_and_has_only_a_time():
+    start = notify.connectivity_text({"down": True, "since": 1_800_000_000, "host": "<b>evil</b>"})
+    assert start.startswith("⚠️ tallygate: no connection from the gateway since ")
+    assert "not a policy decision" in start and "evil" not in start
+    assert "since ?" in notify.connectivity_text({"down": True, "since": "x"})
+    assert notify.connectivity_text({"down": False}) == "✅ tallygate: the gateway has a connection again."
+
+
+def test_connectivity_goes_out_once_per_change_to_every_channel(make):
+    n = make({**TG, **MX})
+    run(n.handle({"type": "connectivity", "down": True, "since": 1_800_000_000}))
+    run(n.handle({"type": "connectivity", "down": False}))
+    texts = [p["text"] for _, _, p in n.chat.sent("tg", "sendMessage")]
+    assert len(texts) == 2 and "no connection" in texts[0] and "connection again" in texts[1]
+    assert all("reply_markup" not in p for _, _, p in n.chat.sent("tg", "sendMessage"))  # a notice, no buttons
+    assert len(n.chat.notices()) == 2
+    quiet = make()
+    run(quiet.handle({"type": "connectivity", "down": True, "since": 1.0}))
+    assert quiet.chat.calls == []
