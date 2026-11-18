@@ -209,7 +209,15 @@ class WebPush:
         if decision not in DECISIONS.get(kind, ()):
             raise ValueError(f"no such notification action: {kind} {decision}")
         exp = int(min(expires, time.time() + ACTION_TTL))
-        claims = {"k": kind, "i": item_id, "d": decision, "s": sub_id, "e": exp, "n": secrets.token_hex(8), "b": self.boot}
+        claims = {
+            "k": kind,
+            "i": item_id,
+            "d": decision,
+            "s": sub_id,
+            "e": exp,
+            "n": secrets.token_hex(8),
+            "b": self.boot,
+        }
         raw = b64u(json.dumps(claims, separators=(",", ":")).encode())
         return f"{raw}.{b64u(hmac.new(self.action_key, raw.encode(), hashlib.sha256).digest())}"
 
