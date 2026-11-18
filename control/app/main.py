@@ -26,6 +26,7 @@ import urllib.parse
 from pathlib import Path
 
 import aiohttp
+import yarl
 from aiohttp import WSMsgType, web
 
 from app import bootstrap, notify, notifyconfig, webpush
@@ -72,6 +73,9 @@ PUSH_ACT = "/api/push/act"  # notification buttons: authenticated by a single-us
 AGENT_MAX_BYTES = 1024 * 1024  # cap on anything read from the agent (status JSON, terminal frames)
 BROWSER_MAX_FRAME = 64 * 1024
 
+# An id in a relayed path (#244): starts with a letter or digit and has no "..", so it is never "." or ".."
+# and cannot step out of the route it stands in ("destinations/.." was the gateway's "/").
+GW_ID = r"[A-Za-z0-9](?:[A-Za-z0-9_:-]|\.(?!\.))*"
 # Gateway API paths the UI may use: (method, regex)
 GW_ALLOW = [
     ("GET", r"/policy"),
@@ -102,9 +106,9 @@ GW_ALLOW = [
     ("POST", r"/destinations"),
     ("POST", r"/destinations/group"),
     ("POST", r"/destinations/restore-blocks"),
-    ("POST", r"/destinations/[A-Za-z0-9_:.-]+/move"),
-    ("PATCH", r"/destinations/[A-Za-z0-9_:.-]+"),
-    ("DELETE", r"/destinations/[A-Za-z0-9_:.-]+"),
+    ("POST", rf"/destinations/{GW_ID}/move"),
+    ("PATCH", rf"/destinations/{GW_ID}"),
+    ("DELETE", rf"/destinations/{GW_ID}"),
     ("PUT", r"/destinations/grant/[a-z0-9][a-z0-9_-]{0,47}"),
     ("DELETE", r"/destinations/grant/[a-z0-9][a-z0-9_-]{0,47}"),
     ("POST", r"/test"),
@@ -714,14 +718,34 @@ def _redirect_502(who: str) -> web.Response:
 
 
 # ------------------------------------------------------------------ gateway relay
-async def gw(app: web.Application, method: str, path: str, body=None, timeout: float = 15, by: str = ""):
+class GatewayPath(ValueError):
+    def __init__(self) -> None:
+        super().__init__("gateway path refused")
+
+
+GW_PATH = re.compile(r"(?:/[A-Za-z0-9_:.-]+)+")
+
+
+def gw_url(path: str, params=None) -> yarl.URL:
+    """The gateway URL for an API path, exactly as written (#244, #239). The path is sent as it is
+    (`encoded=True`: nothing is normalised or re-quoted, so "a/../b" could not become "b"), and a path
+    with "..", "?" or "#" in it, or any character outside the ones the gateway's routes use, is refused
+    outright: whatever a caller interpolated, the request goes to the route the caller named or nowhere.
+    A query string is given as `params` and encoded here, never as part of the path."""
+    if not isinstance(path, str) or ".." in path or not GW_PATH.fullmatch(path):
+        raise GatewayPath
+    url = yarl.URL(GW_URL + path, encoded=True)
+    return url.with_query(params) if params else url
+
+
+async def gw(app: web.Application, method: str, path: str, body=None, timeout: float = 15, by: str = "", params=None):
     headers = {"Authorization": f"Bearer {GW_TOKEN}"}
     if by:
         # attribution in the gateway's policy history: printable ASCII only (it travels in a header)
         headers["X-Tallygate-By"] = "".join(c if " " <= c <= "~" else "?" for c in by)[:64]
     async with app["gw"].request(
         method,
-        GW_URL + path,
+        gw_url(path, params),
         json=body,
         headers=headers,
         timeout=aiohttp.ClientTimeout(total=timeout),
@@ -753,11 +777,11 @@ async def api_gw(request: web.Request):
     attributed = sub.endswith("/decide") or sub.endswith("/activate") or sub in ("/emergency-stop", "/availability")
     if attributed and isinstance(body, dict):
         body["by"] = by  # attribution is set here, never taken from the browser
-    qs = ("?" + request.query_string) if request.query_string else ""
-    if sub.startswith("/active-grants/"):
-        qs = "?" + urllib.parse.urlencode({"by": by})
+    params = {"by": by} if sub.startswith("/active-grants/") else request.query
     try:
-        status, data = await gw(request.app, request.method, sub + qs, body, by=by)
+        status, data = await gw(request.app, request.method, sub, body, by=by, params=params)
+    except GatewayPath:  # the allow-list lets nothing through that gw() refuses; if it ever does: no request
+        return web.json_response({"error": "not allowed"}, status=404)
     except UpstreamRedirect:
         return _redirect_502("the gateway")
     except (TimeoutError, aiohttp.ClientError) as e:
@@ -1364,7 +1388,7 @@ async def on_startup(app: web.Application):
         decide_grant=lambda rid, decision, by: gw(
             app, "POST", f"/grant-requests/{rid}/decide", {"decision": decision, "by": by}
         ),
-        revoke_grant=lambda aid, by: gw(app, "DELETE", f"/active-grants/{aid}?" + urllib.parse.urlencode({"by": by})),
+        revoke_grant=lambda aid, by: gw(app, "DELETE", f"/active-grants/{aid}", params={"by": by}),
         decide=lambda pid, scope, by: gw(app, "POST", f"/pending/{pid}/decide", {"scope": scope, "by": by}),
         push=app["webpush"],
         config=app["notifycfg"],

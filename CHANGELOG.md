@@ -7,6 +7,21 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **A chat approver can only decide the prompts shown, and the relay cannot leave its routes (#239, #244,
+  Low).** Found by the security review of v0.4.0. The id in a Telegram button's callback data went into the
+  gateway API path unchecked, and the HTTP client normalised `..` and took `?` as the start of a query. An
+  allowed Telegram user with a modified client (callback data is free text) could therefore call any `POST`
+  or `DELETE` of the gateway API with the control plane's token, for example the *Allow web* shortcut or a
+  rollback of the policy, instead of deciding a prompt. The same normalisation let
+  `DELETE /api/gw/destinations/..` from a UI session reach the gateway's `/` (no such route exists today).
+  Now callback data is accepted only as an id of `[a-f0-9]{1,32}` with a known scope (connection requests)
+  or `approve`/`read`/`deny` (grant requests); everything else is dropped without an answer and logged
+  (`callback data from … dropped: not a button of this bot`). The decision functions of every channel check
+  the same again, the relay's allow-list accepts no id that starts with a dot or contains `..`, and the one
+  function that calls the gateway API refuses a path with `..`, `?`, `#` or any character outside
+  `[A-Za-z0-9_:.-/]` and sends the path byte for byte. Matrix (reactions and replies name a prompt by event
+  or number, never by id) and Web Push (signed tokens, id checked) were checked and needed no change.
+  Threat T51 in [docs/threat-model.md](docs/threat-model.md). Nothing to do after upgrading.
 - **The Matrix bot can no longer approve requests itself (#238, Medium).** The check that the bot's account is
   not one of the allowed users depended on one `whoami` call when the control plane started. If that call
   failed (homeserver not up yet after a reboot, a 5xx) and the bot used an allowed user's token, the control

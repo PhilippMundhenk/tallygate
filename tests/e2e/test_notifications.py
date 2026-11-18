@@ -54,6 +54,38 @@ def test_telegram_unauthorised_user_is_rejected(gateway, mockbots, control_with)
     assert not any("telegram" in (e["reason"] or "") for e in _events(gateway, port))
 
 
+@pytest.mark.parametrize(
+    "forged",
+    [
+        "{kind}:{id}/../{id}:{choice}",  # the HTTP client used to normalise this to the same prompt
+        "{kind}:{id}/decide?x=:{choice}",  # and to cut the path here
+        "{kind}:../pending/{id}:{choice}",
+        "{kind}:{id}:{choice}/../always",
+    ],
+)
+def test_telegram_forged_callback_data_decides_nothing(gateway, mockbots, control_with, forged):
+    """#239: the allowed user in the right chat sends callback data that is not one of the bot's buttons.
+    These forgeries point back at the same prompt, so the old code approved it; now the press is dropped
+    without an answer and the request times out."""
+    mockbots.plan = {
+        "telegram": {"scope_label": "Allow host permanently", "user_id": 4242, "chat_id": 777, "forge": forged}
+    }
+    answers = len(mockbots.messages("tg.answerCallbackQuery"))
+    control_with(
+        TELEGRAM_API_BASE=mockbots.base,
+        TELEGRAM_BOT_TOKEN="t",
+        TELEGRAM_CHAT_ID="777",
+        TELEGRAM_ALLOWED_USER_IDS="4242",
+    )
+    from .conftest import start_echo
+
+    port = start_echo()
+    status, _ = http_via_proxy(gateway["ports"]["http"], f"http://127.0.0.1:{port}/tg")
+    assert status == 502  # nobody decided: denied by timeout
+    assert not any("telegram" in (e["reason"] or "") for e in _events(gateway, port))
+    assert len(mockbots.messages("tg.answerCallbackQuery")) == answers  # dropped without an answer
+
+
 def test_matrix_reaction_denies_and_stranger_is_ignored(gateway, mockbots, control_with):
     mockbots.plan = {"matrix": {"actions": [("@stranger:hs", "reaction", "✅"), ("@me:hs", "reaction", "👎")]}}
     control_with(
