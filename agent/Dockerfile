@@ -55,7 +55,12 @@ COPY profile.d-tallygate-install.sh /etc/profile.d/tallygate-install.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/rc-loop.sh /usr/local/bin/status.py /usr/local/bin/tallygate /usr/local/bin/tallygate-hook \
  && chmod 644 /etc/profile.d/tallygate-install.sh
 
-ENV HOME=/home/agent DISABLE_AUTOUPDATER=1 TERM=xterm-256color
+# The GitHub CLI reports usage to cafe.github.com and checks for updates at cli.github.com; the agent never asked
+# for either, and each one is an approval request for a destination nobody needs. (Claude Code's own
+# telemetry is NOT switched off here: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC breaks Remote Control, see
+# docs/operations.md. Deny those hosts instead.)
+ENV HOME=/home/agent DISABLE_AUTOUPDATER=1 TERM=xterm-256color \
+    GH_TELEMETRY=false GH_NO_UPDATE_NOTIFIER=1 GH_NO_EXTENSION_UPDATE_NOTIFIER=1
 USER 1000:1000
 WORKDIR /workspace
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --start-interval=3s \
