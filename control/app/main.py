@@ -866,7 +866,8 @@ async def api_setup_checks(request: web.Request):
             "warn",
             "Not encrypted",
             "Plain HTTP from another machine: the password and the session travel unencrypted. "
-            "Fine for a trusted home network; otherwise put a TLS reverse proxy in front.",
+            "Acceptable only on a network you trust; otherwise put a TLS reverse proxy in front or use an SSH "
+            "tunnel (docs/operations.md#reaching-the-ui).",
         )
     secure, mode = cookie_secure(request), os.environ.get("COOKIE_SECURE", "auto").strip().lower() or "auto"
     if scheme == "https" and not secure:
@@ -922,9 +923,10 @@ async def api_setup_checks(request: web.Request):
         "info",
         "From another machine",
         (f"Other devices use the same address: {browser_origin}. " if browser_origin and not local else "")
-        + "By default the UI is published on port 8080 of the Docker host (CONTROL_PUBLISH=0.0.0.0:8080): "
-        "http://<host's LAN address>:8080. With CONTROL_PUBLISH=127.0.0.1:8080 only this host, an SSH tunnel "
-        "or a reverse proxy reaches it.",
+        + "By default the UI is published only on the Docker host itself (CONTROL_PUBLISH=127.0.0.1:8080): "
+        "other machines reach it through a TLS reverse proxy on that host or an SSH tunnel "
+        "(ssh -L 8080:127.0.0.1:8080 <host>). CONTROL_PUBLISH=0.0.0.0:8080 publishes it on every interface "
+        "of the host, unencrypted: http://<host's LAN address>:8080, for a trusted network only.",
     )
     return web.json_response({"checks": checks, "password": password_state()})
 

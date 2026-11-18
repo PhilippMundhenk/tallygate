@@ -138,6 +138,8 @@ def ensure_password() -> None:
     bar = "=" * 72
     log.warning(
         "\n%s\n  tallygate web UI password: %s\n"
+        "  Open http://127.0.0.1:8080 on the Docker host (the default, CONTROL_PUBLISH); from another machine use\n"
+        "  a TLS reverse proxy or `ssh -L 8080:127.0.0.1:8080 <host>`: docs/operations.md#reaching-the-ui\n"
         "  It stays readable in this log until the log is rotated: change it after the first login with\n"
         "  docker compose exec control python -m app.passwd\n%s",
         bar,

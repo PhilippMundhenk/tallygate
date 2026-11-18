@@ -95,6 +95,12 @@ jobs:
           docker compose exec -T control test -s /run/tallygate/ttyd/credential
           docker compose exec -T agent test -s /run/tallygate/ttyd/credential
           ! docker compose exec -T agent test -e /run/tallygate/gw/api-token   # the agent never sees the API token
+      - name: The UI is published on the host's loopback address only (plain HTTP must not be on the network)
+        run: |
+          [ "$(docker port tallygate-control-1 8080/tcp)" = "127.0.0.1:8080" ]
+          curl -fsS -m 10 -o /dev/null http://127.0.0.1:8080/healthz
+          ip=$(hostname -I | awk '{print $1}')
+          ! curl -s -m 5 -o /dev/null "http://${ip}:8080/healthz"
       - run: ./tests/integration/bypass.sh
       - if: failure()
         run: docker compose logs

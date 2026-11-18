@@ -57,6 +57,10 @@ def test_generated_password_is_logged_once_and_checks(boot, caplog, monkeypatch)
         boot.ensure_password()
     pw = re.search(r"web UI password: (\S+)", caplog.text).group(1)
     assert "stays readable in this log until the log is rotated" in caplog.text  # not "shown only once"
+    # where to open the UI: the default publish address is loopback (#231), right under the password
+    after = caplog.text.split(f"web UI password: {pw}\n", 1)[1].splitlines()
+    assert after[0].strip().startswith("Open http://127.0.0.1:8080 on the Docker host (the default, CONTROL_PUBLISH)")
+    assert "ssh -L 8080:127.0.0.1:8080 <host>" in after[1] and "0.0.0.0" not in caplog.text
     assert boot.password_hash().startswith("scrypt:16:")
     assert boot.password_generated()  # the setup wizard asks to change it
     caplog.clear()
