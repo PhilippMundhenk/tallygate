@@ -382,11 +382,13 @@ def test_agent_api_is_rate_limited(tmp_path):
 
     from egressgw import agentapi
     from egressgw.availability import Availability
+    from egressgw.connectivity import Connectivity
 
     fake_gw = SimpleNamespace(
         config={"grant_api_rate": 3},
         grants=SimpleNamespace(defs={}, active={}, requests={}),
         availability=Availability({}, tmp_path),
+        connectivity=Connectivity(),
     )
 
     async def run():

@@ -1,6 +1,7 @@
 """Management API and agent grant API in-process (aiohttp test client against a real Gateway object)."""
 
 import asyncio
+import json
 import sys
 import time
 from pathlib import Path
@@ -550,3 +551,35 @@ def test_agent_auto_approved_grant_is_active_at_once(gw):
     assert next(g for g in catalog if g["name"] == "auto")["active"]["level"] == "read"
     status, polled = agent(gw, "GET", f"/v1/requests/{body['id']}?wait=5")
     assert status == 200 and polled["status"] == "approved"
+
+
+# ------------------------------------------------------------------ the gateway has no connection (#218)
+def test_status_shows_an_outage_to_the_admin_and_the_agent_without_names(gw):
+    assert admin(gw, "GET", "/info")[1]["connectivity"]["down"] is False
+    assert agent(gw, "GET", "/v1/grants")[1]["network"] == {"down": False, "since": None}
+    c = gw.connectivity
+    for i, n in enumerate(["a-secret.example", "b-secret.example"]):
+        c.failure(n, "dns", 1000.0 + i)
+    c.begin(1100.0)
+    info = admin(gw, "GET", "/info")[1]["connectivity"]
+    assert info == {"down": True, "since": 1000.0, "last_failure": 1001.0, "failures": 2, "kinds": ["dns"]}
+    seen = agent(gw, "GET", "/v1/grants")[1]["network"]
+    assert seen == {"down": True, "since": 1000.0}  # the agent learns that, and nothing else, from it
+    assert "secret" not in json.dumps([info, seen])
+
+
+def test_nothing_the_agent_can_reach_writes_the_state(gw):
+    """The state is read-only: no agent route and no management route takes it as input."""
+    gw.connectivity.begin(1000.0)
+
+    async def statuses(app, path, auth):
+        async with TestClient(TestServer(app)) as c:
+            h = {"Authorization": f"Bearer {TOKEN}"} if auth else {}
+            return [
+                (await c.request(m, path, json={"down": False, "connectivity": {"down": False}}, headers=h)).status
+                for m in ("POST", "PUT", "PATCH", "DELETE")
+            ]
+
+    assert asyncio.run(statuses(agentapi.build_app(gw), "/v1/grants", False)) == [405] * 4
+    assert asyncio.run(statuses(api.build_app(gw), "/info", True)) == [405] * 4
+    assert gw.connectivity.down

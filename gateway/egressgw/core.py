@@ -31,8 +31,10 @@ from mitmproxy.net.dns import response_codes
 from mitmproxy.proxy import server_hooks
 
 from egressgw import api, destinations
+from egressgw import connectivity as conn_state
 from egressgw.activity import Activity
 from egressgw.availability import Availability, Unavailable
+from egressgw.connectivity import Connectivity
 from egressgw.github import RepoScope
 from egressgw.grants import Grants
 from egressgw.history import PolicyHistory
@@ -71,6 +73,8 @@ DUP_WINDOW = 2.0  # identical events within this window are counted, not stored 
 # TEST ONLY: "name=ip,name=ip" static resolution used by the e2e test-suite instead of /etc/hosts.
 # Never set this in production; the gateway logs a loud warning when it is active.
 STATIC_HOSTS = dict(kv.split("=", 1) for kv in os.environ.get("GW_TEST_STATIC_HOSTS", "").split(",") if "=" in kv)
+# TEST ONLY: while this file exists, every lookup fails like an outage (e2e tests of #218). Never set in production.
+TEST_DNS_DOWN = os.environ.get("GW_TEST_DNS_DOWN_FILE", "")
 # TEST ONLY: with a configured `never` list the built-in blocks are not seeded (the e2e upstreams live on
 # 127.0.0.1). Never set this in production; the gateway logs a loud warning when it is active.
 FLOOR_REPLACE = os.environ.get("GW_TEST_FLOOR_REPLACE") == "1"
@@ -239,6 +243,11 @@ class Gateway:
         self._dups: dict[tuple, list] = {}
         self.availability = Availability(self.config, DATA_DIR)
         self.activity = Activity()
+        # Does the gateway have a connection at all (#218)? Fed by its own lookup/connect results, see connectivity.py
+        self.connectivity = self._build_connectivity()
+        self.probe_hosts = self._probe_hosts()
+        self._probing = False
+        self._check_task: asyncio.Task | None = None
         self._unavailable = self.availability.mode()[0]  # last state seen by availability_tick
         self._grant_events: dict[str, asyncio.Event] = {}
         self.pending: dict[tuple[str, int], Pending] = {}
@@ -466,6 +475,7 @@ class Gateway:
             await asyncio.sleep(15)
             try:
                 self._housekeep()
+                await self.connectivity_check()
                 if time.monotonic() - last_ip_refresh > 600:  # re-resolve intercept hosts (CDN IPs rotate)
                     last_ip_refresh = time.monotonic()
                     await self._refresh_intercept_ips()
@@ -649,15 +659,123 @@ class Gateway:
     async def resolve(self, host: str, port: int) -> list[str]:
         if is_ip(host):
             return [host.strip("[]")]
-        if host.lower() in STATIC_HOSTS:
-            return [STATIC_HOSTS[host.lower()]]
-        loop = asyncio.get_running_loop()
-        infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        try:
+            infos = await self._lookup(host, port)
+        except OSError as e:
+            self._lookup_failed(host, e)
+            raise
         ips: list[str] = []
         for fam, *_rest, sockaddr in infos:
             if fam in (socket.AF_INET, socket.AF_INET6) and sockaddr[0] not in ips:
                 ips.append(sockaddr[0])
+        if ips:
+            self._network_ok()
         return ips
+
+    async def _lookup(self, host: str, port: int) -> list:
+        """The resolver (getaddrinfo). The TEST-ONLY static hosts and the TEST-ONLY outage switch live here so
+        that the connectivity probe uses the very same path as the connections it judges."""
+        if TEST_DNS_DOWN and Path(TEST_DNS_DOWN).exists():
+            raise socket.gaierror(socket.EAI_AGAIN, "Temporary failure in name resolution")
+        if (ip := STATIC_HOSTS.get(host.lower())) is not None:
+            return [(socket.AF_INET6 if ":" in ip else socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
+        return await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+
+    # ------------------------------------------------------------------ connectivity (#218)
+    def _build_connectivity(self) -> Connectivity:
+        c = self.config
+        return Connectivity(
+            DATA_DIR / "connectivity.json",
+            min_failures=int(c.get("connectivity_min_failures", conn_state.MIN_FAILURES)),
+            min_names=int(c.get("connectivity_min_names", conn_state.MIN_NAMES)),
+            window=float(c.get("connectivity_window", conn_state.WINDOW)),
+            min_age=float(c.get("connectivity_min_age", conn_state.MIN_AGE)),
+            probe_interval=float(c.get("connectivity_probe_interval", conn_state.PROBE_INTERVAL)),
+        )
+
+    def _probe_hosts(self) -> list[tuple[str, int]]:
+        """The fixed names the control probe uses: operator-configured (`connectivity_probe_hosts`, `name` or
+        `name:port`), never anything the agent chose."""
+        out = []
+        for entry in self.config.get("connectivity_probe_hosts") or conn_state.PROBE_HOSTS:
+            name, _, port = str(entry).partition(":")
+            if not valid_hostname(name) or (port and not (port.isdigit() and 0 < int(port) < 65536)):
+                raise ValueError(f"connectivity_probe_hosts: {entry!r} is not a host name or host:port")
+            out.append((name, int(port or 443)))
+        return out
+
+    def _lookup_failed(self, host: str, e: OSError) -> None:
+        """A lookup failed. Not a policy decision, so it counts toward an outage - unless the resolver answered
+        (the name does not exist)."""
+        now = time.time()
+        self.connectivity.failure(host, conn_state.classify(e), now)
+        self._connectivity_soon(now)
+
+    def _reason(self, e: OSError) -> str:
+        """The reason of a refused connection whose lookup failed; tagged while the outage is on, so that a
+        filter for denies can tell an outage from a policy."""
+        tag = conn_state.PREFIX if self.connectivity.down and conn_state.classify(e) else ""
+        return f"{tag}dns failure: {e}"
+
+    def _network_ok(self) -> None:
+        now = time.time()
+        if self.connectivity.success(now):
+            self._outage_ended(now)
+
+    def _connectivity_soon(self, now: float) -> None:
+        """Run the check at once when the pattern is there, instead of waiting for the next housekeeping."""
+        c = self.connectivity
+        if (self._check_task is None or self._check_task.done()) and not c.down and c.suspect(now) and c.probe_due(now):
+            self._check_task = asyncio.get_running_loop().create_task(self.connectivity_check(now))
+
+    async def _probe(self) -> bool:
+        """The control probe: resolve a fixed name and open a TCP connection to it, like a connection would."""
+        for name, port in self.probe_hosts:
+            try:
+                infos = await asyncio.wait_for(self._lookup(name, port), 10)
+                addr = infos[0][4][0]
+                _, writer = await asyncio.wait_for(asyncio.open_connection(addr, port), 5)
+            except (OSError, TimeoutError, IndexError):
+                continue
+            writer.close()
+            return True
+        return False
+
+    async def connectivity_check(self, now: float | None = None) -> None:
+        """Step 2 (connectivity.py): probe when the failures look like an outage - or, while one is on, to see
+        that it is over. At most one probe per `probe_interval`, whatever the agent asks for."""
+        now = time.time() if now is None else now
+        c = self.connectivity
+        if self._probing or not c.probe_due(now) or not (c.down or c.suspect(now)):
+            return
+        self._probing, c.last_probe, seen_ok = True, now, c.last_ok
+        try:
+            ok = await self._probe()
+        finally:
+            self._probing = False
+        if ok:
+            if c.success(now):
+                self._outage_ended(now)
+        elif not c.down and c.last_ok == seen_ok:  # nothing worked meanwhile: the network is down
+            c.begin(now)
+            self.record(
+                kind="admin",
+                action="connectivity",
+                reason="no connection from the gateway: lookups and connections fail "
+                f"({', '.join(sorted(c.kinds))}); a problem of the host's network, not a policy decision",
+            )
+            self.publish({"type": "connectivity", **c.status()})
+
+    def _outage_ended(self, now: float) -> None:
+        since, count = self.connectivity.end(now)
+        mins = (now - since) / 60
+        took = f"{mins / 60:.1f} h" if mins >= 120 else f"{max(1, round(mins))} min"
+        self.record(
+            kind="admin",
+            action="connectivity",
+            reason=f"connection from the gateway is back after {took} ({count} failed lookups or connections)",
+        )
+        self.publish({"type": "connectivity", **self.connectivity.status()})
 
     async def decide(
         self, host: str, port: int, ips: list[str], proto: str, client: str, learning: bool = False
@@ -840,7 +958,7 @@ class Gateway:
             try:
                 ips = await self.resolve(host, port)
             except OSError as e:
-                block(f"dns failure: {e}")
+                block(self._reason(e))
                 return True
         if problem := self.access.grant_problem(g, t, host, port, ips):
             block(problem, ips)
@@ -911,7 +1029,7 @@ class Gateway:
             try:
                 ips = await self.resolve(host, port)
             except OSError as e:
-                return block(f"dns failure: {e}")
+                return block(self._reason(e))
             if not ips:
                 return block("no address")
             learning = pre.reason == LEARNING
@@ -979,9 +1097,19 @@ class Gateway:
         self.tls_refused.discard(data.server.id)
 
     @fail_closed
+    def server_connected(self, data: server_hooks.ServerConnectionHookData) -> None:
+        self._network_ok()  # an upstream connection was established: the gateway has a connection
+
+    @fail_closed
     def server_connect_error(self, data: server_hooks.ServerConnectionHookData) -> None:
         # an allowed connection whose upstream connect fails never gets server_disconnected
         self.server_disconnected(data)
+        err = str(getattr(data.server, "error", None) or "")
+        addr = getattr(data.server, "address", None)
+        if err and addr and not err.startswith("egress policy"):  # a real connect failure, not a decision
+            now = time.time()
+            self.connectivity.failure(str(addr[0]), conn_state.classify_connect(err), now)
+            self._connectivity_soon(now)
 
     @fail_closed
     def tls_clienthello(self, data: tls.ClientHelloData) -> None:

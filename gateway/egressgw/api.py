@@ -792,6 +792,7 @@ def build_app(gw: Gateway) -> web.Application:
                 "github_repos": [f"{o}/{r}" for o, r in gw.github.patterns],
                 "ca_pem": ca.read_text() if ca.exists() else None,
                 "pending": len(gw.pending),
+                "connectivity": gw.connectivity.status(),  # #218: the gateway has no connection (read-only)
                 "version": version(),
                 "data_disk": _disk(gw.events.path.parent),
                 "events_db_bytes": _size(gw.events.path),

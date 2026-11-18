@@ -56,7 +56,10 @@ def build_app(gw: Gateway) -> web.Application:
             out.append(d)
         mode, until = gw.availability.mode()
         operator = {"state": mode, "until": until, "message": gw.availability.blocking()}
-        return web.json_response({"grants": out, "operator": operator})
+        # whether the gateway itself has a connection (#218): times and a flag only, nothing the agent chose
+        net = gw.connectivity.status()
+        network = {"down": net["down"], "since": net["since"]}
+        return web.json_response({"grants": out, "operator": operator, "network": network})
 
     @routes.post("/v1/grants/{name}/request")
     async def request_grant(request: web.Request):

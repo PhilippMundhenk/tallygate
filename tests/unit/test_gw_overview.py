@@ -41,7 +41,43 @@ def test_summary_counts_top_and_new_destinations(tmp_path):
     assert s["new"][1]["first"] == pytest.approx(recent + 1)
     assert summarize(log.path, now - 3600, top=1, new=1)["top"][0]["host"] == "new.example"
     empty = summarize(log.path, now + 10)
-    assert empty == {"since": now + 10, "counts": {"allow": 0, "deny": 0, "ask": 0}, "top": [], "new": []}
+    assert empty == {
+        "since": now + 10,
+        "counts": {"allow": 0, "deny": 0, "ask": 0},
+        "no_connection": 0,
+        "top": [],
+        "new": [],
+    }
+
+
+def test_refusals_during_an_outage_are_counted_apart(tmp_path):
+    """#218: an outage of the host's network is no policy decision, so it is not thousands of denies."""
+    log = EventLog(tmp_path / "events.db")
+    now = time.time()
+    for i in range(3):
+        log.add(
+            {
+                "ts": now - 60,
+                "kind": "conn",
+                "host": f"h{i}.example",
+                "port": 443,
+                "action": "deny",
+                "reason": "no connection: dns failure: [Errno -3] Temporary failure in name resolution",
+            }
+        )
+    log.add({"ts": now - 60, "kind": "conn", "host": "x.example", "port": 443, "action": "deny", "reason": "rule r1"})
+    log.add(
+        {
+            "ts": now - 60,
+            "kind": "conn",
+            "host": "x.example",
+            "port": 443,
+            "action": "deny",
+            "reason": "dns failure: no such host",
+        }
+    )  # before the outage was recognised: a normal deny
+    s = summarize(log.path, now - 3600)
+    assert s["counts"]["deny"] == 2 and s["no_connection"] == 3
 
 
 def test_summary_route_defaults_to_the_last_hour_and_is_clamped(gw):  # noqa: F811
