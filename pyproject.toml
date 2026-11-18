@@ -1,6 +1,6 @@
 [project]
 name = "tallygate"
-version = "0.3.0"
+version = "0.4.0"
 description = "Run Claude Code behind a policy-enforcing egress gateway with human-in-the-loop approvals"
 readme = "README.md"
 license = "MIT"
@@ -13,7 +13,7 @@ authors = [{ name = "Philipp Mundhenk" }]
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-extend-exclude = ["state"]
+extend-exclude = ["state", "tools/consistency_check.py"]  # the last one is a vendored copy of a shared script
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "BLE", "SIM", "RUF"]
@@ -36,12 +36,13 @@ known-first-party = ["egressgw", "app"]
 # Line coverage of every Python module, including the gateway and control processes the e2e tests start
 # (subprocesses are measured too). Gate: 95 % per module, see tools/coverage_gate.py and `make coverage`.
 source = ["gateway", "control", "agent", "tools"]
-omit = ["gateway/presets/*"]
+omit = ["gateway/presets/*", "tools/consistency_check.py"]
 parallel = true
 patch = ["subprocess"]
 sigterm = true
 
 [tool.coverage.report]
+omit = ["gateway/presets/*", "tools/consistency_check.py"]  # as under run: files that never ran are listed by the report
 skip_empty = true
 show_missing = true
 

@@ -51,6 +51,16 @@ jobs:
             htmlcov/
             coverage.json
 
+  consistency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: { contents: read, issues: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
+      - env: { GH_TOKEN: "${{ github.token }}" }
+        run: python3 tools/consistency_check.py ${{ startsWith(github.ref, 'refs/tags/v') && format('--version {0}', github.ref_name) || '' }}
+
   integration:
     # Builds all images, starts the real stack with ZERO configuration (no .env: secrets and the UI
     # password are created on first start) and runs the authoritative isolation test.
@@ -170,7 +180,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [images]
+    needs: [images, consistency]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

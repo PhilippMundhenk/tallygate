@@ -316,7 +316,7 @@ async function loadPolicy(keepEdits = false) {
   await renderQuick();
 }
 // PUT /policy replaces every rule. The browser's copy goes stale (other tab, Telegram "Always", approvals),
-// so only the raw editor and the hard deny use it, and both start from the policy as it is now.
+// so only the raw editor and the blocked ranges use it, and both start from the policy as it is now.
 async function putPolicy(p) { await gw("PUT", "/policy", p); toast("Policy saved"); await loadPolicy(); }
 // Mode and timeout only: the rules on the gateway stay untouched.
 async function patchPolicy(change) {

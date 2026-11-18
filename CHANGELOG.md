@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-18
+
 The result of a full project review: Docker Compose with published images as the main installation, a large
 set of security fixes from two review rounds, quick actions and templates, help everywhere, and a 95 %
 coverage gate. Read [Upgrading from 0.3.0](#upgrading-from-030) before you update.
@@ -607,7 +609,8 @@ Security release. Full report: [docs/security-review.md](docs/security-review.md
   isolation test (`tests/integration/bypass.sh`), CI workflow.
 - Documentation: architecture, ADRs, threat model, configuration, API, operations, user guide.
 
-[Unreleased]: https://github.com/PhilippMundhenk/tallygate/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/PhilippMundhenk/tallygate/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/PhilippMundhenk/tallygate/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/PhilippMundhenk/tallygate/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/PhilippMundhenk/tallygate/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/PhilippMundhenk/tallygate/releases/tag/v0.1.0
