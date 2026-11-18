@@ -403,6 +403,9 @@ earlier entry ends with *Replaced in this release*. The state you get:
   (#17, #18).
 
 ### Fixed
+- **Approval requests for the GitHub CLI's own traffic**: `gh` sends usage telemetry to `cafe.github.com` and
+  checks for updates, which showed up as approval requests nobody wanted. The agent image switches both off
+  (`GH_TELEMETRY=false`, `GH_NO_UPDATE_NOTIFIER=1`, `GH_NO_EXTENSION_UPDATE_NOTIFIER=1`).
 - **Remote Control session lost after a long outage** (#214): after more than about four hours without the
   gateway or the network, Claude Code discarded its record of the environment it serves. The *rc* console
   then repeated `This folder is already served …`, and later a new environment was registered: the session
