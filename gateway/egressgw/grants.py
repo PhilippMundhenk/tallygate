@@ -315,9 +315,12 @@ class GrantRequest:
         return d
 
 
+NO_INTERNAL_NETS = "GW_TEST_NO_INTERNAL_NETS"  # test/dev switch: start although GW_INTERNAL_NETS is empty
+
+
 def internal_nets(value: str) -> list:
     """GW_INTERNAL_NETS: the stack's own networks as comma-separated CIDRs (set in compose.yaml). A broken
-    entry stops the gateway (fail closed)."""
+    entry stops the gateway (fail closed), and so does an empty list, see Grants."""
     nets = []
     for c in (v.strip() for v in value.split(",")):
         if not c:
@@ -393,12 +396,19 @@ class Grants:
         # the rule list; they are kept here because they come from the environment, as the grants do.
         self.internal = internal_nets(os.environ.get("GW_INTERNAL_NETS", ""))
         if not self.internal:
-            # a warning, not an error: mitmproxy exits on an error logged at startup, and a gateway run
-            # outside the compose stack (development, tests) has no networks of a stack to lock
+            # Fatal (#232): raised like an invalid entry, so the gateway does not start (addon.py refuses every
+            # connection and mitmdump exits). A gateway run outside the compose stack (the test suite,
+            # development) has no networks of a stack to lock and says so with GW_TEST_NO_INTERNAL_NETS=1.
+            if os.environ.get(NO_INTERNAL_NETS) != "1":
+                raise ValueError(
+                    "GW_INTERNAL_NETS is empty: no network of the stack would be locked, and only the built-in "
+                    "blocks, which can be deleted, would keep the agent away from the control plane and the "
+                    "gateway API. Set it to the stack's networks as compose.yaml does: a compose.yaml that is "
+                    f"older than the images lacks it. (Tests and development only: {NO_INTERNAL_NETS}=1)"
+                )
             log.warning(
-                "GW_INTERNAL_NETS is empty: no network of the stack is locked. Only the built-in blocks keep the "
-                "agent away from the control plane and the gateway API, and those can be deleted. Set it to the "
-                "stack's networks (compose.yaml does)"
+                "%s is set - GW_INTERNAL_NETS is empty and no network of the stack is locked (test only)",
+                NO_INTERNAL_NETS,
             )
         self.own = own_sockets(os.environ)
         if config.get("grants_lan_allow"):
