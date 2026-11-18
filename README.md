@@ -11,7 +11,7 @@
 
 [![CI](https://github.com/PhilippMundhenk/tallygate/actions/workflows/ci.yml/badge.svg)](https://github.com/PhilippMundhenk/tallygate/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.3.0-informational)
+![Version](https://img.shields.io/badge/version-0.4.0-informational)
 
 tallygate puts an AI coding agent (Claude Code with [Remote Control](https://code.claude.com/docs/en/remote-control))
 into a container that has **no route to anything** except a gateway. The gateway decides every outbound

@@ -1,0 +1,195 @@
+{
+  "checks": [
+    {
+      "name": "changelog",
+      "type": "changelog",
+      "file": "CHANGELOG.md"
+    },
+    {
+      "name": "closed-issues",
+      "type": "closed_issues",
+      "docs": [
+        "README.md",
+        "docs/*.md",
+        "docs/**/*.md",
+        "SECURITY.md"
+      ],
+      "ignore": [
+        "docs/adr/*",
+        "docs/security-review.md",
+        "docs/screenshots.md",
+        "docs/threat-model.md",
+        "docs/architecture.md",
+        "docs/api.md"
+      ],
+      "severity": "warn",
+      "note": "issue numbers in the threat model, the architecture and the API reference are provenance, kept on purpose"
+    },
+    {
+      "name": "env-in-docs",
+      "type": "listed",
+      "source": [
+        "compose.yaml"
+      ],
+      "pattern": "^\\s+([A-Z][A-Z0-9_]{3,}): \\$\\{",
+      "ignore": [
+        "TTYD_CREDENTIAL",
+        "SELFTEST_BLOCKED_PROBES"
+      ],
+      "targets": [
+        {
+          "file": "docs/configuration.md"
+        }
+      ],
+      "severity": "warn"
+    },
+    {
+      "name": "routes-in-api-docs",
+      "type": "listed",
+      "source": [
+        "gateway/egressgw/api.py"
+      ],
+      "pattern": "@routes\\.(?:get|post|put|patch|delete)\\(\"([^\"]+)\"",
+      "targets": [
+        {
+          "file": "docs/api.md",
+          "format": "`{}"
+        }
+      ],
+      "severity": "warn",
+      "ignore": [
+        "/active-grants/{aid}",
+        "/destinations/{did}",
+        "/destinations/{did}/move",
+        "/grant-requests/{rid}/decide",
+        "/learning/{sid:[a-f0-9]+}",
+        "/pending/{pid}/decide",
+        "/policy/history/{vid:[0-9]+}",
+        "/policy/history/{vid:[0-9]+}/restore"
+      ],
+      "note": "routes with path parameters are documented under their own parameter names"
+    },
+    {
+      "name": "retired",
+      "type": "retired",
+      "scope": [
+        "README.md",
+        "docs/*.md",
+        "docs/**/*.md",
+        "control/app/static/*",
+        "gateway/config/*",
+        "config/*",
+        "*.yaml",
+        "agent/*"
+      ],
+      "allow_in": [
+        "CHANGELOG.md",
+        "docs/adr/*",
+        "docs/security-review.md",
+        "docs/threat-model.md",
+        "docs/operations.md",
+        "docs/configuration.md",
+        "docs/grants.md",
+        "docs/rules.md",
+        "docs/api.md",
+        "docs/related-work.md",
+        "docs/development.md",
+        "docs/architecture.md",
+        "docs/user-guide.md",
+        "config/gateway.yaml"
+      ],
+      "terms": [
+        {
+          "term": "hard deny",
+          "hint": "ADR-0019: blocked ranges are ordinary rules",
+          "case": false
+        },
+        {
+          "term": "hard_deny",
+          "hint": "ADR-0019"
+        },
+        {
+          "term": "floor_open",
+          "hint": "ADR-0019"
+        },
+        {
+          "term": "grants_lan_allow",
+          "hint": "ADR-0019"
+        },
+        {
+          "term": "never-reachable",
+          "hint": "ADR-0019: only the locked ranges",
+          "case": false
+        },
+        {
+          "term": "Quick start tab",
+          "hint": "renamed Quick settings"
+        },
+        {
+          "term": "Rules tab",
+          "hint": "now Destinations"
+        }
+      ]
+    },
+    {
+      "name": "retired-ui",
+      "type": "retired",
+      "scope": [
+        "control/app/static/*.js",
+        "control/app/static/*.html"
+      ],
+      "severity": "error",
+      "terms": [
+        {
+          "term": "hard deny",
+          "hint": "ADR-0019",
+          "case": false
+        },
+        {
+          "term": "never-reachable",
+          "hint": "ADR-0019",
+          "case": false
+        }
+      ]
+    },
+    {
+      "name": "screenshots-fresh",
+      "type": "fresh",
+      "severity": "warn",
+      "items": [
+        {
+          "image": "docs/images/overview.png",
+          "sources": [
+            "control/app/static/overview.js",
+            "control/app/static/index.html"
+          ]
+        },
+        {
+          "image": "docs/images/destinations.png",
+          "sources": [
+            "control/app/static/destinations.js"
+          ]
+        },
+        {
+          "image": "docs/images/settings.png",
+          "sources": [
+            "control/app/static/keys.js"
+          ]
+        },
+        {
+          "image": "docs/images/setup.png",
+          "sources": [
+            "control/app/static/wizard.js"
+          ]
+        },
+        {
+          "image": "docs/images/log.png",
+          "sources": [
+            "control/app/static/logsearch.js",
+            "control/app/static/history.js"
+          ]
+        }
+      ]
+    }
+  ]
+}
