@@ -177,7 +177,9 @@ def test_an_automatic_grant_in_the_away_list_has_a_label_and_no_allow_button():
     auto = js.index('if (m.kind === "auto_grant") {')
     block = js[auto : js.index("continue;", auto)]
     assert "activated automatically" in block and "esc(`grant ${m.host} (${m.level})`)" in block
-    assert "Allow" not in block and "createElement" not in block and "gw(" not in block and "request it again" not in block
+    assert (
+        "Allow" not in block and "createElement" not in block and "gw(" not in block and "request it again" not in block
+    )
     assert auto < js.index('if (m.kind === "conn") {') and auto < js.index("the agent can request it again")
     assert '<span class="status warn">refused</span>' in js[js.index("continue;", auto) :]
     assert "<h4>While you were away" in js
