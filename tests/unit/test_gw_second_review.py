@@ -320,7 +320,10 @@ def test_an_approval_for_an_address_inside_a_blocked_range_is_refused(make, tmp_
     results, dec, pending = answered(g, host, 443, [], *ALLOWING)
     for status, body in results:
         assert status == 400, body
-        assert body["error"].startswith(f"{host} is refused by the list (rule block-") and "an approval cannot open it" in body["error"]
+        assert (
+            body["error"].startswith(f"{host} is refused by the list (rule block-")
+            and "an approval cannot open it" in body["error"]
+        )
         assert "an approval cannot open it" in body["error"]
     assert dec is None and [p["host"] for p in pending] == [host]  # still waiting: it can be denied
     assert state(g, tmp_path) == before and g.policy.evaluate(host, 443, []).action == "deny"
