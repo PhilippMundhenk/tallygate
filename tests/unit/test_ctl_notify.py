@@ -114,7 +114,7 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def pending(pid="p1", **kw):
+def pending(pid="b1", **kw):
     return {"id": pid, "host": "api.example.com", "port": 443, "proto": "https", "expires": time.time() + 60, **kw}
 
 
@@ -165,7 +165,7 @@ def test_short_numbers_wrap_and_never_reuse_an_open_one(make):
     n.short.update({5: "stale", 999: "open-a", 1: "open-b"})
     n._n = 998
     run(n._on_ask(pending()))
-    assert n.msgs["p1"]["short"] == 2 and n.short[2] == "p1"  # 999 and 1 are taken
+    assert n.msgs["b1"]["short"] == 2 and n.short[2] == "b1"  # 999 and 1 are taken
     assert "stale" not in n.msgs and 5 not in n.short
     n.gmsgs["gstale"] = {"short": 7, "expires": old}
     n.short[7] = "g:gstale"
@@ -193,10 +193,10 @@ def test_telegram_prompt_carries_the_public_link_and_domain_button(make):
         "Deny",
         "More…",
     ]  # the other scopes are behind "More" (#121)
-    assert n.msgs["p1"]["tg"] == 41 and n.msgs["p1"]["domain"] == "example.com"
+    assert n.msgs["b1"]["tg"] == 41 and n.msgs["b1"]["domain"] == "example.com"
     full = [
         b["text"]
-        for row in n._tg_keyboard("p1", pending(domain="example.com"), full=True)["inline_keyboard"]
+        for row in n._tg_keyboard("b1", pending(domain="example.com"), full=True)["inline_keyboard"]
         for b in row
     ]
     assert full == [
@@ -215,7 +215,7 @@ def test_telegram_prompt_without_a_domain_has_no_domain_button(make):
     ((_, _, params),) = n.chat.sent("tg", "sendMessage")
     labels = [b["text"] for row in params["reply_markup"]["inline_keyboard"] for b in row]
     assert labels == ["Allow once", "Allow host permanently", "Deny", "More…"]
-    full = [b["text"] for row in n._tg_keyboard("p1", pending(), full=True)["inline_keyboard"] for b in row]
+    full = [b["text"] for row in n._tg_keyboard("b1", pending(), full=True)["inline_keyboard"] for b in row]
     assert not any(label.startswith("Allow *.") for label in full) and len(full) == 5
 
 
@@ -230,11 +230,11 @@ def test_reaction_seeding_stops_at_the_first_failure_but_the_prompt_stands(make,
 
     if kind == "ask":
         run(go(n._on_ask(pending())))
-        entry = n.msgs["p1"]
+        entry = n.msgs["b1"]
     else:
-        req = {"id": "r1", "name": "svc", "level": "read", "ttl_label": "1h", "expires": time.time() + 60}
+        req = {"id": "c1", "name": "svc", "level": "read", "ttl_label": "1h", "expires": time.time() + 60}
         run(go(n._on_grant_request(req, {"description": "d", "targets": ["http://svc"]})))
-        entry = n.gmsgs["r1"]
+        entry = n.gmsgs["c1"]
     assert len(n.chat.sent("mx", "m.reaction")) == 1  # tried once, then gave up
     assert entry["mx"].startswith("$e")  # the prompt itself was sent and is answerable by text
 
@@ -244,10 +244,10 @@ def test_slow_reaction_seeding_does_not_delay_the_next_prompt(make):
 
     async def go():
         n.chat.hold = asyncio.Event()  # the homeserver hangs on reactions
-        await n.handle({"type": "ask", "pending": pending("p1")})
-        req = {"id": "r1", "name": "svc", "level": "read", "ttl_label": "1h", "expires": time.time() + 60}
+        await n.handle({"type": "ask", "pending": pending("b1")})
+        req = {"id": "c1", "name": "svc", "level": "read", "ttl_label": "1h", "expires": time.time() + 60}
         await asyncio.wait_for(n.handle({"type": "grant_request", "request": req, "grant": {}}), 1)
-        await asyncio.wait_for(n.handle({"type": "ask", "pending": pending("p2")}), 1)
+        await asyncio.wait_for(n.handle({"type": "ask", "pending": pending("b2")}), 1)
         assert len(n.chat.sent("tg", "sendMessage")) == 3 and len(n.tasks) == 3  # prompts out, seeding waits
         n.chat.hold.set()
         await asyncio.gather(*n.tasks)
@@ -263,9 +263,9 @@ def test_expired_asks_and_grant_requests_are_not_sent(make, caplog):
     old = time.time() - 1
     with caplog.at_level(logging.INFO, logger="notify"):
         run(n.handle({"type": "ask", "pending": pending(expires=old)}))
-        req = {"id": "r1", "name": "svc", "level": "read", "ttl_label": "1h", "expires": old}
+        req = {"id": "c1", "name": "svc", "level": "read", "ttl_label": "1h", "expires": old}
         run(n.handle({"type": "grant_request", "request": req, "grant": {}}))
-        run(n.handle({"type": "resolved", "id": "p1", "action": "deny"}))  # no prompt, nothing to update
+        run(n.handle({"type": "resolved", "id": "b1", "action": "deny"}))  # no prompt, nothing to update
     assert n.chat.calls == [] and not n.msgs and not n.gmsgs and not n.short
     assert caplog.text.count("expired before it could be sent") == 2
 
@@ -287,26 +287,74 @@ def test_close_cancels_and_awaits_background_work(make):
 # ---------------------------------------------------------------- applying decisions
 def test_apply_grant_outcomes(make):
     n = make()
-    assert run(n._apply_grant("r1", "revoke", "x")) == "nothing to revoke"  # not active yet
-    n.gmsgs["r1"] = {"aid": "a1", "short": 1}
-    assert run(n._apply_grant("r1", "revoke", "x")) == "ok" and n.rg.calls == [("a1", "x")]
+    assert run(n._apply_grant("c1", "revoke", "x")) == "nothing to revoke"  # not active yet
+    n.gmsgs["c1"] = {"aid": "a1", "short": 1}
+    assert run(n._apply_grant("c1", "revoke", "x")) == "ok" and n.rg.calls == [("a1", "x")]
     n.dg.reply = (409, {"error": "already decided"})
-    assert run(n._apply_grant("r1", "approve", "x")) == "already decided"
+    assert run(n._apply_grant("c1", "approve", "x")) == "already decided"
     n.dg.reply = (500, "<html>")
-    assert run(n._apply_grant("r1", "approve", "x")) == "error 500"
+    assert run(n._apply_grant("c1", "approve", "x")) == "error 500"
     n.dg.reply = (404, {})
-    assert run(n._apply_grant("r1", "approve", "x")) == "error 404"
+    assert run(n._apply_grant("c1", "approve", "x")) == "error 404"
     n.d.reply = (404, {"error": "no such request"})
-    assert run(n._apply("p1", "once", "x")) == "no such request"
+    assert run(n._apply("b1", "once", "x")) == "no such request"
     n.d.reply = (502, None)
-    assert run(n._apply("p1", "once", "x")) == "error 502"
+    assert run(n._apply("b1", "once", "x")) == "error 502"
+
+
+@pytest.mark.parametrize(
+    "bad", ["../../emergency-stop", "a1/../x", "a1?x=1", "a1#x", "A1", "", "a" * 33, "a1 ", "a1\n", "..", None, 7]
+)
+def test_only_gateway_ids_and_known_decisions_reach_the_gateway_callbacks(make, bad, caplog):
+    """#239: whoever calls them (Telegram button, Matrix reaction or reply, a future channel), the three
+    functions that hand a decision to the gateway pass on nothing but a gateway id and a known decision."""
+    n = make()
+    with caplog.at_level(logging.WARNING, logger="notify"):
+        assert run(n._apply(bad, "once", "matrix:@me:hs")) == "invalid request"
+        assert run(n._apply_grant(bad, "approve", "matrix:@me:hs")) == "invalid request"
+        assert run(n._revoke(bad, "matrix:@me:hs")) == (400, {"error": "nothing to revoke"})
+        n.gmsgs["c1"] = {"aid": bad, "short": 1}  # an active-grant id of the wrong shape, were it ever stored
+        assert run(n._apply_grant("c1", "revoke", "x")) == "nothing to revoke"
+    assert n.d.calls == n.dg.calls == n.rg.calls == []
+    assert caplog.text.count("dropped") == (4 if bad else 3)  # an empty aid is "not active", not a bad id
+    assert "emergency" not in caplog.text
+
+
+@pytest.mark.parametrize("choice", ["", "allow", "ONCE", "once/../x", "revoke", "write", None])
+def test_an_unknown_scope_or_grant_decision_is_never_passed_on(make, choice):
+    n = make()
+    assert run(n._apply("b1", choice, "x")) == "invalid request"
+    if choice != "revoke":  # "revoke" is the chat word for ending an active grant, handled before
+        assert run(n._apply_grant("c1", choice, "x")) == "invalid request"
+    assert n.d.calls == n.dg.calls == n.rg.calls == []
+    for scope in notifyconfig.ASK_ACTIONS:  # every scope the UI offers still works
+        assert run(n._apply("b1", scope, "x")) == "ok"
+    for decision in ("approve", "read", "deny"):
+        assert run(n._apply_grant("c1", decision, "x")) == "ok"
+    assert len(n.d.calls) == len(notifyconfig.ASK_ACTIONS) and len(n.dg.calls) == 3
+
+
+def test_matrix_decisions_for_a_prompt_with_a_malformed_id_are_refused_with_a_notice(make):
+    """The ids of open prompts come from the gateway's event stream. Should one ever have another shape,
+    a Matrix reaction or reply for it is answered with a notice and nothing reaches the gateway."""
+    n = mx_ready(make)
+    n.msgs["../policy"] = {"mx": "$evil", "short": 8}
+    n.short[8] = "../policy"
+    n.gmsgs["../x"] = {"mx": "$gevil", "short": 9, "aid": "../y"}
+    n.short[9] = "g:../x"
+    run(n._mx_event(reaction("$evil", "👍")))
+    run(n._mx_event(text("allow 8")))
+    run(n._mx_event(reaction("$gevil", "👍")))
+    run(n._mx_event(text("approve 9")))
+    assert n.d.calls == n.dg.calls == n.rg.calls == []
+    assert n.chat.notices() == ["Could not apply: invalid request"] * 4
 
 
 def test_without_grant_callbacks_grants_are_refused(make):
     n = make(grants=False)
-    n.gmsgs["r1"] = {"aid": "a1", "short": 1}
-    assert run(n._apply_grant("r1", "approve", "x")) == "grants not supported"
-    assert run(n._apply_grant("r1", "revoke", "x")) == "nothing to revoke"
+    n.gmsgs["c1"] = {"aid": "a1", "short": 1}
+    assert run(n._apply_grant("c1", "approve", "x")) == "grants not supported"
+    assert run(n._apply_grant("c1", "revoke", "x")) == "nothing to revoke"
 
 
 # ---------------------------------------------------------------- Telegram callbacks
@@ -325,13 +373,30 @@ def test_telegram_callbacks(make, no_sleep, caplog):
     n.chat.script = [
         [
             {"update_id": 10},  # not a button press
-            cq(11, "d:p1:always", uid=999),  # not an allowed user
-            cq(12, "d:p1:always", chat=666),  # allowed user, but another chat
-            cq(13, "d:p1:once"),
-            cq(14, "g:r1:read", username=None),
+            cq(11, "d:b1:always", uid=999),  # not an allowed user
+            cq(12, "d:b1:always", chat=666),  # allowed user, but another chat
+            cq(13, "d:b1:once"),
+            cq(14, "g:c1:read", username=None),
             cq(15, "r:a1", message_id=5, text="Grant request ..."),
             cq(16, "x:evil"),  # unknown kind
-            cq(17, "d:p1"),  # malformed
+            cq(17, "d:b1"),  # malformed
+            # not buttons of this bot (#239): the id is not a gateway id, or the choice is not a known one
+            cq(18, "d:../../emergency-stop?x=:once"),
+            cq(19, "d:b1:../../emergency-stop"),
+            cq(20, "d:B1:once"),
+            cq(21, "d:" + "a" * 33 + ":once"),
+            cq(22, "d::once"),
+            cq(23, "d:b1:allow"),
+            cq(24, "g:../policy/history/3/restore:approve"),
+            cq(25, "g:c1:revoke"),
+            cq(26, "g:c1:write"),
+            cq(27, "r:../policy/history/3/restore"),
+            cq(28, "r:a1?by=someone"),
+            cq(29, "r:a1#x"),
+            cq(30, "m:../x"),
+            cq(31, "r:a1:extra"),
+            {"update_id": 32, "callback_query": {"id": "c32", "from": {"id": 4242}, "message": {"chat": {"id": 777}}}},
+            cq(33, 7),  # no string at all
         ],
         RuntimeError("POST https://api.telegram.org/botSECRET/getUpdates: timeout"),
         [],
@@ -352,12 +417,15 @@ def test_telegram_callbacks(make, no_sleep, caplog):
         ("c14", "ok"),
         ("c15", "revoked"),
     ]
-    assert n.d.calls == [("p1", "once", "telegram:alice")]  # only the authorised press was applied
-    assert n.dg.calls == [("r1", "read", "telegram:4242")]  # no username: the numeric id
+    assert n.d.calls == [("b1", "once", "telegram:alice")]  # only the authorised press was applied
+    assert n.dg.calls == [("c1", "read", "telegram:4242")]  # no username: the numeric id
     assert n.rg.calls == [("a1", "telegram:alice")]
     polls = [c[2] for c in n.chat.sent("tg", "getUpdates")]
-    assert "offset" not in polls[0] and polls[1]["offset"] == 18 and polls[2]["offset"] == 18
+    assert "offset" not in polls[0] and polls[1]["offset"] == 34 and polls[2]["offset"] == 34
     assert "SECRET" not in caplog.text and "bot<token>/getUpdates" in caplog.text
+    # dropped without an answer and without a call, each with one log line that quotes nothing of the data
+    assert caplog.text.count("telegram: callback data from 4242 dropped: not a button of this bot") == 15
+    assert "emergency-stop" not in caplog.text and "restore" not in caplog.text
     assert no_sleep == [5]
 
 
@@ -365,7 +433,7 @@ def test_telegram_more_shows_every_scope_on_the_same_message(make, no_sleep):
     n = make(TG)
     run(n._on_ask(pending(domain="example.com")))
     n.chat.script = [
-        [cq(1, "m:p1", message_id=41), cq(2, "m:gone", message_id=7), cq(3, "d:p1:hour", message_id=41)],
+        [cq(1, "m:b1", message_id=41), cq(2, "m:dead", message_id=7), cq(3, "d:b1:hour", message_id=41)],
         asyncio.CancelledError(),
     ]
 
@@ -387,7 +455,7 @@ def test_telegram_more_shows_every_scope_on_the_same_message(make, no_sleep):
     ]
     answers = [c[2]["text"] for c in n.chat.sent("tg", "answerCallbackQuery")]
     assert answers == ["More choices", "already decided", "ok"]
-    assert n.d.calls == [("p1", "hour", "telegram:alice")]
+    assert n.d.calls == [("b1", "hour", "telegram:alice")]
 
 
 def test_matrix_prompt_seeds_the_three_first_choices_and_lists_the_rest(make):
@@ -464,9 +532,9 @@ def test_matrix_sync_skips_history_survives_errors_and_dispatches(make, no_sleep
 def mx_ready(make):
     n = make(MX)
     n.mx_self = "@bot:hs"
-    n.msgs["p1"] = {"mx": "$ask", "short": 3, "text": "t"}
-    n.gmsgs["r1"] = {"mx": "$grant", "short": 4, "text": "t", "aid": "a1"}
-    n.short.update({3: "p1", 4: "g:r1"})
+    n.msgs["b1"] = {"mx": "$ask", "short": 3, "text": "t"}
+    n.gmsgs["c1"] = {"mx": "$grant", "short": 4, "text": "t", "aid": "a1"}
+    n.short.update({3: "b1", 4: "g:c1"})
     return n
 
 
@@ -501,9 +569,9 @@ def test_matrix_connection_decisions(make):
     run(n._mx_event(reaction("$other", "👍")))  # not one of our prompts
     run(n._mx_event(reaction("$ask", "🎉")))  # not a decision
     assert n.d.calls == [
-        ("p1", "once", "matrix:@me:hs"),
-        ("p1", "deny_always", "matrix:@me:hs"),
-        ("p1", "hour", "matrix:@me:hs"),
+        ("b1", "once", "matrix:@me:hs"),
+        ("b1", "deny_always", "matrix:@me:hs"),
+        ("b1", "hour", "matrix:@me:hs"),
     ]
     assert n.chat.calls == []
     n.d.reply = (404, {"error": "already decided"})
@@ -519,9 +587,9 @@ def test_matrix_grant_decisions(make):
     run(n._mx_event(text("dance 4")))  # not a grant word: ignored
     run(n._mx_event(reaction("$grant", "🎉")))
     assert n.dg.calls == [
-        ("r1", "read", "matrix:@me:hs"),
-        ("r1", "approve", "matrix:@me:hs"),
-        ("r1", "approve", "matrix:@me:hs"),
+        ("c1", "read", "matrix:@me:hs"),
+        ("c1", "approve", "matrix:@me:hs"),
+        ("c1", "approve", "matrix:@me:hs"),
     ]
     assert n.d.calls == [] and n.chat.calls == []
     n.dg.reply = (409, {"error": "already decided"})
@@ -533,7 +601,7 @@ def test_matrix_revoke_ends_the_grant_and_frees_the_number(make):
     n = mx_ready(make)
     run(n._mx_event(text("revoke 4")))
     assert n.rg.calls == [("a1", "matrix:@me:hs")]
-    assert "r1" not in n.gmsgs and 4 not in n.short
+    assert "c1" not in n.gmsgs and 4 not in n.short
     assert n.chat.notices() == ["Grant revoked by @me:hs"]
     run(n._mx_event(text("revoke 4")))  # number is free now: nothing happens
     assert len(n.rg.calls) == 1
@@ -562,8 +630,8 @@ def echoes(n, sender):
 
 async def prompts(n):
     """One connection prompt and one write-level grant request, with their pre-seeded reactions."""
-    await n._on_ask(pending("p1"))
-    grant_request = {"id": "r1", "name": "nas", "level": "write", "ttl_label": "1 h", "reason": "x"}
+    await n._on_ask(pending("b1"))
+    grant_request = {"id": "c1", "name": "nas", "level": "write", "ttl_label": "1 h", "reason": "x"}
     await n._on_grant_request(
         {**grant_request, "expires": time.time() + 60}, {"targets": [], "levels": ["read", "write"]}
     )
@@ -603,7 +671,7 @@ def test_matrix_decides_nothing_until_whoami_succeeded_and_replays_nothing(make,
     assert "- Matrix approvals paused until the bot's own account is verified (next try in 5 s)" in caplog.text
     assert "matrix: bot account verified (@bot:hs), approvals resume" in caplog.text
     assert n.mx_self == "@bot:hs" and matrix_status(n)["reason"] == "Configured in the environment."
-    assert n.d.calls == [("p1", "once", "matrix:@me:hs")] and n.dg.calls == []  # only the tap after the pause
+    assert n.d.calls == [("b1", "once", "matrix:@me:hs")] and n.dg.calls == []  # only the tap after the pause
 
 
 def test_matrix_whoami_failing_forever_backs_off_and_never_decides(make, monkeypatch, caplog):
@@ -719,7 +787,7 @@ def test_matrix_own_events_are_never_decisions_whatever_whoami_said(make, caplog
 
     with caplog.at_level(logging.ERROR, logger="notify"):
         run(body())
-    assert n.d.calls == [("p1", "once", "matrix:@alex:hs")] and n.dg.calls == []
+    assert n.d.calls == [("b1", "once", "matrix:@alex:hs")] and n.dg.calls == []
     assert n.mx_blocked and n.mx_senders == {"@me:hs"}
     assert caplog.text.count("must not be in MATRIX_ALLOWED_USERS") == 1
     assert matrix_status(n)["reason"] == notify.MX_SELF_ALLOWED.format(user="@me:hs")
@@ -729,7 +797,7 @@ def test_matrix_own_events_by_a_bot_that_is_no_allowed_user_change_nothing(make)
     n = mx_ready(make)
 
     async def body():
-        await n._on_ask(pending("p2"))
+        await n._on_ask(pending("b2"))
         await asyncio.gather(*n.tasks)
         for ev in echoes(n, "@bot:hs"):
             await n._mx_event(ev)
@@ -737,7 +805,7 @@ def test_matrix_own_events_by_a_bot_that_is_no_allowed_user_change_nothing(make)
 
     run(body())
     assert not n.mx_blocked and n.mx_senders == {"@bot:hs"} and "matrix" not in n.paused
-    assert n.d.calls == [("p2", "deny", "matrix:@me:hs")]
+    assert n.d.calls == [("b2", "deny", "matrix:@me:hs")]
 
 
 def test_matrix_memory_of_own_events_is_bounded(make, monkeypatch):
@@ -773,13 +841,13 @@ def test_matrix_loop_restart_forgets_the_old_account(make, caplog):
     n.chat.script = [{"next_batch": "s1"}, {"next_batch": "s2", **room(text("allow 1"))}, asyncio.CancelledError()]
 
     async def body():
-        await n._on_ask(pending("p1"))
+        await n._on_ask(pending("b1"))
         with pytest.raises(asyncio.CancelledError):
             await n._mx_sync()
 
     run(body())
     assert not n.mx_blocked and n.mx_senders == set() and "matrix" not in n.paused
-    assert n.d.calls == [("p1", "once", "matrix:@me:hs")]
+    assert n.d.calls == [("b1", "once", "matrix:@me:hs")]
 
 
 # ---------------------------------------------------------------- digest (#73)
@@ -1014,13 +1082,13 @@ def test_reconfigure_starts_and_stops_a_channel_and_keeps_open_prompts(ui):
         assert await n.reconfigure() == ["telegram"]
         await asyncio.sleep(0)
         assert n.running["telegram"] == 1
-        await n.handle({"type": "ask", "pending": pending("p1")})
-        assert n.msgs["p1"]["tg"] == 41 and n.chat.sent("tg", "sendMessage")[0][2]["chat_id"] == "555"
+        await n.handle({"type": "ask", "pending": pending("b1")})
+        assert n.msgs["b1"]["tg"] == 41 and n.chat.sent("tg", "sendMessage")[0][2]["chat_id"] == "555"
 
         n.config.update("telegram", {"chat_id": "556"})  # the loop restarts, the open prompt stays
         assert await n.reconfigure() == ["telegram"]
-        assert n.msgs["p1"]["short"] == 1 and n.short == {1: "p1"}
-        await n.handle({"type": "resolved", "id": "p1", "action": "allow", "scope": "once"})
+        assert n.msgs["b1"]["short"] == 1 and n.short == {1: "b1"}
+        await n.handle({"type": "resolved", "id": "b1", "action": "allow", "scope": "once"})
         assert n.chat.sent("tg", "editMessageText")[0][2]["message_id"] == 41
 
         n.config.remove("telegram")  # no environment to fall back to: the channel and its loop stop
@@ -1176,7 +1244,7 @@ def test_web_push_offers_the_configured_buttons_in_order_each_with_its_own_token
     assert list(m["tokens"]) == ["domain", "deny_always", "always", "hour"]  # no token without a button
     for scope, token in m["tokens"].items():
         c = claims(token)
-        assert (c["k"], c["i"], c["d"], c["s"]) == ("ask", "p1", scope, "dev1")
+        assert (c["k"], c["i"], c["d"], c["s"]) == ("ask", "b1", scope, "dev1")
     # the tokens are the real ones: each is accepted for its own decision, once, while its button is on
     assert n.push.redeem(m["tokens"]["always"], ask=n.config.actions())["d"] == "always"
     n.config.set_actions(["deny"])
@@ -1234,7 +1302,7 @@ def test_the_agents_claim_stays_marked_whatever_the_buttons_are(pushed):
 
 def test_grant_requests_keep_their_own_buttons(pushed):
     n, sent = pushed(["always", "domain", "deny_always"])
-    r = {"id": "r1", "name": "nas", "level": "write", "ttl_label": "1 h", "expires": time.time() + 60, "reason": "x"}
+    r = {"id": "c1", "name": "nas", "level": "write", "ttl_label": "1 h", "expires": time.time() + 60, "reason": "x"}
     run(n._on_grant_request(r, {"levels": ["read", "write"], "targets": []}))
     assert [a["action"] for a in sent[0]["actions"]] == ["read", "deny"]  # write still needs the UI or a chat bot
     assert "Agent's reason (unverified): x" in sent[0]["body"]
@@ -1257,8 +1325,8 @@ def test_telegram_and_matrix_show_the_saved_buttons_first(ui):
         "Allow for 1 h",
         "More…",
     ]
-    assert [b["callback_data"] for b in buttons] == ["d:p1:deny_always", "d:p1:domain", "d:p1:hour", "m:p1"]
-    full = [b["text"] for row in n._tg_keyboard("p1", n.msgs["p1"], full=True)["inline_keyboard"] for b in row]
+    assert [b["callback_data"] for b in buttons] == ["d:b1:deny_always", "d:b1:domain", "d:b1:hour", "m:b1"]
+    full = [b["text"] for row in n._tg_keyboard("b1", n.msgs["b1"], full=True)["inline_keyboard"] for b in row]
     assert len(full) == 6 and "More…" not in full  # "More" still shows every scope
     msg = n.chat.sent("mx", "m.room.message")[0][3]
     assert "React: ⛔ Deny permanently  🌐 Allow *.example.com permanently  ⏰ Allow for 1 h\n" in msg["body"]
@@ -1274,7 +1342,7 @@ def test_telegram_keeps_every_scope_for_an_ip_literal(ui):
     ((_, _, params),) = n.chat.sent("tg", "sendMessage")
     labels = [b["text"] for row in params["reply_markup"]["inline_keyboard"] for b in row]
     assert labels == ["Allow host permanently", "Deny", "More…"]
-    full = [b["text"] for row in n._tg_keyboard("p1", n.msgs["p1"], full=True)["inline_keyboard"] for b in row]
+    full = [b["text"] for row in n._tg_keyboard("b1", n.msgs["b1"], full=True)["inline_keyboard"] for b in row]
     assert full == ["Allow once", "Allow for 1 h", "Allow host permanently", "Deny", "Deny permanently"]
 
 

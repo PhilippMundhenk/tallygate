@@ -466,6 +466,8 @@ Each request arrives with **Allow once**, **Allow host permanently**, **Deny** a
 [buttons you chose](#notification-buttons)); *More…* shows every decision on the same message: also
 *Allow for 1 h*, *Allow \*.domain permanently* (when the name has a registrable domain) and *Deny permanently*. After a
 decision the message is edited to show the outcome and who decided. Taps from users not in the allowlist are answered with "Not authorised".
+Button data that is not one of the bot's own buttons (a modified client can send any text) is ignored: no answer,
+no change, one line in the control plane's log (`callback data … dropped: not a button of this bot`).
 
 ## Matrix approvals
 
