@@ -75,7 +75,8 @@ def test_pip_only_installs_with_required_hashes():
     dependabot = yaml.safe_load(read(".github/dependabot.yml"))["updates"]
     python = [u for u in dependabot if u["package-ecosystem"] in ("pip", "uv")]
     assert [u["package-ecosystem"] for u in python] == ["uv"]  # the one that recompiles `uv pip compile` files
-    assert sorted(python[0]["directories"]) == ["/", "/control", "/gateway"]
+    # the root only: from there one PR covers a component's lock file and the dev lock together
+    assert python[0].get("directory") == "/" and "directories" not in python[0]
 
 
 def test_the_lint_job_takes_ruff_and_shellcheck_with_their_hashes_from_the_lock():

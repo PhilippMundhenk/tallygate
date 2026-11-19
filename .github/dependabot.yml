@@ -3,8 +3,12 @@ version: 2
 updates:
   # requirements*.txt are lock files with hashes, compiled by `uv pip compile` from requirements*.in
   # (make lock). The uv ecosystem bumps the pin in the .in file and recompiles the .txt with new hashes.
+  # Only the root: requirements-dev.in includes gateway/ and control/requirements.in, so one PR from "/"
+  # updates the .in file, that component's lock file and requirements-dev.txt together. A second entry per
+  # component directory would open the same bump again without the dev lock, and
+  # tests/unit/test_supply_chain.py (all three lock files agree) fails on that one.
   - package-ecosystem: uv
-    directories: ["/gateway", "/control", "/"]
+    directory: "/"
     schedule: { interval: weekly }
     labels: [dependencies]
     groups:
