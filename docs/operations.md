@@ -21,6 +21,7 @@
   - [Restoring the built-in blocks](#restoring-the-built-in-blocks)
 - [Resource limits](#resource-limits)
 - [Backup and restore](#backup-and-restore)
+- [Resetting the agent after a compromise](#resetting-the-agent-after-a-compromise)
 - [Monitoring](#monitoring)
 - [Troubleshooting](#troubleshooting)
 - [Migrating from another Claude Code container](#migrating-from-another-claude-code-container)
@@ -255,7 +256,8 @@ Because maintainer scripts are not run, packages that rely on them, on system se
 `/etc`, or on setuid/file capabilities (daemons, `sudo`, `iputils-ping`) do not work; most CLI tools and
 libraries do. Installed packages live on the home volume and survive restarts and image upgrades, like
 `pip install --user`. For tools the agent needs regularly, add them to the image with `AGENT_EXTRA_PACKAGES`
-or a custom image as above.
+or a custom image as above. The other side of "survives": whatever is planted in that prefix runs again on
+every start ([Resetting the agent after a compromise](#resetting-the-agent-after-a-compromise)).
 
 ### Docker log rotation
 
@@ -558,7 +560,8 @@ key `seeded`), so put the backups back before you start it. Changes made after t
 
 ```bash
 docker compose stop egress-gw
-docker run --rm -v tallygate_gateway-data:/v debian sh -c \
+IMG=docker.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+docker run --rm --network none -v tallygate_gateway-data:/v "$IMG" sh -c \
   'cp -p /v/policy.yaml.pre-0019 /v/policy.yaml; [ ! -f /v/grants.yaml.pre-0019 ] || cp -p /v/grants.yaml.pre-0019 /v/grants.yaml'
 # put the compose.yaml of the older release back (0.4.0 and older: TALLYGATE_VERSION in .env), then:
 docker compose up -d
@@ -608,14 +611,104 @@ Back up the volumes (or the directories in `GATEWAY_DATA`, `CONTROL_DATA`, `AGEN
 | `control-data` | session secret, UI password hash | medium |
 | `gw-token`, `ttyd`, `ca` | recreated on start when missing | – |
 
-Copy a volume with a throwaway container, stopping the stack first for a consistent copy:
+Copy the volumes with a throwaway container, stopping the stack first for a consistent copy. The archives
+contain the GitHub token, the CA private key and the Claude login: `umask 077` makes them readable by you
+only (mode 0600; without it they would be world-readable), and the archive is written by your shell, not by
+root inside the container. The image is pinned by digest (the base of the agent image) and gets no network:
 
 ```bash
-docker run --rm -v tallygate_gateway-data:/v:ro -v "$PWD":/b debian tar czf /b/gateway-data.tgz -C /v .
+IMG=docker.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+docker compose stop
+umask 077
+mkdir -p tallygate-backup
+for v in gateway-data control-data agent-home workspace; do
+  docker run --rm --network none -v "tallygate_$v":/v:ro "$IMG" \
+    tar czf - --numeric-owner -C /v . > "tallygate-backup/$v.tgz"
+done
+docker compose start
 ```
 
-Restore the same way into the volume (`tar xzf` as root keeps the owners). If you restore only `agent-home`
-to a new gateway, the CA changes. That's harmless: the agent re-reads the CA on start.
+Keep the archives encrypted wherever they leave this machine, for example by putting
+`| gpg --symmetric -o "tallygate-backup/$v.tgz.gpg"` in place of the `> …` redirection. With host
+directories ([Host directories](#host-directories)) archive those directories instead, also under `umask 077`.
+
+Restore into an empty volume with the stack down (`tar` as root keeps the owners; the volume's old content is
+removed first so nothing of it is left next to the restored files):
+
+```bash
+docker compose down                      # stops and removes the containers, keeps the volumes
+for v in gateway-data control-data agent-home workspace; do
+  docker run --rm -i --network none -v "tallygate_$v":/v "$IMG" \
+    sh -c 'find /v -mindepth 1 -delete && tar xzf - --numeric-owner -C /v' < "tallygate-backup/$v.tgz"
+done
+docker compose up -d
+```
+
+If you restore only `agent-home` to a new gateway, the CA changes. That's harmless: the agent re-reads the
+CA on start. Do not restore `agent-home` or `workspace` from a backup taken after the agent may have been
+compromised: see the next section.
+
+## Resetting the agent after a compromise
+
+Use this when the agent may have run hostile instructions (a prompt injection from a web page, an issue or a
+dependency) or hostile code, and you want to be sure nothing of it is left. Nothing in the agent container
+is a security boundary for the agent itself: everything below belongs to the agent user, so one injection
+can rewrite it, and it survives restarts and image upgrades because it lives on volumes, not in the image.
+
+**What persists, and where**
+
+| Where | What an attacker can leave there |
+|---|---|
+| `agent-home`: `~/.local/tallygate/root` | Programs and libraries installed with `tallygate install`. They come first on `PATH`, `LD_LIBRARY_PATH` and `PYTHONPATH` for the consoles, Remote Control and the status server (`entrypoint.sh` adds them before it starts anything): a planted `git`, `python3` or shared library runs on the next start. |
+| `agent-home`: `~/.local` (`pip install --user`), `~/.npm`, `~/.cache` | Python and Node packages that load before or instead of the ones from the image. |
+| `agent-home`: `~/.claude`, `~/.claude.json` | Claude Code settings and **hooks** (commands run on every tool call or session start), user memory (`CLAUDE.md`) that instructs every later session, skills, plugins, MCP servers, the session history, and the **Claude login**. |
+| `agent-home`: `~/.claude/tallygate-rc-pointer.json` | Which Remote Control environment the agent comes back as (it is put back before every start). |
+| `agent-home`: `~/.gitconfig` | Aliases, `core.hooksPath`, `core.sshCommand`, URL rewrites (`insteadOf`), credential helpers, the commit identity. |
+| `agent-home`: `~/.bashrc`, `~/.profile`, `~/.bash_aliases`, `~/.tmux.conf`, `~/.ssh` | Code that runs in **your** *bash* console and in every shell the agent starts. |
+| `workspace` | The repositories: changed sources, build scripts, `.git/hooks` and `.git/config`, a project `CLAUDE.md` or `.claude/` with hooks and settings, unpushed commits. |
+| Outside the stack | What the agent could do with its access: pushes and settings changed on GitHub through the injected token, and on your Claude account sessions, scheduled tasks and other environments reachable with its login (the account, not only this session, is in the agent's reach). |
+
+The image, the gateway and the control plane are not writable by the agent: the policy, the event log, the
+GitHub token and the UI password stay as they are. Use the event log (**Log**) to see what the agent
+reached.
+
+**Reset**
+
+1. Stop the agent and keep it stopped while you look: `docker compose stop agent`. Revoke its grants in the
+   UI (**Grants**) and remove rules you approved while it was misbehaving.
+2. Rotate what it could use:
+   - **Claude login**: sign the session out in claude.ai (Settings → sessions), and remove scheduled tasks
+     or environments you did not create. The login on the home volume is deleted in step 3.
+   - **GitHub token**: revoke the fine-grained PAT on GitHub and create a new one (**Setup → GitHub token**
+     stores it in the gateway). The agent never saw the token, but it could use it: review recent pushes,
+     branches, workflow files, deploy keys and webhooks of the repositories the token covers.
+   - Any other credential that was in the workspace or typed into a console.
+3. Delete the home volume and, unless you can vouch for every file, the workspace:
+
+   ```bash
+   docker compose rm -sf agent                       # the container holds the volumes
+   docker volume rm tallygate_agent-home
+   docker volume rm tallygate_workspace              # or keep it and clean it by hand, see below
+   docker compose up -d
+   ```
+
+   With host directories (`AGENT_HOME`, `WORKSPACE`), empty those directories instead and give them back to
+   uid 1000 ([Host directories](#host-directories)). The volumes are created again, empty, on start.
+4. Run **Setup** again: log in to Claude, save the Git identity, enable Remote Control, run the isolation
+   self-test ([First-time setup](#first-time-setup)). Clone the repositories again from GitHub rather than
+   copying them back.
+
+**Keeping the workspace.** A repository is only as clean as what you checked: compare it with the remote
+(`git fetch && git status && git diff origin/main`), and look at `.git/hooks`, `.git/config`, `CLAUDE.md`,
+`.claude/` and untracked files (`git status --ignored`) from *outside* the agent. A fresh clone is quicker
+and certain.
+
+**Less than a full reset.** `tallygate install --reset` (in the *bash* console) deletes the package prefix
+and its cache, which is enough when an installed package merely broke something. After a suspected
+compromise it is not: it runs inside the environment you no longer trust, and it leaves the Claude settings,
+hooks, git config and shell profiles alone. Do not try to keep "only the login" from the old volume either:
+the login is what the attacker would have copied. This procedure was checked by reading `entrypoint.sh`,
+`rc-loop.sh` and the Setup steps, not by an automated test.
 
 ## Monitoring
 
@@ -660,7 +753,8 @@ to a new gateway, the CA changes. That's harmless: the agent re-reads the CA on 
 
 1. Stop the old container.
 2. Copy skills into the agent home with a throwaway container (the agent itself has no capability to change
-   owners): `docker run --rm -v tallygate_agent-home:/h -v "<old>/claude-home/skills":/s:ro debian sh -c
+   owners; `$IMG` is the image pinned by digest in [Backup and restore](#backup-and-restore)):
+   `docker run --rm --network none -v tallygate_agent-home:/h -v "<old>/claude-home/skills":/s:ro "$IMG" sh -c
    'mkdir -p /h/.claude && cp -r /s /h/.claude/skills && chown -R 1000:1000 /h/.claude'`.
 3. Copy repositories into the `tallygate_workspace` volume the same way (or re-clone).
 4. **Log in again** instead of copying credentials, and create a new fine-grained PAT for the gateway.

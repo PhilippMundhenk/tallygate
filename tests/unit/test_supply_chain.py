@@ -180,3 +180,47 @@ def test_a_critical_finding_in_an_image_blocks_the_release():
         if line.strip() and not line.startswith("#"):
             assert re.fullmatch(r"(CVE-\d{4}-\d+|GHSA(-[0-9a-z]{4}){3})", line.strip()), line
             assert i > 0 and lines[i - 1].startswith("# ") and len(lines[i - 1]) > 30, line
+
+
+# ------------------------------------------------------------------ docs
+def test_documented_commands_over_the_volumes_use_a_pinned_image_and_private_archives():
+    """The backup holds the GitHub token, the CA key and the Claude login: never world-readable, and no
+    unpinned image runs as root over a volume."""
+    ops = read("docs/operations.md")
+    base = re.search(
+        r"^FROM (docker\.io/library/debian:trixie-slim@sha256:[0-9a-f]{64})$", read("agent/Dockerfile"), re.M
+    )
+    assert base and f"IMG={base[1]}\n" in ops  # the same pinned base the agent image is built from
+    backup = ops[ops.index("## Backup and restore") : ops.index("## Resetting the agent after a compromise")]
+    assert backup.index("umask 077") < backup.index("tar czf")
+    assert '-v "$PWD":/b' not in ops  # the archive is written by the caller's shell, not by root in a container
+    for line in ops.splitlines():
+        if "docker run" in line and "tallygate_" in line:
+            assert '"$IMG"' in line and "--network none" in line, line
+    assert not re.search(r"\sdebian (tar|sh)\b", ops)
+
+
+def test_the_reset_procedure_is_documented_and_linked():
+    ops = read("docs/operations.md")
+    assert "- [Resetting the agent after a compromise](#resetting-the-agent-after-a-compromise)" in ops
+    reset = ops[ops.index("\n## Resetting the agent after a compromise") : ops.index("\n## Monitoring")]
+    for needle in (
+        "~/.local/tallygate/root",
+        "~/.claude",
+        "~/.gitconfig",
+        "~/.bashrc",
+        "tallygate-rc-pointer.json",
+        "docker volume rm tallygate_agent-home",
+        "tallygate install --reset",
+        "GitHub token",
+        "Claude login",
+        "[First-time setup](#first-time-setup)",
+    ):
+        assert needle in reset, needle
+    # what the procedure names is what the agent really uses
+    assert ".local/tallygate/root" in read("agent/profile.d-tallygate-install.sh")
+    assert "$HOME/.claude/tallygate-rc-pointer.json" in read("agent/rc-loop.sh")
+    threat = read("docs/threat-model.md")
+    assert "(operations.md#resetting-the-agent-after-a-compromise)" in threat
+    for number in ("T53", "T54", "T55"):
+        assert len(re.findall(rf"^\| {number} \|", threat, re.M)) == 1
