@@ -321,4 +321,3 @@ def test_control_gets_the_stacks_networks_and_the_host_name_setting():
     control, gateway = services["control"]["environment"], services["egress-gw"]["environment"]
     assert control["GW_INTERNAL_NETS"] == gateway["GW_INTERNAL_NETS"] != ""
     assert control["ALLOWED_HOSTS"] == "${ALLOWED_HOSTS:-}"
-
