@@ -526,6 +526,16 @@ environment. Each of them has a **Configure** disclosure with the same fields as
 
 The decision behind this is recorded in [ADR-0018](adr/0018-notification-credentials-stored-by-the-control-plane.md).
 
+### Where a channel URL may point
+
+The URLs of ntfy, Gotify and Matrix (from the web UI or the environment) must not contain a `?query` or a
+`#fragment`, and must not point at this machine (`localhost`, `127.0.0.1`), at a link-local address
+(`169.254.x.x`, `fe80::`) or at the tallygate stack itself (the gateway, the agent, the control plane). The
+control plane also refuses to connect when a name resolves to such an address. A server on your local
+network (`http://192.168.1.20:8090/tallygate`) is fine. A channel whose URL is refused is shown as
+*Off: the URL must not …*. Why: the control plane sits next to the gateway's management API; a channel URL
+must not turn it into a way to send requests there (threat model).
+
 ### Notification buttons
 
 **Setup → Notifications → Notification buttons** chooses which decisions a connection request offers in a
@@ -596,7 +606,9 @@ Every channel in the **Notifications** section has a **Test** button: it sends a
 message through that one channel so you can confirm the credentials and the path work, without waiting for a
 real approval. The Web Push test goes to the subscribed browsers; the bot-channel test (Telegram, Matrix,
 ntfy, Gotify, Pushover) is sent through the notifier's normal sender for that channel. A channel that is not
-configured shows its Test button disabled with the reason.
+configured shows its Test button disabled with the reason. If the test fails, the UI shows a short fixed
+text such as *ntfy answered with an error (HTTP 4xx): see the control log*; what the service answered is in
+the log (`docker compose logs control`, line `notification test through … failed`), never in the browser.
 
 Web Push needs a secure context: HTTPS (your reverse proxy) or `localhost`. On plain HTTP the Setup tab says
 so, and everything else keeps working. Control sends the messages to the browser's push service (Google,

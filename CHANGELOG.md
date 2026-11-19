@@ -10,6 +10,24 @@ Fixes for the findings of the security review of 0.4.0. One of them changes how 
 [Upgrading from 0.4.0](#upgrading-from-040) before you update.
 
 ### Security
+- **A notification channel URL cannot point at the stack or at this machine, and Test no longer repeats the
+  answer (#240, Low).** Found by the security review of v0.4.0. With a UI session (for example a stolen
+  one), the URL of Matrix, ntfy or Gotify could be any `http(s)` URL: `127.0.0.1`, the cloud metadata
+  address, the gateway's management API, the agent. A `?` in the Matrix or Gotify URL turned the fixed path
+  the control plane appends into a query, so the path was free too, and **Test** returned the other side's
+  error text. Now these URLs take no `?query` and no `#fragment`, and may not name this machine, a
+  link-local address, or the stack itself (`GW_URL`, `AGENT_HOST`, the control plane's own address and
+  name, and `GW_INTERNAL_NETS` if the control plane is given it). The check runs when a URL is saved, when
+  it is loaded (also from the environment) and for every connection: a name that resolves to a refused
+  address is not connected to, and the connection goes to the addresses that were checked. **Test** shows
+  a fixed text with the class of the HTTP status; the detail is in the control log.
+  Servers on your local network stay allowed: self-hosted ntfy, Gotify and Matrix are supported setups.
+  Threat T54 in [docs/threat-model.md](docs/threat-model.md).
+  **Check after upgrading:** a channel whose URL contains a query string (for example `NTFY_URL=…?auth=…`)
+  or points at `localhost`, `127.0.0.1` or a link-local address is now *Off* with the reason under
+  **Setup → Notifications**. Use the server's name or LAN address and the token field. If **Test** fails,
+  read the reason in `docker compose logs control`
+  ([troubleshooting](docs/operations.md#troubleshooting)).
 - **Notification buttons end with their device and at a restart (#241, Low).** Found by the security review
   of v0.4.0. A push action token named its device, but pressing the button did not check that the device was
   still subscribed: for up to 10 minutes after *Remove*, a removed phone could still decide the requests it
