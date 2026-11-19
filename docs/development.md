@@ -152,7 +152,9 @@ another hash.
   `requirements-dev.in` includes the other two, so `make lock` always recompiles all three, and
   `tests/unit/test_supply_chain.py` fails when the lock files disagree with the `.in` files or with each other.
 - Dependabot does the same weekly (`package-ecosystem: uv` in `.github/dependabot.yml` recompiles
-  `uv pip compile` files, hashes included). If one of its PRs leaves the three lock files at different
+  `uv pip compile` files, hashes included). It watches the repository root only: from there it follows
+  `requirements-dev.in` into `gateway/` and `control/` and updates the `.in` file, that component's lock file
+  and `requirements-dev.txt` in one PR. If one of its PRs leaves the three lock files at different
   versions, check out its branch, run `make lock` and push.
 - Limits: source distributions are hash-checked, but the build tools pip fetches to build them are not
   (PyYAML has no wheel for Python 3.15 yet and is built from source in the images). Debian packages are
