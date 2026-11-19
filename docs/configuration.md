@@ -50,7 +50,7 @@ All variables are optional. Secrets are created on first start when they are not
 | `TELEGRAM_BOT_TOKEN` | – | Bot token from @BotFather. Enables Telegram approvals together with the chat ID. This and the other notification variables below (Telegram, Matrix, ntfy, Gotify, Pushover) can also be set in the UI (*Setup → Notifications → Configure*); a value saved there overrides the variable, see [the user guide](user-guide.md#notification-channels-in-the-web-ui). |
 | `TELEGRAM_CHAT_ID` | – | Chat (user or group) that receives approval requests. |
 | `TELEGRAM_ALLOWED_USER_IDS` | – | **Required** for Telegram: comma-separated user IDs allowed to decide. Without it Telegram approvals stay disabled. |
-| `MATRIX_HOMESERVER` | – | e.g. `https://matrix.example.org`. |
+| `MATRIX_HOMESERVER` | – | e.g. `https://matrix.example.org`. Like `NTFY_URL` and `GOTIFY_URL`: no `?query` or `#fragment`, and not an address of this machine, a link-local address or the tallygate stack itself (see [where a channel URL may point](user-guide.md#where-a-channel-url-may-point)); a server on your local network is fine. |
 | `MATRIX_ACCESS_TOKEN` | – | Access token of a dedicated bot user. |
 | `MATRIX_ROOM_ID` | – | `!id:server` of an **unencrypted** room the bot has joined. |
 | `MATRIX_ALLOWED_USERS` | – | **Required** for Matrix: comma-separated MXIDs allowed to decide (must not include the bot). |
@@ -459,6 +459,8 @@ one that `compose.yaml` does not list, add it to that service's `environment:` b
 | control | `GITHUB_API_URL` | Releases API base URL for the update check (the test suite points it at a mock server). |
 | control | `TELEGRAM_API_BASE`, `PUSHOVER_API_BASE` | API base URLs (the test suite points them at mock servers). |
 | control | `PUSH_TEST_ALLOW_HTTP` | **Test suite only.** `1` = Web Push endpoints over plain HTTP are accepted (logged as a warning). |
+| control | `NOTIFY_TEST_ALLOW_LOCAL` | **Test suite only.** `1` = the URLs of ntfy, Gotify and Matrix may point at loopback and at the hosts of the stack, where the test suite's mock services listen (logged as a warning). Link-local addresses and `GW_INTERNAL_NETS` stay refused. Never set it in an installation. |
+| control | `GW_INTERNAL_NETS` | Optional for control: if it is set (the same value as for the gateway), no notification channel URL may point into these networks. The compose file does not pass it to control yet; without it control refuses the addresses it knows itself (`GW_URL`, `AGENT_HOST`, `CONTROL_BIND_HOST`). |
 | agent | `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` (+ lowercase) | Route all tools through the gateway. |
 | agent | `STATUS_PORT` | Status server port (7680); must match control's `AGENT_STATUS_PORT`. |
 | agent | `SELFTEST_BLOCKED_PROBES` | Management endpoints the self-test expects to be unreachable. |
