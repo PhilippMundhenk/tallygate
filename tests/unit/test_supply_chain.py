@@ -157,24 +157,35 @@ def test_no_workflow_script_contains_an_expression():
     assert '--version "$GITHUB_REF_NAME"' in consistency and "$GITHUB_REF == refs/tags/v*" in consistency
 
 
-def test_a_critical_finding_in_an_image_blocks_the_release():
+def test_a_critical_finding_in_an_image_blocks_the_push_and_the_release():
+    """#256: the scan runs inside the images job on a locally loaded image, BEFORE the build that pushes and
+    the signature. A separate job after the push could stop the release, but not the image."""
     jobs = workflows()["ci.yml"]["jobs"]
-    assert {"images", "image-scan", "consistency"} <= set(jobs["release"]["needs"])
-    scan = jobs["image-scan"]
-    assert scan["needs"] == ["images"] and scan["strategy"]["fail-fast"] is False
-    assert scan["if"] == "github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')"
-    assert "continue-on-error" not in scan
-    trivy = [s for s in scan["steps"] if "trivy-action" in s.get("uses", "")]
-    report, gate = trivy
+    assert "image-scan" not in jobs
+    assert {"images", "consistency"} <= set(jobs["release"]["needs"])
+    images = jobs["images"]
+    assert images["strategy"]["fail-fast"] is False and "continue-on-error" not in images
+    steps = images["steps"]
+    assert not any("continue-on-error" in s or "if" in s for s in steps if "trivy-action" in s.get("uses", ""))
+    builds = [i for i, s in enumerate(steps) if "build-push-action" in s.get("uses", "")]
+    trivy = [i for i, s in enumerate(steps) if "trivy-action" in s.get("uses", "")]
+    sign = next(i for i, s in enumerate(steps) if "cosign sign" in s.get("run", ""))
+    assert len(builds) == 2 and len(trivy) == 2
+    assert builds[0] < trivy[0] < trivy[1] < builds[1] < sign  # load, report, gate, then push, then sign
+    local = steps[builds[0]]["with"]
+    assert (local["load"], local["push"], local["platforms"]) == (True, False, "linux/amd64")
+    assert "if" not in steps[builds[0]]  # pull requests are scanned too
+    assert steps[builds[1]]["id"] == "build" and "push" in steps[builds[1]]["with"]
+    report, gate = steps[trivy[0]], steps[trivy[1]]
     assert report["with"]["exit-code"] == "0" and report["with"]["severity"] == "CRITICAL,HIGH"
+    assert report["with"]["image-ref"] == gate["with"]["image-ref"] == local["tags"]
     assert gate["with"] == {
-        "image-ref": "${{ steps.ref.outputs.image }}",
+        "image-ref": "scan.local/${{ matrix.image }}:scan",
         "severity": "CRITICAL",
         "ignore-unfixed": True,
         "trivyignores": ".trivyignore",
         "exit-code": "1",
     }
-    assert not any("continue-on-error" in s for s in scan["steps"])
     # every accepted finding has a comment above it
     lines = read(".trivyignore").splitlines()
     for i, line in enumerate(lines):
