@@ -101,6 +101,34 @@ Fixes for the findings of the security review of 0.4.0. One of them changes how 
   (T40), [grants](docs/grants.md) and the [user guide](docs/user-guide.md#away-mode-and-quiet-hours) now
   name the exemption. API: `missed` of `GET /availability` and the `digest` event have a third kind,
   `auto_grant`.
+- **No core dumps, and no container routes (#233, Low).** A crashing process in the agent handed its memory
+  to the Docker host: the core size limit was unlimited and `core_pattern` belongs to the host, where it
+  usually pipes into `systemd-coredump` running as root. All three services now run with `ulimits: core: 0`.
+  The network namespaces inherited `ip_forward=1` from the host, so the gateway and the control plane, each
+  with a leg on `agent-net` and one on a network with a way out, were routers in principle (the agent has
+  no way to address a packet to them as next hop, so this was not exploitable); forwarding, proxy ARP,
+  redirects and source routing are now switched off by sysctl. `bypass.sh` checks both on the running
+  stack and sends UDP broadcast, multicast, device-bound and routed datagrams from `agent-net` towards a
+  listener on the host: none may arrive. **Both settings are in `compose.yaml`: take the new file**
+  ([upgrading](docs/operations.md#upgrading-and-rolling-back)).
+- **Supply chain and hardening from the review (#234, Low).**
+  - Python dependencies are installed from lock files with hashes (`pip --require-hashes`); before, only the
+    direct dependencies were pinned, by version. Claude Code is installed with `npm ci` from a lock file with
+    integrity hashes. The GitHub CLI apt keyring is pinned by SHA-256 and by its exact set of keys; the old
+    check passed a keyring that contained the pinned key *and any other*.
+  - CI: no tag or branch name is pasted into a workflow script any more, and the image scan now fails on a
+    CRITICAL vulnerability that has a fix, which also blocks the release
+    ([development](docs/development.md#image-scan)).
+  - The documented backup command wrote a world-readable archive with the GitHub token and the CA key, using
+    an unpinned image. It now runs under `umask 077` with an image pinned by digest and no network
+    ([backup and restore](docs/operations.md#backup-and-restore)). **Check the permissions of backups you
+    already have** (`chmod 600`).
+  - New: [Resetting the agent after a compromise](docs/operations.md#resetting-the-agent-after-a-compromise):
+    what persists on the home volume and in the workspace, what to rotate, and the commands.
+  - `bypass.sh` runs Python inside the agent with `-I`, so the agent's own packages cannot change the result.
+  - The activity context shown next to approvals redacts tokens by their prefix (`ghp_…`, `github_pat_…`,
+    `sk-…`, `xox?-…`, `AKIA…`, JWTs), Telegram bot tokens and `sshpass -p` in the agent's hook as well.
+    Short secrets without any such mark still pass; that limit is now documented (threat model).
 - **The Matrix bot can no longer approve requests itself (#238, Medium).** The check that the bot's account is
   not one of the allowed users depended on one `whoami` call when the control plane started. If that call
   failed (homeserver not up yet after a reboot, a 5xx) and the bot used an allowed user's token, the control

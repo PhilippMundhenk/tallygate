@@ -1,0 +1,9 @@
+# Findings of the image scan (CI job image-scan) that were looked at and accepted.
+#
+# The gate fails on a CRITICAL vulnerability for which a fixed version exists. An entry here lets one finding
+# pass. One ID per line (CVE-…, GHSA-…), and above it a comment with: the image and package, why it does not
+# apply or why it is accepted, and when to look again. Prefer fixing: a newer base image digest, a newer
+# dependency (make lock), a newer Claude Code. Remove an entry as soon as the fix is in.
+# See docs/development.md#image-scan.
+#
+# (no accepted findings)

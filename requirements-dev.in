@@ -1,0 +1,8 @@
+# Direct dependencies, pinned. The lock file next to it (same name, .txt) adds every indirect dependency and
+# the hashes pip checks: run `make lock` after a change here (docs/development.md#dependencies).
+-r gateway/requirements.in
+-r control/requirements.in
+pytest==9.2.0
+coverage==7.17.3
+ruff==0.17.5
+shellcheck-py==0.11.0.1

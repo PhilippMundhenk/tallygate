@@ -11,7 +11,16 @@ help:  ## show this help
 # ---------------------------------------------------------------- development
 .PHONY: dev-setup lint fmt test test-unit test-e2e coverage
 dev-setup:  ## install dev dependencies into the current Python env
-	$(PY) -m pip install -r requirements-dev.txt
+	$(PY) -m pip install --require-hashes -r requirements-dev.txt
+
+# The three lock files (every package with version and hashes) from the *.in files. Needs uv (pip install uv).
+# --universal: one file for every platform and for Python 3.13 and newer (the images run 3.15).
+UV_COMPILE = uv pip compile --universal --python-version=3.13 --generate-hashes
+.PHONY: lock
+lock:  ## recompile the hashed lock files (requirements*.txt) after changing a requirements*.in
+	cd gateway && $(UV_COMPILE) --output-file=requirements.txt requirements.in
+	cd control && $(UV_COMPILE) --output-file=requirements.txt requirements.in
+	$(UV_COMPILE) --output-file=requirements-dev.txt requirements-dev.in
 
 lint:  ## ruff + shellcheck + vendored-file checksums
 	ruff check .

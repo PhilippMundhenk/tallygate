@@ -1,0 +1,5 @@
+# Direct dependencies, pinned. The lock file next to it (same name, .txt) adds every indirect dependency and
+# the hashes pip checks: run `make lock` after a change here (docs/development.md#dependencies).
+aiohttp==3.14.5
+# Web Push (#72): P-256 ECDH/ECDSA, HKDF inputs and AES-GCM for RFC 8291/8292 (same version mitmproxy uses)
+cryptography==50.0.2

@@ -138,6 +138,45 @@ Every Python module in `gateway/`, `control/`, `agent/` and `tools/` is gated th
   threat-model review ([threat-model.md](threat-model.md)).
 - Add an e2e test for every new protocol path or decision type.
 
+## Dependencies
+
+Python dependencies are pinned twice. `gateway/requirements.in`, `control/requirements.in` and
+`requirements-dev.in` list the direct dependencies with exact versions. The `requirements*.txt` next to them
+are **lock files**: every package, direct or not, with its version and the SHA-256 hashes of its files,
+compiled with [uv](https://docs.astral.sh/uv/) (`--universal`: one file for every platform and for Python
+3.13 and newer; the images run 3.15). The images, CI and `make dev-setup` install with
+`pip install --require-hashes`, so pip refuses a package that is not in the lock file or whose file has
+another hash.
+
+- Change a dependency: edit the `.in` file, run `make lock` (needs `pip install uv`), commit both files.
+  `requirements-dev.in` includes the other two, so `make lock` always recompiles all three, and
+  `tests/unit/test_supply_chain.py` fails when the lock files disagree with the `.in` files or with each other.
+- Dependabot does the same weekly (`package-ecosystem: uv` in `.github/dependabot.yml` recompiles
+  `uv pip compile` files, hashes included). If one of its PRs leaves the three lock files at different
+  versions, check out its branch, run `make lock` and push.
+- Limits: source distributions are hash-checked, but the build tools pip fetches to build them are not
+  (PyYAML has no wheel for Python 3.15 yet and is built from source in the images). Debian packages are
+  verified by apt's signatures, not pinned by version.
+
+The GitHub CLI apt keyring in `agent/Dockerfile` is pinned by its SHA-256 and by the exact list of its primary
+key fingerprints. When GitHub rotates the key the agent image build stops and prints the new values: compare
+the fingerprints with GitHub's announcement, then update both build arguments.
+
+## Image scan
+
+The `image-scan` job (Trivy) runs on `main` and on tags, against the images the `images` job has just pushed.
+A **CRITICAL** vulnerability for which a fixed version exists fails the job: `main` turns red, and on a tag
+the `release` job does not run, so there is no GitHub release and no pinned `compose.yaml` for that version.
+HIGH findings are listed in the job log and do not fail it (base images carry too many that do not apply).
+
+- The images are pushed and signed *before* the scan, also on a tag (`:X.Y.Z`, `:X.Y`, `:latest`): the gate
+  stops the release, not the push. After a failed scan on a tag, fix, and release the next patch version.
+- First fix: a newer base image digest, `make lock` for a Python package, a newer Claude Code. A finding
+  that does not apply can be accepted in `.trivyignore`: the ID, and above it a comment with the image and
+  package, the reason and when to look again. Remove the entry when the fix is in.
+- Pull requests are not scanned (nothing is pushed for them), so a finding shows up on `main` after the
+  merge, or with a new vulnerability database without any change at all.
+
 ## Releases
 
 1. Update `VERSION`, `pyproject.toml`, the version badge in `README.md` and `CHANGELOG.md` (date the release
@@ -156,8 +195,12 @@ Every Python module in `gateway/`, `control/`, `agent/` and `tools/` is gated th
    pull them once (`docker compose pull`) and verify a signature
    ([operations.md](operations.md#verifying-the-images)).
 
-**Claude Code updates.** The agent image pins Claude Code (`ARG CLAUDE_VERSION` in `agent/Dockerfile`)
-and has no auto-updater. Every Monday, `.github/workflows/claude-code.yml` compares it with the latest
-version on npm and opens a PR that bumps it, then starts CI for that branch. Merge it and cut a patch
-release, so `:X.Y` and `:latest` carry the new version. It can also be run by hand (*Actions → Claude Code
-update → Run workflow*).
+**Claude Code updates.** The agent image installs Claude Code with `npm ci` from
+`agent/claude-code/package.json` and `package-lock.json` (the version, and the sha512 integrity of the package
+and its platform packages; npm refuses a tarball with another hash) and has no auto-updater. Every Monday,
+`.github/workflows/claude-code.yml` compares the locked version with the latest on npm and opens a PR that
+bumps both files (`npm install --package-lock-only`, nothing is installed in the workflow), then starts CI
+for that branch. Merge it and cut a patch release, so `:X.Y` and `:latest` carry the new version. It can also
+be run by hand (*Actions → Claude Code update → Run workflow*). The hashes are the ones the registry reports
+when the PR is made; from then on every build must get exactly those bytes. `CLAUDE_VERSION` (build argument)
+installs another version by version only, without a pinned hash.

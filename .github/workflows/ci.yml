@@ -22,7 +22,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: { python-version: "3.15" }   # the images use 3.15
-      - run: pip install $(grep -E '^(ruff|shellcheck-py)==' requirements-dev.txt)   # versions pinned there
+      - name: Install ruff and shellcheck-py (versions and hashes from the lock file; they have no dependencies)
+        run: |
+          awk '/^(ruff|shellcheck-py)==/{p=1} p{print} p&&!/\\$/{p=0}' requirements-dev.txt > "$RUNNER_TEMP/lint.txt"
+          grep -c '^[a-z]' "$RUNNER_TEMP/lint.txt" | grep -qx 2
+          pip install --require-hashes --no-deps -r "$RUNNER_TEMP/lint.txt"
       - run: make lint
 
   test:
@@ -32,7 +36,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: { python-version: "3.15", cache: pip, cache-dependency-path: "**/requirements*.txt" }   # images use 3.15
-      - run: pip install -r requirements-dev.txt
+      - run: pip install --require-hashes -r requirements-dev.txt
       - name: Install ttyd (checksum-verified) for the web-console test
         run: |
           # same version and checksum as the agent image (single source: agent/Dockerfile)
@@ -59,7 +63,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
       - env: { GH_TOKEN: "${{ github.token }}" }
-        run: python3 tools/consistency_check.py ${{ startsWith(github.ref, 'refs/tags/v') && format('--version {0}', github.ref_name) || '' }}
+        # The ref comes from the runner's environment (GITHUB_REF, GITHUB_REF_NAME), never as text pasted
+        # into this script: a tag name is chosen by whoever pushes it.
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            python3 tools/consistency_check.py --version "$GITHUB_REF_NAME"
+          else
+            python3 tools/consistency_check.py
+          fi
 
   integration:
     # Builds all images, starts the real stack with ZERO configuration (no .env: secrets and the UI
@@ -101,7 +112,16 @@ jobs:
           curl -fsS -m 10 -o /dev/null http://127.0.0.1:8080/healthz
           ip=$(hostname -I | awk '{print $1}')
           ! curl -s -m 5 -o /dev/null "http://${ip}:8080/healthz"
-      - run: ./tests/integration/bypass.sh
+      - name: Authoritative isolation test (tests/integration/bypass.sh)
+        run: |
+          set -o pipefail
+          ./tests/integration/bypass.sh | tee "$RUNNER_TEMP/bypass.log"
+      - name: What the UDP probes could send, and every failed check (as an annotation on the run)
+        if: always()
+        run: |
+          [ -s "$RUNNER_TEMP/bypass.log" ] || exit 0
+          msg=$(grep -E '^  (sent|not sent)|^FAIL|CHECKS' "$RUNNER_TEMP/bypass.log" | tr -s ' ' | head -40 | sed -z 's/\n/%0A/g')
+          echo "::notice title=bypass.sh::${msg}"
       - if: failure()
         run: docker compose logs
       - if: always()
@@ -180,11 +200,15 @@ jobs:
       - id: digest
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         env:
+          KEY: ${{ matrix.key }}
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: echo "${{ matrix.key }}=${DIGEST}" >> "$GITHUB_OUTPUT"
+        run: echo "${KEY}=${DIGEST}" >> "$GITHUB_OUTPUT"
 
   image-scan:
-    # Known vulnerabilities in the published images. Reports only (does not fail the build) for now.
+    # Known vulnerabilities in the published images. A CRITICAL finding for which a fix exists fails this job:
+    # on main the run turns red, on a tag there is no release (the release job needs this one; the images are
+    # pushed and signed by then, see docs/development.md#image-scan). Findings that were looked at and
+    # accepted are listed with a reason in .trivyignore. HIGH findings are reported and never fail the job.
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     needs: [images]
     runs-on: ubuntu-latest
@@ -197,10 +221,14 @@ jobs:
       matrix:
         image: [tallygate-gateway, tallygate-control, tallygate-agent]
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1   (for .trivyignore)
       - id: ref
         # image names must be lower case; the images job tags type=sha as sha-<7 characters>
-        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${{ matrix.image }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Report CRITICAL and HIGH findings that have a fix (never fails)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.ref.outputs.image }}
           severity: CRITICAL,HIGH
@@ -209,10 +237,21 @@ jobs:
         env:
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gate, a CRITICAL finding with a fix fails (accepted ones are in .trivyignore)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.ref.outputs.image }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: "1"
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [images, consistency]
+    needs: [images, image-scan, consistency]   # no release with a CRITICAL fixable finding in an image
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
