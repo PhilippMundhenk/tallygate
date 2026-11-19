@@ -110,3 +110,58 @@ def test_ntfy_from_the_ui_survives_a_restart_and_its_token_stays_with_its_server
     assert again.call("DELETE", "/api/notify/config/ntfy")[0] == 200
     ntfy = channel(again, "ntfy")
     assert ntfy["source"] == "environment" and ntfy["fields"][0]["value"].endswith("/ntfy/from-env")
+
+
+def test_a_channel_url_cannot_point_at_the_stack_or_this_machine(gateway, mockbots, control_with, tmp_path):
+    """#240, without the test switch (as in production): the mock services, the gateway API and the agent
+    of this test run all listen on loopback, where a channel URL must not point. Neither the UI nor the
+    environment gets a request there, and Test tells the browser nothing the service said."""
+    mockbots.received.clear()
+    api = f"http://127.0.0.1:{gateway['ports']['api']}"
+    base = control_with(
+        NOTIFY_TEST_ALLOW_LOCAL="",
+        CONTROL_DATA=tmp_path / "control-data",
+        NTFY_URL=f"{mockbots.base}/ntfy/from-env",
+        GOTIFY_URL=f"{api}/policy?x=",
+        GOTIFY_TOKEN="g",
+    )
+    ui = login(base)
+    for name in ("ntfy", "gotify"):
+        assert channel(ui, name)["active"] is False and channel(ui, name)["reason"].startswith("Off: the URL must not")
+        assert ui.call("POST", "/api/notify/test", {"channel": name})[0] == 400
+    matrix = {"access_token": "any-bearer", "room_id": "!r:x", "allowed_users": "@a:x"}
+    for url, why in (
+        (f"{api}/policy?x=", "?query"),  # the gateway's management API, the fixed suffix cut off
+        (api, "this machine"),
+        (mockbots.base, "this machine"),
+        ("http://localhost:8080", "this machine"),
+        ("http://169.254.169.254/latest/meta-data", "link-local"),
+        ("http://[::1]:8081", "this machine"),
+    ):
+        status, err, _ = ui.call("PUT", "/api/notify/config/matrix", {"homeserver": url, **matrix})
+        assert status == 400 and why in err["error"], (url, err)
+        for name, extra in (("ntfy", {}), ("gotify", {"token": "t"})):
+            assert ui.call("PUT", f"/api/notify/config/{name}", {"url": url + "/x", **extra})[0] == 400, url
+    assert channel(ui, "matrix")["active"] is False
+    # a server on the local network is still accepted (nothing listens there: Test fails with a fixed text)
+    assert ui.call("PUT", "/api/notify/config/ntfy", {"url": "http://192.0.2.20:9/tallygate"})[0] == 200
+    status, err, _ = ui.call("POST", "/api/notify/test", {"channel": "ntfy"})
+    assert status == 502 and err["error"] in (
+        "ntfy could not be reached: see the control log",
+        "ntfy did not answer in time",
+    )
+    time.sleep(0.5)
+    assert mockbots.received == []  # no request reached a service on loopback
+
+
+def test_the_test_button_reports_the_status_class_only(mockbots, control_with, tmp_path):
+    ui = login(control_with(CONTROL_DATA=tmp_path / "control-data"))
+    url = f"{mockbots.base}/gotify"
+    assert ui.call("PUT", "/api/notify/config/gotify", {"url": url, "token": "gotify-ui-secret"})[0] == 200
+    assert ui.call("POST", "/api/notify/test", {"channel": "gotify"})[0] == 200
+    mockbots.fail["gotify"] = "error"  # the service answers 500 {"error": "down"}
+    try:
+        status, err, _ = ui.call("POST", "/api/notify/test", {"channel": "gotify"})
+    finally:
+        mockbots.fail.pop("gotify", None)
+    assert status == 502 and err == {"error": "Gotify answered with an error (HTTP 5xx): see the control log"}

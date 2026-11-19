@@ -391,6 +391,7 @@ def start_control(tmp: Path, gateway: dict, extra: dict, ttyd_port: int | None =
         TERMINALS=f"bash:{ttyd_port or free_port()}",
         PYTHONPATH=ROOT / "control",
         CONTROL_DATA=tmp / f"control-data-{port}",  # VAPID key and push subscriptions
+        NOTIFY_TEST_ALLOW_LOCAL="1",  # the mock notification services listen on loopback (#240)
     )
     env = clean_env(**{**defaults, **extra})  # extra may override any default
     log = open(tmp / f"control-{port}.log", "w")

@@ -21,10 +21,12 @@ bound to its action token (app/webpush.py).
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
@@ -158,6 +160,96 @@ _MX_ROOM = re.compile(r"![^\s,]{1,254}")
 _MX_USER = re.compile(r"@[^\s:,@]{1,200}:[^\s,@]{1,255}")
 
 
+# ---------------------------------------------------------------- where a channel URL may point (#240)
+# A channel URL makes the control plane send requests, with a token of the writer's choosing, from its own
+# place in the network: next to the gateway's management API and the agent, which nothing else may reach
+# (threat T46). A UI session (possibly a stolen one) must not be able to aim that at the stack itself or
+# at addresses that only mean "this machine": loopback, link-local (which includes the cloud metadata
+# address 169.254.169.254) and the unspecified address. Private LAN addresses stay allowed: a self-hosted
+# ntfy, Gotify or Matrix server on the local network is a supported setup.
+LOCAL_REASON = "must not point at this machine or a link-local address (loopback, 169.254.x.x, fe80::)"
+STACK_REASON = "must not point at the tallygate stack itself (gateway, agent, control)"
+
+
+def allow_local_for_tests() -> bool:
+    """TEST ONLY (NOTIFY_TEST_ALLOW_LOCAL=1): the mock services of the test suite listen on loopback, where
+    the gateway and the agent of a test run are too. Link-local and GW_INTERNAL_NETS stay refused."""
+    return os.environ.get("NOTIFY_TEST_ALLOW_LOCAL") == "1"
+
+
+def _stack() -> tuple[set[str], list]:
+    """(host names and addresses, networks) of the stack as control knows them: where it reaches the
+    gateway and the agent, its own listen address and name, and GW_INTERNAL_NETS if control was given it."""
+    hosts = {"localhost"}
+    for value in (
+        urllib.parse.urlsplit(os.environ.get("GW_URL", "http://egress-gw:8081")).hostname,
+        os.environ.get("AGENT_HOST", "agent"),
+        os.environ.get("CONTROL_BIND_HOST"),
+        socket.gethostname(),
+    ):
+        if value:
+            hosts.add(value.strip("[]").rstrip(".").lower())
+    nets = []
+    for cidr in os.environ.get("GW_INTERNAL_NETS", "").split(","):
+        try:
+            if cidr.strip():
+                nets.append(ipaddress.ip_network(cidr.strip(), strict=False))
+        except ValueError:
+            log.error("GW_INTERNAL_NETS: %r is not a network (ignored)", cidr.strip()[:60])
+    return hosts, nets
+
+
+def _ip(host: str):
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    return ip.ipv4_mapped or ip if ip.version == 6 else ip
+
+
+def blocked_address(address: str) -> str | None:
+    """Why control must not send a notification to this IP address (None: it may)."""
+    ip = _ip(address)
+    if ip is None:
+        return LOCAL_REASON  # not an address at all: never connect to it
+    hosts, nets = _stack()
+    if any(ip in n for n in nets):
+        return STACK_REASON
+    if ip.is_link_local or ip.is_multicast:
+        return LOCAL_REASON
+    if allow_local_for_tests():
+        return None
+    if ip.is_loopback or ip.is_unspecified or (ip.version == 4 and ip.packed[0] == 0):
+        return LOCAL_REASON
+    return STACK_REASON if any(_ip(h) == ip for h in hosts) else None
+
+
+def blocked_host(host: str) -> str | None:
+    """The same for the host of a URL, a name or an address literal. A name that is fine here can still
+    resolve into a refused range: the sending side checks every address it connects to (app/main.py)."""
+    host = (host or "").strip("[]").rstrip(".").lower()
+    if not host:
+        return LOCAL_REASON
+    if _ip(host) is not None:
+        return blocked_address(host)
+    if allow_local_for_tests():
+        return None
+    if host == "localhost" or host.endswith(".localhost"):
+        return LOCAL_REASON
+    return STACK_REASON if host in _stack()[0] else None
+
+
+def destination_problem(value: str) -> str | None:
+    """Why a channel URL that is already configured (environment or an older notify.json) is not used."""
+    try:
+        parts = urllib.parse.urlsplit(value)
+    except ValueError:
+        return "is not a valid URL"
+    if parts.query or parts.fragment or "?" in value or "#" in value:
+        return "must not contain a ?query or #fragment"
+    return blocked_host(parts.hostname or "")
+
+
 def _url(label: str, value: str) -> str:
     if len(value) > MAX_URL or any(c.isspace() or ord(c) < 0x20 or ord(c) == 0x7F for c in value):
         raise ConfigError(f"{label}: not a valid URL")
@@ -170,8 +262,14 @@ def _url(label: str, value: str) -> str:
         raise ConfigError(f"{label}: must be an http:// or https:// URL")
     if parts.username is not None or parts.password is not None:
         raise ConfigError(f"{label}: must not contain a user name or password (use the token field)")
-    if parts.fragment:
+    if parts.fragment or "#" in value:
         raise ConfigError(f"{label}: must not contain a #fragment")
+    if parts.query or "?" in value:
+        # control appends its own path (/_matrix/client/v3/…, /message): behind a "?" that would be part
+        # of the query, and the writer of the URL would choose the path on the server instead (#240)
+        raise ConfigError(f"{label}: must not contain a ?query (use the token field for credentials)")
+    if reason := blocked_host(parts.hostname):
+        raise ConfigError(f"{label}: {reason}")
     return value
 
 

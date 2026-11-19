@@ -36,7 +36,7 @@ import uuid
 
 import aiohttp
 
-from app.notifyconfig import ASK_ACTIONS, NotifyConfig, ask_label
+from app.notifyconfig import ASK_ACTIONS, NotifyConfig, allow_local_for_tests, ask_label, destination_problem
 from app.notifyconfig import numeric_chat as notifyconfig_chat
 
 log = logging.getLogger("notify")
@@ -51,6 +51,17 @@ PRIMARY = ("once", "always", "deny")
 IP_NOTE = "\nIP address: it can only be denied from here. To allow it, open tallygate."
 MORE = "More…"
 REACTION_TO_SCOPE = {r: s for s, _, r in BUTTONS}
+
+
+class ChannelError(RuntimeError):
+    """A channel's service refused a message. The text may quote the service (it goes to the log, with the
+    tokens redacted); `status` is all the UI is told (#240)."""
+
+    def __init__(self, message: str, status: int) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 GRANT_REACTIONS = {"👍": "approve", "📖": "read", "👎": "deny"}
 GRANT_DECISIONS = ("approve", "read", "deny")  # what the gateway accepts for a grant request
 # Ids as the gateway issues them (pending requests, grant requests, active grants). A decision from a chat
@@ -225,6 +236,8 @@ class Notifier:
         self.mx_blocked = False  # the bot's own account is an allowed user: no Matrix event is a decision
         self.mx_own: dict[str, None] = {}  # event ids control sent itself, oldest first (bounded)
         self.mx_senders: set[str] = set()  # senders seen on those events: the bot, whatever whoami said
+        if allow_local_for_tests():
+            log.warning("NOTIFY_TEST_ALLOW_LOCAL is set - channel URLs may point at loopback and the stack (test only)")
         self._load()
         # pending id -> {"tg": message_id, "mx": event_id, "short": n, "text": str}
         self.msgs: dict[str, dict] = {}
@@ -248,6 +261,14 @@ class Notifier:
         self.tg_base = os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
         self.tg_chat = tg["chat_id"]
         self.tg_users = {u.strip() for u in tg["allowed_user_ids"].split(",") if u.strip()}
+        # Also for values from the environment and from a notify.json written before #240: a URL that
+        # may not be saved in the UI is not used either.
+        for channel, settings, key in (("matrix", mx, "homeserver"), ("ntfy", ntfy, "url"), ("gotify", gotify, "url")):
+            why = destination_problem(settings[key].strip()) if settings[key].strip() else None
+            if why:
+                log.error("%s: the URL %s - channel off", channel, why)
+                self.problems[channel] = f"Off: the URL {why}."
+                settings[key] = ""
         self.mx_hs = mx["homeserver"].rstrip("/")
         self.mx_token = mx["access_token"]
         self.mx_room = mx["room_id"]
@@ -419,6 +440,12 @@ class Notifier:
     @property
     def http(self) -> aiohttp.ClientSession:
         return self.app["http"]
+
+    @property
+    def guarded(self) -> aiohttp.ClientSession:
+        """For the channels whose URL is free text (Matrix, ntfy, Gotify): a session that checks every
+        address it connects to, also the ones a name resolves to (#240, main.py GuardedConnector)."""
+        return self.app.get("notify_http") or self.app["http"]
 
     # ---------------------------------------------------------------- events from gateway
     def enqueue(self, ev: dict) -> None:
@@ -801,9 +828,10 @@ class Notifier:
         }
 
     async def _post(self, name: str, url: str, **kw) -> None:
-        async with self.http.post(url, timeout=aiohttp.ClientTimeout(total=SEND_TIMEOUT), **kw) as r:
+        http = self.http if name == "pushover" else self.guarded  # Pushover's host is fixed
+        async with http.post(url, timeout=aiohttp.ClientTimeout(total=SEND_TIMEOUT), **kw) as r:
             if r.status >= 300:
-                raise RuntimeError(f"{name}: HTTP {r.status}")
+                raise ChannelError(f"{name}: HTTP {r.status}", r.status)
 
     async def _ntfy(self, title: str, text: str, high: bool) -> None:
         headers = {"Title": title, "Tags": "lock" if high else "clipboard", "Priority": "high" if high else "default"}
@@ -933,7 +961,7 @@ class Notifier:
         return urllib.parse.quote(self.mx_room, safe="")
 
     async def _mx(self, method: str, path: str, body=None, params=None):
-        async with self.http.request(
+        async with self.guarded.request(
             method,
             f"{self.mx_hs}/_matrix/client/v3{path}",
             json=body,
@@ -943,7 +971,8 @@ class Notifier:
         ) as r:
             data = await r.json(content_type=None)
             if r.status >= 400:
-                raise RuntimeError(f"matrix {path}: {data.get('error', r.status)}")
+                detail = data.get("error", r.status) if isinstance(data, dict) else r.status
+                raise ChannelError(f"matrix {path}: {detail}", r.status)
             return data
 
     async def _mx_put(self, path: str, body: dict):

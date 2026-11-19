@@ -571,12 +571,28 @@ async def api_notify_test(request: web.Request):
     body = await json_body(request)
     channel = body.get("channel") if isinstance(body, dict) else None
     notifier = request.app["notifier"]
+    label = notify.CHANNEL_LABELS.get(channel, "channel") if isinstance(channel, str) else "channel"
     try:
         await notifier.send_test(channel)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
     except (aiohttp.ClientError, TimeoutError, RuntimeError) as e:
-        return web.json_response({"error": notifier.redact(str(e))}, status=502)
+        # What the other side said never reaches the browser (#240): with a channel URL of its choosing, a
+        # UI session could otherwise read answers of servers only control can reach. The UI gets a fixed
+        # text and the class of the HTTP status; the detail is in the log, tokens redacted. Telegram is the
+        # exception: its host is not a setting, and its description ("chat not found") is the useful part.
+        log.warning("notification test through %s failed: %s", channel, notifier.redact(str(e))[:300])
+        if isinstance(e, (UpstreamRedirect, RefusedDestination)):
+            text = str(e)  # our own fixed texts
+        elif isinstance(e, notify.ChannelError):
+            text = f"{label} answered with an error (HTTP {e.status // 100}xx): see the control log"
+        elif isinstance(e, TimeoutError):
+            text = f"{label} did not answer in time"
+        elif isinstance(e, aiohttp.ClientError):
+            text = f"{label} could not be reached: see the control log"
+        else:
+            text = notifier.redact(str(e)) if channel == "telegram" else f"{label}: failed, see the control log"
+        return web.json_response({"error": text}, status=502)
     log.info("notification test sent through %s by %s", channel, request["user"])
     return web.json_response({"ok": True, "channel": channel})
 
@@ -746,16 +762,55 @@ class PinnedConnector(aiohttp.TCPConnector):
         return await super().connect(req, traces, timeout)
 
 
-def _client(allowed=None) -> aiohttp.ClientSession:
+class RefusedDestination(aiohttp.ClientError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"destination refused: the URL {reason}")
+
+
+class GuardedResolver(aiohttp.abc.AbstractResolver):
+    """Resolves like the default resolver and refuses the name if any of its addresses is one a channel URL
+    may not point at. The connector connects to exactly the addresses returned here (no second lookup),
+    so a name cannot pass the check with one address and be reached at another (DNS rebinding, #240)."""
+
+    def __init__(self) -> None:
+        self._inner = aiohttp.resolver.DefaultResolver()
+
+    async def resolve(self, host: str, port: int = 0, family: int = 0):
+        found = await self._inner.resolve(host, port, family)
+        for entry in found:
+            if reason := notifyconfig.blocked_address(entry["host"]):
+                raise RefusedDestination(reason)
+        return found
+
+    async def close(self) -> None:
+        await self._inner.close()
+
+
+class GuardedConnector(aiohttp.TCPConnector):
+    """For the notification channels whose URL is free text: no connection to this machine, link-local
+    addresses or the stack itself, whether the URL says so or its name resolves there. Checked for every
+    connection, not only when the URL is saved."""
+
+    def __init__(self, **kw) -> None:
+        super().__init__(resolver=GuardedResolver(), **kw)
+
+    async def connect(self, req, traces, timeout):
+        if reason := notifyconfig.blocked_host(req.url.host or ""):
+            raise RefusedDestination(reason)
+        return await super().connect(req, traces, timeout)
+
+
+def _client(allowed=None, guarded: bool = False) -> aiohttp.ClientSession:
     """The only place a client session is created. `allowed`: the peers it may connect to (None = any host:
-    GitHub and the notification services the operator configured)."""
+    GitHub and the notification services the operator configured). `guarded`: any host except the ones a
+    notification channel URL may not point at (notifyconfig.blocked_host)."""
     trace = aiohttp.TraceConfig()
     trace.on_request_redirect.append(_refuse_redirect)
     trace.on_request_end.append(_refuse_redirect)
     return aiohttp.ClientSession(
         trust_env=False,
         trace_configs=[trace],
-        connector=PinnedConnector(allowed) if allowed else None,
+        connector=PinnedConnector(allowed) if allowed else GuardedConnector() if guarded else None,
         cookie_jar=aiohttp.DummyCookieJar(),  # no call needs cookies: none are kept
     )
 
@@ -1471,7 +1526,8 @@ async def term_ws(request: web.Request):
 
 # ------------------------------------------------------------------ app
 async def on_startup(app: web.Application):
-    app["http"] = _client()  # GitHub and the notification services: any host, but never a redirect
+    app["http"] = _client()  # GitHub, Telegram, Pushover, Web Push: fixed or allow-listed hosts, never a redirect
+    app["notify_http"] = _client(guarded=True)  # Matrix, ntfy, Gotify: the URL is free text (#240)
     app["agent"] = _client(_agent_peers)  # the agent's status server and ttyd, nothing else
     app["gw"] = _client(_gateway_peers)  # the gateway API, nothing else
     app["notifier"] = notify.Notifier(
@@ -1492,7 +1548,7 @@ async def on_cleanup(app: web.Application):
         t.cancel()
     await asyncio.gather(*app["bg"], return_exceptions=True)  # finished before their HTTP session closes
     await app["notifier"].close()
-    for name in ("http", "agent", "gw"):
+    for name in ("http", "notify_http", "agent", "gw"):
         await app[name].close()
 
 

@@ -31,6 +31,7 @@ ENV = {
     "CONTROL_PASSWORD": PW,
     "COOKIE_SECURE": "0",
     "TERMINALS": "bash:1",
+    "NOTIFY_TEST_ALLOW_LOCAL": "1",  # the fake notification services listen on loopback (#240)
 }
 CLEARED = (
     "CONTROL_PASSWORD_HASH",
