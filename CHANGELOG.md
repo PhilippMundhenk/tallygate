@@ -23,6 +23,21 @@ Fixes for the findings of the security review of 0.4.0. One of them changes how 
   notifications that were sent before it answer *Not applied: tallygate was restarted since this
   notification*. Decide those requests under **Approvals**; new notifications work as before. Nothing else
   changes for browsers. A script of your own that calls `/api/push/act` must send `Origin`.
+- **A chat approver can only decide the prompts shown, and the relay cannot leave its routes (#239, #244,
+  Low).** Found by the security review of v0.4.0. The id in a Telegram button's callback data went into the
+  gateway API path unchecked, and the HTTP client normalised `..` and took `?` as the start of a query. An
+  allowed Telegram user with a modified client (callback data is free text) could therefore call any `POST`
+  or `DELETE` of the gateway API with the control plane's token, for example the *Allow web* shortcut or a
+  rollback of the policy, instead of deciding a prompt. The same normalisation let
+  `DELETE /api/gw/destinations/..` from a UI session reach the gateway's `/` (no such route exists today).
+  Now callback data is accepted only as an id of `[a-f0-9]{1,32}` with a known scope (connection requests)
+  or `approve`/`read`/`deny` (grant requests); everything else is dropped without an answer and logged
+  (`callback data from … dropped: not a button of this bot`). The decision functions of every channel check
+  the same again, the relay's allow-list accepts no id that starts with a dot or contains `..`, and the one
+  function that calls the gateway API refuses a path with `..`, `?`, `#` or any character outside
+  `[A-Za-z0-9_:.-/]` and sends the path byte for byte. Matrix (reactions and replies name a prompt by event
+  or number, never by id) and Web Push (signed tokens, id checked) were checked and needed no change.
+  Threat T53 in [docs/threat-model.md](docs/threat-model.md). Nothing to do after upgrading.
 - **Automatic grants while you are away are no longer silent (#237, Info).** A grant level with
   `approval: auto` is activated at once, also in away mode and in quiet hours. That stays so: you authorised
   the level beforehand, away mode is about requests that need a person, and the emergency stop suspends

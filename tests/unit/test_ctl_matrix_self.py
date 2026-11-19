@@ -19,7 +19,7 @@ from aiohttp import test_utils, web
 
 ROOM = "!room:hs"
 ASK = {"id": "abc123", "host": "files.example", "port": 443, "proto": "https", "ips": []}
-GRANT = {"id": "g1", "name": "nas", "level": "write", "ttl_label": "1 h", "reason": "x"}
+GRANT = {"id": "e7", "name": "nas", "level": "write", "ttl_label": "1 h", "reason": "x"}
 
 
 class Homeserver:
@@ -119,7 +119,7 @@ def test_the_operators_own_account_as_bot_never_approves(load_main, monkeypatch,
             await until(lambda: len(hs.events) == 8)  # 2 prompts, 3 + 3 pre-seeded reactions, all by @me:hs
             await asyncio.sleep(0.6)  # time for whoami retries and for /sync to hand the echoes back
             reason = matrix_reason(n)
-            assert "abc123" in n.msgs and "g1" in n.gmsgs  # both prompts are still open: the UI can answer
+            assert "abc123" in n.msgs and "e7" in n.gmsgs  # both prompts are still open: the UI can answer
         await hs.srv.close()
         return main, reason
 
@@ -166,6 +166,6 @@ def test_a_real_users_reaction_decides_after_whoami_succeeded_and_nothing_is_rep
     run(body())
     assert decisions(world) == [
         ("POST", "/gw/pending/abc123/decide", {}, {"scope": "once", "by": "matrix:@me:hs"}),
-        ("POST", "/gw/grant-requests/g1/decide", {}, {"decision": "read", "by": "matrix:@me:hs"}),
+        ("POST", "/gw/grant-requests/e7/decide", {}, {"decision": "read", "by": "matrix:@me:hs"}),
     ]
     assert "matrix: bot account verified (@bot:hs), approvals resume" in caplog.text
