@@ -31,17 +31,105 @@
       "source": [
         "compose.yaml"
       ],
-      "pattern": "^\\s+([A-Z][A-Z0-9_]{3,}): \\$\\{",
+      "pattern": "^      ([A-Z][A-Z0-9_]{3,}): ",
+      "targets": [
+        {
+          "file": "docs/configuration.md",
+          "format": "`{}`"
+        }
+      ],
+      "severity": "error",
+      "note": "every upper-case key of an environment block in compose.yaml"
+    },
+    {
+      "name": "env-read-by-code",
+      "type": "listed",
+      "severity": "error",
+      "source": [
+        "gateway/run.py",
+        "gateway/egressgw/*.py",
+        "control/app/*.py",
+        "control/*.py",
+        "agent/*.py"
+      ],
+      "pattern": "(?:environ(?:\\.get)?\\(\\s*|environ\\[|getenv\\(\\s*|env\\.get\\(\\s*)[\\\"']([A-Z][A-Z0-9_]{2,})[\\\"']",
       "ignore": [
-        "TTYD_CREDENTIAL",
-        "SELFTEST_BLOCKED_PROBES"
+        "HOME",
+        "PATH",
+        "TERM",
+        "USER",
+        "TMPDIR",
+        "LANG",
+        "SHELL",
+        "PYTHONPATH",
+        "LD_LIBRARY_PATH",
+        "XDG_CACHE_HOME",
+        "SSL_CERT_FILE",
+        "CURL_CA_BUNDLE",
+        "REQUESTS_CA_BUNDLE",
+        "GIT_SSL_CAINFO",
+        "NODE_EXTRA_CA_CERTS",
+        "PIP_CERT",
+        "DEBIAN_FRONTEND"
       ],
       "targets": [
         {
-          "file": "docs/configuration.md"
+          "file": "docs/configuration.md",
+          "format": "`{}`"
         }
       ],
-      "severity": "warn"
+      "note": "every environment variable the code reads is documented (settings table or Component environment)"
+    },
+    {
+      "name": "env-read-by-scripts",
+      "type": "listed",
+      "severity": "error",
+      "source": [
+        "agent/entrypoint.sh",
+        "agent/rc-loop.sh"
+      ],
+      "pattern": "\\$\\{([A-Z][A-Z0-9_]{2,}):-",
+      "ignore": [
+        "HOME",
+        "PATH",
+        "TERM",
+        "USER",
+        "TMPDIR",
+        "LANG",
+        "SHELL",
+        "PYTHONPATH",
+        "LD_LIBRARY_PATH",
+        "XDG_CACHE_HOME",
+        "SSL_CERT_FILE",
+        "CURL_CA_BUNDLE",
+        "REQUESTS_CA_BUNDLE",
+        "GIT_SSL_CAINFO",
+        "NODE_EXTRA_CA_CERTS",
+        "PIP_CERT",
+        "DEBIAN_FRONTEND"
+      ],
+      "targets": [
+        {
+          "file": "docs/configuration.md",
+          "format": "`{}`"
+        }
+      ]
+    },
+    {
+      "name": "gateway-config-keys",
+      "type": "listed",
+      "severity": "error",
+      "source": [
+        "gateway/egressgw/*.py"
+      ],
+      "pattern": "(?:config|cfg)\\.get\\(\\s*[\\\"']([a-z][a-z0-9_]+)[\\\"']",
+      "targets": [
+        {
+          "file": "docs/configuration.md",
+          "format": "`{}`"
+        }
+      ],
+      "note": "every key the gateway reads from gateway.yaml is documented (removed keys in 'Removed and ignored keys')"
     },
     {
       "name": "routes-in-api-docs",
