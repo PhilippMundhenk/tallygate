@@ -276,12 +276,16 @@ def test_unknown_names_are_asked_before_resolution(gateway):
 
 def test_invalid_hostnames_are_refused(gateway):
     """TG-10: garbage / spoofy names never reach DNS or a human prompt."""
-    for host in ("bad-.test", "a..b.test", "x" * 70 + ".test"):
+    hosts = ("bad-.test", "a..b.test", "x" * 70 + ".test")
+    for host in hosts:
         _, line = connect_tunnel(gateway["ports"]["http"], f"{host}:443")
         assert " 200" not in line
     _, pend, _ = gateway["api"].call("GET", "/pending")
     assert pend == []
-    assert last_events(gateway, 1)[0]["reason"] == "invalid hostname"
+    # by host, not "the last event": a repeat count of an earlier test's connection can be written after these
+    # (the proxy itself turns some of these names away before the gateway sees them: those leave no event)
+    seen = {e["reason"] for e in last_events(gateway, 30) if e["host"] in hosts}
+    assert seen == {"invalid hostname"}
 
 
 def test_pending_approvals_are_capped(gateway):

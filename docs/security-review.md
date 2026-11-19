@@ -329,6 +329,8 @@ design:
   CA key stays in `state/gateway/` (mode 700).
 - **Pinning base images by digest:** tags plus Dependabot keep images patched. Digest pinning trades that
   for reproducibility. Operators who want it can pin in `compose.override.yaml`.
+  *No longer true: the three Dockerfiles pin their base image by digest, Dependabot updates the digests, and
+  since 0.4.1 a release attaches the digests of its own images (`compose.digests.yaml`).*
 - **Strict per-request approvals ("once" = a single connection):** tools open several connections per
   operation, and a 2-minute rule avoids prompt storms (TG-08). The label states the time.
 

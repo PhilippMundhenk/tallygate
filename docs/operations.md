@@ -282,8 +282,9 @@ whole host. That is acceptable for `X-Forwarded-For` on a single-user host, but 
 `TRUST_PROXY_AUTH_HEADER`: then use the [safe setup for an authenticating proxy](#authenticating-proxy) below.
 
 If the Docker host has a public IP (VPS), add it to `never` in `config/gateway.yaml` so the agent
-cannot reach host services through the egress path. Entries there are added to the built-in list
-(RFC 1918, loopback, metadata, ...), which always stays in force:
+cannot reach host services through the egress path. Entries there are seeded once as blocked ranges next
+to the built-in ones (RFC 1918, loopback, metadata, ...). Like those they are ordinary rules that you can
+change afterwards on *Destinations* ([rules.md](rules.md)); only the stack's own networks are locked:
 
 ```yaml
 never: [203.0.113.7/32]   # your host's public IP; the built-in ranges still apply

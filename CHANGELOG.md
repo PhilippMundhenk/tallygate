@@ -10,6 +10,12 @@ Fixes for the findings of the security review of 0.4.0. One of them changes how 
 [Upgrading from 0.4.0](#upgrading-from-040) before you update.
 
 ### Security
+- **Control gets the stack's networks and `ALLOWED_HOSTS` from `compose.yaml`** (follow-up of #240 and #246):
+  the check that keeps notification channel URLs out of the stack now covers all four of its networks, and
+  `ALLOWED_HOSTS` is set in `.env` like every other setting, without an override file.
+- **Documentation made true** (#235): what the built-in blocks and `never` are since the ordered rule list,
+  what a compromised agent can do with the Claude login beyond this one session, which agent-written text
+  reaches the notification channels (the grant reason), and how the authoritative isolation test runs.
 - **Control plane hardening after the review of 0.4.0 (#242, #243, #245, #246; Low and Info).**
   - **The idle timeout works while a tab is open (#242).** Every request counted as activity, and the page
     polls the server every 30 s, so a visible tab was never logged out before the 12 h limit. Now only what
