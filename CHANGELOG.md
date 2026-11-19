@@ -28,6 +28,19 @@ Fixes for the findings of the security review of 0.4.0. One of them changes how 
   **Setup → Notifications**. Use the server's name or LAN address and the token field. If **Test** fails,
   read the reason in `docker compose logs control`
   ([troubleshooting](docs/operations.md#troubleshooting)).
+- **Notification buttons end with their device and at a restart (#241, Low).** Found by the security review
+  of v0.4.0. A push action token named its device, but pressing the button did not check that the device was
+  still subscribed: for up to 10 minutes after *Remove*, a removed phone could still decide the requests it
+  showed (attributed to `push:removed device`). And the list of used tokens lives in memory, so a restart
+  of the control plane made a used token good again within its lifetime. Now a token whose device is gone is
+  refused, and every token carries the boot id of the control process that minted it: no other run takes it.
+  The boot id was chosen over storing used tokens on disk because it needs no new state file, cannot lose a
+  write, and fails closed. `/api/push/act` now also requires the `Origin` header, as the threat model (T41)
+  already said; the service worker's request always has it.
+  **Check after upgrading:** after every restart of the control plane (this update included) the buttons of
+  notifications that were sent before it answer *Not applied: tallygate was restarted since this
+  notification*. Decide those requests under **Approvals**; new notifications work as before. Nothing else
+  changes for browsers. A script of your own that calls `/api/push/act` must send `Origin`.
 - **A chat approver can only decide the prompts shown, and the relay cannot leave its routes (#239, #244,
   Low).** Found by the security review of v0.4.0. The id in a Telegram button's callback data went into the
   gateway API path unchecked, and the HTTP client normalised `..` and took `?` as the start of a query. An
