@@ -187,10 +187,11 @@ def test_documented_commands_over_the_volumes_use_a_pinned_image_and_private_arc
     """The backup holds the GitHub token, the CA key and the Claude login: never world-readable, and no
     unpinned image runs as root over a volume."""
     ops = read("docs/operations.md")
-    base = re.search(
-        r"^FROM (docker\.io/library/debian:trixie-slim@sha256:[0-9a-f]{64})$", read("agent/Dockerfile"), re.M
-    )
-    assert base and f"IMG={base[1]}\n" in ops  # the same pinned base the agent image is built from
+    # pinned by digest. It was the agent image's base when written; it need not follow every base image bump
+    # (an older digest stays pullable), so this does not compare it with agent/Dockerfile.
+    pinned = re.findall(r"^IMG=(\S+)$", ops, re.M)
+    assert len(pinned) == 2 and len(set(pinned)) == 1
+    assert re.fullmatch(r"docker\.io/library/debian:trixie-slim@sha256:[0-9a-f]{64}", pinned[0])
     backup = ops[ops.index("## Backup and restore") : ops.index("## Resetting the agent after a compromise")]
     assert backup.index("umask 077") < backup.index("tar czf")
     assert '-v "$PWD":/b' not in ops  # the archive is written by the caller's shell, not by root in a container

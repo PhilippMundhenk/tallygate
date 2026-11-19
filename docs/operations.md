@@ -614,7 +614,7 @@ Back up the volumes (or the directories in `GATEWAY_DATA`, `CONTROL_DATA`, `AGEN
 Copy the volumes with a throwaway container, stopping the stack first for a consistent copy. The archives
 contain the GitHub token, the CA private key and the Claude login: `umask 077` makes them readable by you
 only (mode 0600; without it they would be world-readable), and the archive is written by your shell, not by
-root inside the container. The image is pinned by digest (the base of the agent image) and gets no network:
+root inside the container. The image is pinned by digest (the base of the agent image when this was written) and gets no network:
 
 ```bash
 IMG=docker.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
