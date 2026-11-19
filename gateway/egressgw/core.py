@@ -954,8 +954,14 @@ class Gateway:
         if not g:
             raise KeyError(name)
         if g.approval.get(level) == "auto" and not self.grants.auto_suspended:  # emergency stop suspends it
+            # Automatic approval stays in force while the operator is away or in quiet hours: they authorised
+            # this level beforehand, and away mode is about requests that need a person. It is not silent,
+            # though: the activation is listed in the digest, as its own kind and without the agent's reason (#237).
             r = self.grants.new_request(name, level, ttl, reason, client)
             self._approve(r, level, "auto")
+            if self.availability.mode()[0] != "available":
+                self.availability.note_auto(name, level)
+                self.publish({"type": "availability"})
             return r
         if why := self.availability.blocking():
             self.availability.note("grant", name, 0, why)

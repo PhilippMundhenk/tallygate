@@ -29,6 +29,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import time
 import urllib.parse
 import uuid
@@ -50,6 +51,17 @@ IP_NOTE = "\nIP address: it can only be denied from here. To allow it, open tall
 MORE = "More…"
 REACTION_TO_SCOPE = {r: s for s, _, r in BUTTONS}
 GRANT_REACTIONS = {"👍": "approve", "📖": "read", "👎": "deny"}
+GRANT_DECISIONS = ("approve", "read", "deny")  # what the gateway accepts for a grant request
+# Ids as the gateway issues them (pending requests, grant requests, active grants). A decision from a chat
+# ends up in a gateway API path (#239), so an id of any other shape is never passed on: with "../" or "?"
+# in it, a chat approver's "decide this prompt" would become any POST or DELETE on the gateway API.
+GW_ID = re.compile(r"[a-f0-9]{1,32}")
+
+
+def gw_id(value: object) -> bool:
+    return isinstance(value, str) and GW_ID.fullmatch(value) is not None
+
+
 GRANT_WORDS = {"approve": "approve", "allow": "approve", "read": "read", "deny": "deny", "block": "deny"}
 TEXT_TO_SCOPE = {
     "allow": "once",
@@ -116,8 +128,11 @@ def _describe(p: dict) -> str:
 
 
 def digest_text(ev: dict, public_url: str = "", limit: int = 20) -> str:
-    """The digest: what was refused without asking while the operator was away or in quiet hours."""
+    """The digest: what was refused without asking while the operator was away or in quiet hours, and which
+    grants were activated automatically meanwhile (#237; name, level and counts only, nothing agent-written)."""
     items = ev.get("items") or []
+    auto = [i for i in items if i.get("kind") == "auto_grant"]
+    items = [i for i in items if i.get("kind") != "auto_grant"]  # only these were refused
     total = len(items) + int(ev.get("more") or 0)
     lines = [f"📋 tallygate digest ({ev.get('why', 'while away')}): {total} request(s) refused without asking"]
     for i in items[:limit]:
@@ -125,9 +140,22 @@ def digest_text(ev: dict, public_url: str = "", limit: int = 20) -> str:
         lines.append(f"  {what}" + (f" ×{i['count']}" if i.get("count", 1) > 1 else ""))
     if total > min(len(items), limit):
         lines.append(f"  … and {total - min(len(items), limit)} more")
-    lines.append(
-        "Allow what you need in the UI (Approvals → Availability)" + (f": {public_url}" if public_url else ".")
-    )
+    if total:
+        lines.append(
+            "Allow what you need in the UI (Approvals → Availability)" + (f": {public_url}" if public_url else ".")
+        )
+    if auto:
+        lines.append(f"Activated automatically meanwhile (approval: auto): {len(auto)} grant level(s)")
+        for i in auto[:limit]:
+            last = i.get("last")
+            at = time.strftime("%H:%M", time.localtime(last)) if isinstance(last, (int, float)) else "?"
+            count = i.get("count", 1)
+            lines.append(
+                f"  grant {i['host']} ({i.get('level', '?')}), {count} time{'' if count == 1 else 's'}, last at {at}"
+            )
+        if len(auto) > limit:
+            lines.append(f"  … and {len(auto) - limit} more")
+        lines.append("Not wanted? The emergency stop suspends automatic approval.")
     return "\n".join(lines)
 
 
@@ -644,25 +672,41 @@ class Notifier:
             push = self._push_all(lambda _s: msg, 600)
         await self._channels("grant outcome", tg=tg, mx=mx, push=push)
 
-    async def _apply_grant(self, rid: str, decision: str, by: str) -> str:
-        if decision == "revoke":
-            entry = self.gmsgs.get(rid, {})
-            if not entry.get("aid") or not self.revoke_grant:
-                return "nothing to revoke"
-            status, data = await self.revoke_grant(entry["aid"], by)
-        else:
-            if not self.decide_grant:
-                return "grants not supported"
-            status, data = await self.decide_grant(rid, decision, by)
+    # The three ways a chat decision reaches the gateway. Each checks its arguments itself, whatever the
+    # caller (Telegram button, Matrix reaction or reply) already did: nothing but a gateway id and a known
+    # decision is ever handed to the callbacks that build the gateway path (#239).
+    @staticmethod
+    def _reply(status: int, data: object) -> str:
         if status == 200:
             return "ok"
         return data.get("error", f"error {status}") if isinstance(data, dict) else f"error {status}"
 
+    async def _revoke(self, aid: object, by: str) -> tuple[int, object]:
+        if not gw_id(aid):
+            log.warning("grant revoke by %s dropped: not a gateway id", by[:80])
+            return 400, {"error": "nothing to revoke"}
+        return await self.revoke_grant(aid, by)
+
+    async def _apply_grant(self, rid: str, decision: str, by: str) -> str:
+        if decision == "revoke":
+            entry = self.gmsgs.get(rid, {}) if isinstance(rid, str) else {}
+            if not entry.get("aid") or not self.revoke_grant:
+                return "nothing to revoke"
+            status, data = await self._revoke(entry["aid"], by)
+        else:
+            if not self.decide_grant:
+                return "grants not supported"
+            if not gw_id(rid) or decision not in GRANT_DECISIONS:
+                log.warning("grant decision by %s dropped: not a gateway id or not a known decision", by[:80])
+                return "invalid request"
+            status, data = await self.decide_grant(rid, decision, by)
+        return self._reply(status, data)
+
     async def _apply(self, pid: str, scope: str, by: str) -> str:
-        status, data = await self.decide(pid, scope, by)
-        if status == 200:
-            return "ok"
-        return data.get("error", f"error {status}") if isinstance(data, dict) else f"error {status}"
+        if not gw_id(pid) or scope not in ASK_ACTIONS:
+            log.warning("decision by %s dropped: not a gateway id or not a known scope", by[:80])
+            return "invalid request"
+        return self._reply(*await self.decide(pid, scope, by))
 
     # ---------------------------------------------------------------- Web Push (#72)
     async def _push_all(self, make, ttl: int, topic: str | None = None) -> int:
@@ -829,23 +873,35 @@ class Notifier:
                         await self._tg("answerCallbackQuery", callback_query_id=cq["id"], text="Not authorised")
                         continue
                     who = cq["from"].get("username") or uid
-                    parts = cq["data"].split(":")
-                    if parts[0] == "d" and len(parts) == 3:
-                        result = await self._apply(parts[1], parts[2], f"telegram:{who}")
-                    elif parts[0] == "m" and len(parts) == 2:  # "More": show every scope on the same message
-                        entry = self.msgs.get(parts[1])
+                    # Callback data is whatever the client sends, not necessarily a button of ours (#239):
+                    # only a gateway id plus a known scope or decision goes on. Anything else is dropped
+                    # without an answer, like an unknown kind.
+                    data = cq.get("data")
+                    parts = data.split(":") if isinstance(data, str) else [""]
+                    kind, ref, choice = parts[0], parts[1] if len(parts) > 1 else "", parts[-1]
+                    shape = {"d": (3, ASK_ACTIONS), "g": (3, GRANT_DECISIONS), "m": (2, None), "r": (2, None)}
+                    count, choices = shape.get(kind, (0, None))
+                    if kind in shape and (
+                        len(parts) != count or not gw_id(ref) or (choices is not None and choice not in choices)
+                    ):
+                        log.warning("telegram: callback data from %s dropped: not a button of this bot", uid[:32])
+                        continue
+                    if kind == "d":
+                        result = await self._apply(ref, choice, f"telegram:{who}")
+                    elif kind == "m":  # "More": show every scope on the same message
+                        entry = self.msgs.get(ref)
                         result = "More choices" if entry else "already decided"
                         if entry:
                             await self._tg(
                                 "editMessageReplyMarkup",
                                 chat_id=self.tg_chat,
                                 message_id=cq.get("message", {}).get("message_id") or entry.get("tg"),
-                                reply_markup=self._tg_keyboard(parts[1], entry, full=True),
+                                reply_markup=self._tg_keyboard(ref, entry, full=True),
                             )
-                    elif parts[0] == "g" and len(parts) == 3:
-                        result = await self._apply_grant(parts[1], parts[2], f"telegram:{who}")
-                    elif parts[0] == "r" and len(parts) == 2 and self.revoke_grant:
-                        status, _ = await self.revoke_grant(parts[1], f"telegram:{who}")
+                    elif kind == "g":
+                        result = await self._apply_grant(ref, choice, f"telegram:{who}")
+                    elif kind == "r" and self.revoke_grant:
+                        status, _ = await self._revoke(ref, f"telegram:{who}")
                         result = "revoked" if status == 200 else "already ended"
                         msg = cq.get("message", {})
                         with contextlib.suppress(Exception):

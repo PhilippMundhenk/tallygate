@@ -116,6 +116,11 @@ class MockBots:
                         self._keep(asyncio.create_task(self._press(more, plan, mid)))
                     return web.json_response({"ok": True, "result": {"message_id": mid}})
 
+                data = btn["callback_data"]
+                if plan.get("forge"):  # a modified client: callback data that is no button of the bot (#239)
+                    kind, ref, *choice = data.split(":")
+                    data = plan["forge"].format(kind=kind, id=ref, choice="".join(choice))
+
                 async def press():
                     await asyncio.sleep(0.8)
                     self._tg_updates.append(
@@ -123,7 +128,7 @@ class MockBots:
                             "update_id": next(self._ids),
                             "callback_query": {
                                 "id": "cb",
-                                "data": btn["callback_data"],
+                                "data": data,
                                 "from": {"id": plan.get("user_id", 4242), "username": "tester"},
                                 "message": {"chat": {"id": plan.get("chat_id", 777)}},
                             },
