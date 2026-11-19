@@ -223,5 +223,5 @@ def test_the_reset_procedure_is_documented_and_linked():
     assert "$HOME/.claude/tallygate-rc-pointer.json" in read("agent/rc-loop.sh")
     threat = read("docs/threat-model.md")
     assert "(operations.md#resetting-the-agent-after-a-compromise)" in threat
-    for number in ("T55", "T56", "T57"):
+    for number in ("T56", "T57", "T58"):
         assert len(re.findall(rf"^\| {number} \|", threat, re.M)) == 1

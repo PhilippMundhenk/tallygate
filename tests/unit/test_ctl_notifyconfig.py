@@ -202,7 +202,7 @@ def test_allowed_users_cannot_be_cleared_while_the_channel_is_on(store):
     with pytest.raises(ConfigError, match="required"):
         cfg.update("telegram", {"allowed_user_ids": ""})
     assert cfg.effective("telegram")["allowed_user_ids"] == "42"
-    cfg.update("telegram", {"chat_id": "@channel_name"})  # the allowlist is not needed again
+    cfg.update("telegram", {"chat_id": "-100777"})  # the allowlist is not needed again
     env = store(TELEGRAM_ALLOWED_USER_IDS="7")
     env.update("telegram", {"bot_token": TOKEN, "chat_id": "5"})  # the environment's allowlist counts
 

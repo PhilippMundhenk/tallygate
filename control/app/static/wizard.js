@@ -82,7 +82,7 @@ function renderClaude(st) {
   if (ok) $("#clFlow").classList.add("hidden");
   // one primary per step: Start login, until the code form (with its own primary) is open or the login is done
   $("#clStart").classList.toggle("secondary", ok || !$("#clFlow").classList.contains("hidden"));
-  step("st-claude", ok ? "done" : "missing", ok ? `✓ Logged in${st.v.claude_version ? ` · Claude Code ${esc(st.v.claude_version.replace(/\s*\(Claude Code\)$/, ""))}` : ""}` : "Not logged in yet.");
+  step("st-claude", ok ? "done" : "missing", ok ? `✓ Logged in${st.v.claude_version ? ` · Claude Code ${esc(String(st.v.claude_version).replace(/\s*\(Claude Code\)$/, ""))}` : ""}` : "Not logged in yet.");
 }
 
 function renderGit(st) {
@@ -382,6 +382,7 @@ $("#selftestBtn").onclick = guard(async () => {
   const b = $("#selftestBtn"); b.disabled = true; stepStatus("st-test", "Running… (up to a minute)");
   try {
     const r = await api("GET", "/api/agent/selftest");
+    if (!Array.isArray(r.results)) throw new Error("the agent's answer is not a self-test result");
     wz.selftest = r.results;
     const rows = r.results.map((t) => `<tr><td><span class="status ${t.pass ? "ok" : "bad"}">${t.pass ? "passed" : "failed"}</span></td><td>${esc(t.name)}</td><td class="muted">${esc(t.detail)}</td></tr>`).join("");
     stepStatus("st-test", `<div class="table-wrap"><table class="results">${rows}</table></div>`, "");

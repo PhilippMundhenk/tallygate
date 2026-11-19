@@ -35,9 +35,19 @@ LOG2N = 16
 def _write(path: Path, value: str, mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(value)
-    tmp.chmod(mode)
+    write_private(tmp, value, mode)
     tmp.replace(path)
+
+
+def write_private(path: Path, value: str, mode: int = 0o600) -> None:
+    """Write a file that is never readable by others, not even between creating and chmod-ing it (#246):
+    it is created with its final mode (a leftover from an earlier run is removed first, so its mode and
+    owner do not carry over), and the mode is set again in case the umask narrowed it."""
+    path.unlink(missing_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        os.fchmod(f.fileno(), mode)
+        f.write(value)
 
 
 def _read_or_create(path: Path, factory, mode: int = 0o600) -> str:

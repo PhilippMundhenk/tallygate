@@ -247,7 +247,7 @@ allow.
 
 The HMAC cookie (`user|expiry|sig`) stayed valid for 12 h after logout and could be replayed from any copy.
 **Fix:** server-side session store with a random 256-bit id, signed in the cookie. Logout and restart
-invalidate sessions. There is an idle timeout (`SESSION_IDLE`, 2 h) plus the absolute TTL. Logout is
+invalidate sessions. There is an idle timeout (`SESSION_IDLE`, 2 h) plus the absolute TTL. (Since the review of 0.4.0, #242, the page's own polling no longer counts as activity: before that the timeout never fired while a tab was visible.) Logout is
 origin-checked.
 
 ### TG-13 (Medium): password hashing and brute force

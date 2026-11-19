@@ -160,6 +160,16 @@ request, `429` when the rate limit is reached.
 
 Used by the bundled web UI; documented for scripting and review.
 
+- **Idle timeout.** Every request with a session counts as activity and pushes `SESSION_IDLE` back, except a
+  request with the header `X-Tallygate-Poll: 1`, `GET /api/stream`, and the console WebSocket (its connect and
+  its frames). The UI sets the header on everything it sends without a key press, click or scroll in the
+  last 10 s; a script that polls should set it too. The header changes nothing else: session and CSRF rules
+  apply as usual.
+- **Host names.** With `ALLOWED_HOSTS` set, a request whose `Host` is not a listed name, the name in
+  `PUBLIC_URL`, `localhost` or an IP address is answered `421` on every path.
+- **Answers of the agent** (`/api/agent/…`) are passed on in a fixed schema: the documented keys with their
+  types, strings and lists cut to a length; anything else the agent sends is dropped.
+
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/healthz` | – | Liveness |
@@ -170,7 +180,7 @@ Used by the bundled web UI; documented for scripting and review.
 | GET | `/api/stream` | session | Relayed gateway SSE stream |
 | * | `/api/gw/{path}` | session + CSRF | Relay to an **allowlisted** subset of the gateway API: `GET`/`PUT`/`PATCH /policy`, `GET /policy/history`, `GET /policy/history/{id}`, `POST /policy/history/{id}/restore`, `GET /policy/diff`, `GET /policy/export`, `POST /policy/import`, `POST /emergency-stop`, `GET /model`, `POST /destinations`, `POST /destinations/group`, `POST /destinations/{id}/move`, `POST /destinations/restore-blocks`, `PATCH`/`DELETE /destinations/{id}`, `PUT`/`DELETE /destinations/grant/{name}`, `GET /rules/stats`, `POST /rules/cleanup`, `GET`/`POST`/`DELETE /learning`, `GET /learning/{id}`, `POST /learning/apply`, `GET /suggestions`, `POST /suggestions/accept`, `POST /suggestions/dismiss`, `GET /pending`, `POST /pending/{id}/decide`, `GET /events`, `GET /events/summary`, `GET /destinations`, `GET /destinations/detail`, `POST /test`, `GET /presets`, `POST`/`DELETE /presets/{name}`, `GET /secrets`, `PUT /secrets/{name}`, `GET /grants`, `POST /grants/{name}/activate`, `DELETE /active-grants/{id}`, `POST /grant-requests/{id}/decide`, `GET /info`, `GET /never-reachable`, `GET /access`, `GET`/`PATCH /availability`, `DELETE /availability/missed`. The old per-mechanism CRUD routes (`POST`/`PATCH`/`DELETE /rules`, `PUT`/`DELETE /grants`) were removed (ADR-0014): the UI uses `/destinations`. Everything else is refused (404 `{"error": "not allowed"}`), and so is an id that does not start with a letter or digit or that contains `..` (`/api/gw/destinations/..` is not the gateway's `/`). The path is sent to the gateway exactly as it was matched, nothing is normalised on the way; the query string is passed on re-encoded. For decisions, grant activation and revocation, the emergency stop and availability changes, `by` is set to `web:<user>`; a body sent to `/emergency-stop` is discarded. Every relayed call carries `X-Tallygate-By: web:<user>` for the policy history. |
 | POST | `/api/github/check` | session + CSRF | `{"token": "...", "store": true}` — validate a token against GitHub from the control plane and store it in the gateway (secret `github_token`): `{"ok": true, "login", "scopes", "expires", "stored"?}`, or `{"ok": false, "status", "message"}` when GitHub rejects it; `400` without a token |
-| GET | `/api/agent/status` | session | Agent status (Claude login, git identity, Remote Control running, versions) |
+| GET | `/api/agent/status` | session | Agent status (Claude login, git identity, Remote Control running, versions), in the fixed schema; `502` if the agent's answer is not a JSON object, too large or nested too deeply |
 | GET | `/api/agent/selftest` | session | Run the in-agent isolation self-test |
 | GET | `/api/push` | session | Web Push: `{"enabled", "public_key" (VAPID, for `applicationServerKey`), "subscriptions": [{id, label, created, service}]}` |
 | POST | `/api/push/subscribe` | session + CSRF | `{"subscription": <PushSubscription JSON>, "label": "phone"}` → `201`; `400` for an unknown push service or invalid keys; `503` when Web Push is off |
@@ -184,7 +194,7 @@ Used by the bundled web UI; documented for scripting and review.
 | DELETE | `/api/notify/actions` | session + CSRF | Back to the default buttons → `{"ok", "removed": bool, ...the config}`; `503` not writable |
 | POST | `/api/push/act` | action token + CSRF | `{"token": ...}` from a notification button; nothing else in the body is read. No session needed, but the `Origin` header is required and must be the UI's own (`403 csrf check failed` without it): the token is signed, bound to one request, one decision and one device, single use, valid ≤ 10 min and only in the run of the control plane that sent it. `403` invalid/used/expired, the device was removed, the control plane was restarted since, or a connection decision whose button is not switched on (any more); `409` already decided, `502` gateway unreachable, `503` Web Push off, `200 {"ok", "decision", "message"}` (`message`: what the notification then shows, e.g. `Allowed api.example.com for 2 min`) |
 | GET | `/sw.js`, `/manifest.webmanifest`, `/static/icon*` | – | Service worker, PWA manifest and icons (static, no session: browsers fetch them without cookies) |
-| GET | `/static/logo.svg`, `/static/favicon.svg`, `/static/login*` | – | What the login page needs. Everything else under `/static/` needs a session |
+| GET | `/static/logo.svg`, `/static/favicon.svg`, `/static/login.html`, `/static/login.js` | – | What the login page needs: exactly these files. Everything else under `/static/` needs a session |
 | GET | `/api/version` | session | `{"tallygate", "claude_code", "check": "ok"\|"error"\|"off", "latest": {"version", "url", "published"} \| null, "update_available": bool \| null, "error"?, "changelog", "upgrade"}`. `tallygate` is the gateway's VERSION; the latest release comes from GitHub's releases API (control's network, cached 6 h, a failed check 30 min, `UPDATE_CHECK=0` switches it off); the release URL is built by control |
 | GET/POST | `/api/agent/setup/claude-login` | session (+ CSRF for POST) | State of the Claude login / start it (see the agent status server below). A `url` that is not `https://` on Anthropic's login hosts with path `…/oauth/authorize` is replaced by `""`. |
 | POST | `/api/agent/setup/claude-code` | session + CSRF | `{"code": "…"}`: the code from the login page; a `url` in the answer is filtered in the same way |
@@ -192,7 +202,7 @@ Used by the bundled web UI; documented for scripting and review.
 | POST | `/api/agent/setup/remote-control` | session + CSRF | Give Remote Control's one-time consent and restart it |
 | GET | `/api/setup/checks?origin=<page origin>` | session | Deployment checks of the setup wizard: `{"checks": [{"id", "state": "ok"\|"warn"\|"bad"\|"info", "title", "detail"}], "password": "generated"\|"changed"\|"env-hash"\|"env-plain"\|"proxy"}`. `origin` is only compared, never trusted. |
 | GET | `/api/files?path=<dir>` | session | Workspace folder listing: `{"path", "entries": [{"name", "type": "file"\|"dir"\|"link"\|"other", "size", "mtime"}], "truncated", "max_upload", "max_download"}`. Odd entries from the agent are dropped |
-| GET | `/api/files/download?path=<file>` | session | The file as `application/octet-stream` with `Content-Disposition: attachment` and `Content-Security-Policy: sandbox`; 413 over `FILES_MAX_DOWNLOAD` |
+| GET | `/api/files/download?path=<file>` | session | The file as `application/octet-stream` with `Content-Disposition: attachment` and `Content-Security-Policy: sandbox`; 413 over `FILES_MAX_DOWNLOAD`; `403` if the browser says the request comes from another site (`Sec-Fetch-Site` present and neither `same-origin` nor `none`) |
 | PUT | `/api/files?path=<file>&overwrite=1` | session + CSRF | Upload the request body (`Content-Length` required, at most `FILES_MAX_UPLOAD`, else 411 / 413); 409 if the file exists without `overwrite=1` or is a folder or link; answers `{"path", "size"}` |
 | DELETE | `/api/files?path=<file or folder>` | session + CSRF | Delete one file, link or folder (with everything in it); a link is removed, never its target. 400 for the workspace itself (empty path); answers `{"path", "type": "file"\|"dir"}`. Logged with the user |
 | GET | `/term/{name}/` | session | Console page (served by control: vendored xterm.js, no agent content) |

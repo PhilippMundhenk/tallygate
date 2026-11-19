@@ -80,7 +80,8 @@ function act(key) {
 }
 
 document.addEventListener("keydown", (e) => {
-  if (!$("#optKeys").checked || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+  // e.repeat: a held key must not decide the next card too (#246)
+  if (!$("#optKeys").checked || e.defaultPrevented || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
   const t = e.target;
   if (t.closest && t.closest("input:not([type=checkbox]):not([type=radio]), textarea, select, [contenteditable], dialog")) return;
   if (e.key === "?") { e.preventDefault(); $("#keysHelp").showModal(); return; }

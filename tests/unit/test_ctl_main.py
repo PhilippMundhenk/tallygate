@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "control"))
 PW = "unit-password"
 ENV = {
     "GW_API_TOKEN": "gw-token-" * 4,
-    "SESSION_SECRET": "unit",
+    "SESSION_SECRET": "unit-session-secret-" * 2,
     "TTYD_CREDENTIAL": "agent:ttyd-secret",
     "CONTROL_PASSWORD": PW,
     "COOKIE_SECURE": "0",
@@ -705,7 +705,7 @@ def test_github_check(load):
     ("reply", "status", "error"),
     [
         ((200, b'{"claude_version": "2.0.0"}'), 200, None),
-        ((200, b'{"results": "' + b"a" * 300_000 + b'"}'), 200, None),  # more than one read, within the cap
+        ((200, b'{"git_name": "' + b"a" * 300_000 + b'"}'), 200, {"git_name": "a" * 200}),  # several reads; cut
         ((500, b'{"error": "boom"}'), 502, None),  # passed on, but marked as a failure
         ((200, b"[1, 2]"), 502, "agent unreachable or invalid response: not an object"),
         ((200, b"<html>"), 502, "agent unreachable or invalid response"),
@@ -724,10 +724,10 @@ def test_agent_status_is_size_limited_and_validated(load, reply, status, error):
 
     got_status, data = run(body())
     assert got_status == status
-    if error:
+    if isinstance(error, str):
         assert data["error"].startswith(error)
     else:
-        assert data == json.loads(reply[1])
+        assert data == (error or json.loads(reply[1]))
 
 
 def test_agent_status_only_known_endpoints_and_unreachable(load):
