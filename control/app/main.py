@@ -29,7 +29,7 @@ import aiohttp
 import yarl
 from aiohttp import WSMsgType, web
 
-from app import bootstrap, notify, notifyconfig, webpush
+from app import agentschema, bootstrap, notify, notifyconfig, webpush
 
 log = logging.getLogger("control")
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -56,6 +56,11 @@ TRUSTED_PROXIES = [
 ]
 # Optional shared secret: when set, the proxy must also send it, or its forwarded/auth headers are ignored.
 PROXY_SECRET = os.environ.get("TRUST_PROXY_SECRET", "")
+# Host names the UI is served under (optional, #246): comma-separated, without port. See host_allowed().
+ALLOWED_HOSTS = frozenset(
+    h.strip().lower().rstrip(".") for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip()
+)
+SESSION_SECRET_MIN = 32  # characters of a SESSION_SECRET from the environment (the generated one has 64)
 PROXY_SECRET_HEADER = "X-Tallygate-Proxy-Secret"  # noqa: S105 (a header name)
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
 GITHUB_API = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")  # tests point it elsewhere
@@ -69,6 +74,14 @@ PUBLIC_FILES = {
     "/static/icon-192.png": ("icon-192.png", "image/png"),
     "/static/icon-512.png": ("icon-512.png", "image/png"),
 }
+# Served without a session because the login page needs them: exactly these, never a prefix (#245).
+LOGIN_FILES = frozenset(
+    {"/login", "/healthz", "/static/logo.svg", "/static/favicon.svg", "/static/login.html", "/static/login.js"}
+)
+# A request that the page sends by itself (a timer, a reload after a stream event, a reconnect) says so with
+# this header and does not count as activity for the idle timeout (#242). So do the two long-lived
+# connections, which the browser re-opens on its own.
+POLL_HEADER = "X-Tallygate-Poll"
 PUSH_ACT = "/api/push/act"  # notification buttons: authenticated by a single-use action token, not a session
 AGENT_MAX_BYTES = 1024 * 1024  # cap on anything read from the agent (status JSON, terminal frames)
 BROWSER_MAX_FRAME = 64 * 1024
@@ -179,9 +192,50 @@ def make_session(user: str, fingerprint: str | None = None) -> str:
 def _session_id(request: web.Request) -> str | None:
     raw = request.cookies.get(COOKIE, "")
     sid, _, sig = raw.partition(".")
-    if not sid or not hmac.compare_digest(sig, _sign(sid)):
+    # bytes: compare_digest raises TypeError for a str with non-ASCII characters (a 500 for any visitor)
+    if not sid or not hmac.compare_digest(sig.encode(), _sign(sid).encode()):
         return None
     return sid
+
+
+def background(request: web.Request) -> bool:
+    """True for a request the page made without the user doing anything (#242): it authenticates like any
+    other, but does not push the idle timeout back. The header is set by the UI's own code (app.js); whoever
+    sits at the keyboard can leave it out, so the idle timeout protects an unattended tab, nothing more."""
+    if request.headers.get(POLL_HEADER) == "1":
+        return True
+    path = request.path
+    return path == "/api/stream" or (path.startswith("/term/") and path.endswith("/ws"))
+
+
+def _hostname(host: str) -> str:
+    """The name or address of a Host header value, without port and brackets, lower case."""
+    host = host.strip().lower()
+    if host.startswith("["):
+        return host[1:].partition("]")[0]
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
+def _is_address(name: str) -> bool:
+    try:
+        ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return True
+
+
+def host_allowed(request: web.Request) -> bool:
+    """ALLOWED_HOSTS (#246): when set, a request is served only if its Host is one of these names, the
+    name in PUBLIC_URL, `localhost` or an IP address. That closes DNS rebinding: a page on the attacker's
+    name that is re-pointed at this server still sends the attacker's name as Host. Unset (the default),
+    every Host is served as before, and Setup says so when the UI is opened under a name."""
+    if not ALLOWED_HOSTS:
+        return True
+    trusted = TRUST_FORWARDED and _peer_trusted(request)
+    name = _hostname((request.headers.get("X-Forwarded-Host") if trusted else None) or request.host or "")
+    if name == "localhost" or _is_address(name) or name in ALLOWED_HOSTS:
+        return True
+    return bool(PUBLIC_URL) and name == (urllib.parse.urlsplit(PUBLIC_URL).hostname or "").lower()
 
 
 def read_session(request: web.Request, touch: bool = True) -> str | None:
@@ -275,11 +329,9 @@ def _per_ip_lockout() -> bool:
 @web.middleware
 async def security(request: web.Request, handler):
     path = request.path
-    if (
-        path in ("/login", "/healthz", "/static/logo.svg", "/static/favicon.svg")
-        or path.startswith("/static/login")
-        or path in PUBLIC_FILES
-    ):
+    if not host_allowed(request):
+        return web.Response(status=421, text="this host name is not in ALLOWED_HOSTS\n")
+    if path in LOGIN_FILES or path in PUBLIC_FILES:
         resp = await handler(request)
     elif path == PUSH_ACT:
         # No session (a phone's session may have expired), but the same CSRF rule as every other API call;
@@ -288,7 +340,7 @@ async def security(request: web.Request, handler):
             return web.json_response({"error": "csrf check failed"}, status=403)
         resp = await handler(request)
     else:
-        user = read_session(request)
+        user = read_session(request, touch=not background(request))
         if not user:
             if path.startswith("/api/") or path.startswith("/term/"):
                 return web.json_response({"error": "login required"}, status=401)
@@ -352,7 +404,9 @@ def cookie_secure(request: web.Request) -> bool:
         return True
     if mode in ("0", "false", "no"):
         return False
-    return _request_scheme(request) == "https"
+    # PUBLIC_URL says how browsers reach the UI: behind a TLS proxy whose X-Forwarded-Proto is not trusted
+    # the request itself looks like plain HTTP, and the cookie would go out without Secure (#246)
+    return _request_scheme(request) == "https" or PUBLIC_URL.lower().startswith("https://")
 
 
 def _expected_origin(request: web.Request) -> str:
@@ -891,7 +945,10 @@ async def agent_call(app: web.Application, method: str, what: str, body: dict | 
             raw += chunk
         if len(raw) > AGENT_MAX_BYTES:
             raise ValueError("agent response too large")
-        data = json.loads(raw)
+        try:
+            data = json.loads(raw)
+        except RecursionError:  # "[[[[..." a few thousand deep: not a ValueError, and no handler expects it
+            raise ValueError("nested too deeply") from None
         if not isinstance(data, dict):
             raise ValueError("not an object")
         return r.status, data
@@ -913,6 +970,7 @@ async def api_agent(request: web.Request):
             return web.json_response({"error": "expected a JSON object"}, status=400)
     try:
         status, data = await agent_call(request.app, request.method, what, body)
+        data = agentschema.clean(request.method, what, data)  # known keys, expected types, capped (#243)
     except UpstreamRedirect:
         return _redirect_502("the agent")
     except ValueError as e:
@@ -1014,6 +1072,23 @@ async def api_setup_checks(request: web.Request):
             "info",
             "PUBLIC_URL",
             "Not set. Set it to the address you use, so links in Telegram and Matrix messages open the UI.",
+        )
+    name = _hostname(request.host or "")
+    if ALLOWED_HOSTS:
+        add(
+            "hosts",
+            "ok",
+            "Host names",
+            f"Served only as {', '.join(sorted(ALLOWED_HOSTS))} (ALLOWED_HOSTS), by address and at PUBLIC_URL.",
+        )
+    elif not PUBLIC_URL and name != "localhost" and not _is_address(name):
+        add(
+            "hosts",
+            "warn",
+            "Host names",
+            f"The UI answers under any host name (you use {name[:100]}). A web page you visit can then reach "
+            "the login form through DNS rebinding and try passwords. Set PUBLIC_URL to the address you use "
+            f"and ALLOWED_HOSTS={name[:100]} (docs/configuration.md).",
         )
     add(
         "reach",
@@ -1205,6 +1280,12 @@ def content_disposition(name: str) -> str:
 
 
 async def api_files_download(request: web.Request):
+    # A GET with a SameSite=Lax cookie: a link on another site could start the download of an agent-written
+    # file from this origin (#246). Browsers that send Sec-Fetch-Site say where the request comes from:
+    # only the UI itself (same-origin) or the address bar / a bookmark (none) may. Without the header
+    # (older browsers, scripts) the request is served as before.
+    if request.headers.get("Sec-Fetch-Site", "same-origin").strip().lower() not in ("same-origin", "none"):
+        return web.json_response({"error": "downloads start from the tallygate UI only"}, status=403)
     path = files_path(request, file=True)
     resp = None
     try:
@@ -1351,7 +1432,9 @@ async def term_ws(request: web.Request):
                 async for msg in ws_client:
                     if msg.type not in (WSMsgType.TEXT, WSMsgType.BINARY):
                         break
-                    if read_session(request) is None:  # session ended (logout/expiry): nothing reaches the agent
+                    # session ended (logout/expiry): nothing reaches the agent. A frame is not activity (#242):
+                    # xterm also sends by itself, e.g. answers to queries the agent prints; term.js reports keys
+                    if read_session(request, touch=False) is None:
                         return
                     data = msg.data.encode() if msg.type == WSMsgType.TEXT else msg.data
                     if first:  # handshake: size only from the browser, credential from us
@@ -1447,6 +1530,11 @@ def build_app() -> web.Application:
     bootstrap.check_dirs(proxy_auth=bool(PROXY_AUTH_HEADER))
     GW_TOKEN = bootstrap.gw_token()
     TTYD_AUTH = bootstrap.ttyd_credential()
+    if 0 < len(os.environ.get("SESSION_SECRET", "")) < SESSION_SECRET_MIN:
+        raise SystemExit(
+            f"SESSION_SECRET must be at least {SESSION_SECRET_MIN} characters (e.g. `openssl rand -hex 32`), "
+            "or leave it empty: a random one is then created in the control data volume"
+        )
     SESSION_SECRET = bootstrap.session_secret()
     if not PROXY_AUTH_HEADER:
         bootstrap.ensure_password()

@@ -52,7 +52,7 @@
     ws.onclose = (ev) => {
       if (ev.code === 4401 || ev.code === 1008) return expired();
       // A refused handshake (e.g. 401 after the session ended) looks like any other drop: ask the server.
-      fetch("/api/meta", { credentials: "same-origin" }).then((r) => {
+      fetch("/api/meta", { credentials: "same-origin", headers: { "X-Tallygate-Poll": "1" } }).then((r) => {
         if (r.status === 401) return expired();
         reconnect();
       }, reconnect);
@@ -67,6 +67,17 @@
   term.onBinary((d) => {  // raw bytes (e.g. mouse reports): must not be UTF-8 encoded
     sendBytes("0", Uint8Array.from(d, (c) => c.charCodeAt(0) & 0xff));
   });
+  // Idle timeout (#242): what you type keeps the session alive, what the terminal sends by itself does not
+  // (the agent can make xterm answer queries, and it can drop the connection to force a reconnect). So the
+  // frames do not count on the server; a key, click or paste here sends one small request per minute.
+  let counted = 0;
+  for (const type of ["keydown", "pointerdown", "paste", "wheel", "touchstart"]) {
+    window.addEventListener(type, (e) => {
+      if (!e.isTrusted || Date.now() - counted < 60000) return;
+      counted = Date.now();
+      fetch("/api/meta", { credentials: "same-origin" }).catch(() => {});
+    }, { capture: true, passive: true });
+  }
   term.onResize(resize);
   window.addEventListener("resize", () => fit.fit());
   connect();

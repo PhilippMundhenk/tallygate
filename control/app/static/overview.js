@@ -78,7 +78,7 @@ function renderOvAttention() {
   else if (ov.gh && ov.gh.checking) add("muted", "Checking the GitHub token…");
   else if (ov.gh && !ov.gh.ok) add("", `${ovSt("bad", "failed")} GitHub token: ${esc(ov.gh.message)}`, "setup", "Open Setup");
   else if (ov.gh && ov.gh.token_expires) {
-    const exp = Date.parse(ov.gh.token_expires.replace(" UTC", "Z").replace(" ", "T"));
+    const exp = Date.parse(String(ov.gh.token_expires).replace(" UTC", "Z").replace(" ", "T"));
     if (Number.isFinite(exp) && exp / 1000 - now < 7 * 86400) add("", `${ovSt("warn", "expiring")} The GitHub token expires ${esc(ov.gh.token_expires)}`, "setup", "Open Setup");
   }
   $("#ovAttention").innerHTML = items.join("") || '<li class="muted">Nothing needs your attention.</li>';

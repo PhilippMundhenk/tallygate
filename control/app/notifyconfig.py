@@ -140,7 +140,19 @@ def ask_label(action: str, domain: str | None = None) -> str:
 
 _SECRET = re.compile(r"[\x21-\x7e]{1,1024}")
 _TG_TOKEN = re.compile(r"[0-9]{1,20}:[A-Za-z0-9_-]{10,200}")  # it becomes part of the request path
-_TG_CHAT = re.compile(r"-?[0-9]{1,20}|@[A-Za-z0-9_]{4,64}")
+# Numeric only (#246): Telegram also takes "@channelname" for sending, but a button press comes back with the
+# chat's numeric id, which never equals the name, so every button would answer "Not authorised".
+_TG_CHAT = re.compile(r"-?[0-9]{1,20}")
+
+
+def numeric_chat(value: str) -> bool:
+    return _TG_CHAT.fullmatch(value.strip()) is not None
+
+
+TG_CHAT_HELP = (
+    "expected the numeric chat id (e.g. -1001234567890), not @channelname: button presses carry the numeric "
+    "id, so approvals would be refused"
+)
 _TG_USER = re.compile(r"[0-9]{1,20}")
 _MX_ROOM = re.compile(r"![^\s,]{1,254}")
 _MX_USER = re.compile(r"@[^\s:,@]{1,200}:[^\s,@]{1,255}")
@@ -188,7 +200,7 @@ def validate(field: Field, value: str) -> str:
     if field.kind == "secret":
         return _one(field.label, value, _SECRET, "must be 1 to 1024 printable characters without spaces")
     if field.kind == "tg_chat":
-        return _one(field.label, value, _TG_CHAT, "expected a numeric chat id (e.g. -1001234) or @channelname")
+        return _one(field.label, value, _TG_CHAT, TG_CHAT_HELP)
     if field.kind == "tg_users":
         return _list(field.label, value, _TG_USER, "numeric Telegram user ids")
     if field.kind == "mx_room":

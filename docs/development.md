@@ -91,7 +91,7 @@ cd gateway && DATA_DIR=/tmp/sg CA_EXPORT_DIR=/tmp/sg/ca GW_LISTEN_HOST=127.0.0.1
 #   (GW_TEST_NO_INTERNAL_NETS=1: no compose stack here, so no networks to lock; development only)
 # terminal 2: control
 cd control && GW_URL=http://127.0.0.1:8081 GW_API_TOKEN=dev-token-dev-token-dev-token \
-  CONTROL_BIND_HOST=127.0.0.1 CONTROL_PASSWORD=dev SESSION_SECRET=dev COOKIE_SECURE=0 \
+  CONTROL_BIND_HOST=127.0.0.1 CONTROL_PASSWORD=dev SESSION_SECRET=dev-only-session-secret-0123456789 COOKIE_SECURE=0 \
   TTYD_CREDENTIAL=a:b python3 -m app.main
 # use it:
 curl -x http://127.0.0.1:3128 https://example.org/    # appears in Approvals at http://127.0.0.1:8080

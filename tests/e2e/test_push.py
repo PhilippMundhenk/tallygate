@@ -319,7 +319,7 @@ def test_pwa_files_are_public_and_the_rest_is_not(control):
 def test_web_push_is_off_when_the_data_volume_is_not_writable(control_with, tmp_path):
     blocked = tmp_path / "not-a-dir"
     blocked.write_text("")
-    base = control_with(CONTROL_DATA=blocked, SESSION_SECRET="e2e")
+    base = control_with(CONTROL_DATA=blocked, SESSION_SECRET="e2e-session-secret-" * 2)
     api = Api(base, csrf_header="X-Tallygate")
     api.call("POST", "/login", form={"password": CONTROL_PASSWORD})
     assert api.call("GET", "/api/push")[1] == {"enabled": False, "subscriptions": []}

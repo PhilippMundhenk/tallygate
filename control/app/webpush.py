@@ -29,6 +29,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from app.bootstrap import write_private
 from app.notifyconfig import ASK_ACTIONS, DEFAULT_ASK_ACTIONS
 
 log = logging.getLogger("control")
@@ -122,8 +123,7 @@ class WebPush:
     # ---------------------------------------------------------------- subscriptions
     def _save(self) -> None:
         tmp = self.store.with_name(self.store.name + ".tmp")
-        tmp.write_text(json.dumps(self.subs, indent=1), encoding="utf-8")
-        tmp.chmod(0o600)
+        write_private(tmp, json.dumps(self.subs, indent=1))  # 0600 from the start: it holds the devices' keys
         tmp.replace(self.store)
 
     def add(self, sub: dict, label: str) -> dict:

@@ -37,6 +37,7 @@ import uuid
 import aiohttp
 
 from app.notifyconfig import ASK_ACTIONS, NotifyConfig, ask_label
+from app.notifyconfig import numeric_chat as notifyconfig_chat
 
 log = logging.getLogger("notify")
 QUEUE_SIZE = 1000  # gateway events waiting for delivery; beyond that new events are dropped (logged)
@@ -269,6 +270,12 @@ class Notifier:
             )
             self.tg_token = ""
             self.problems["telegram"] = "Off: the allowed user ids are required (only they may decide)."
+        if self.tg_token and self.tg_chat and not notifyconfig_chat(self.tg_chat):
+            # e.g. TELEGRAM_CHAT_ID=@channelname from the environment (#246): messages would arrive, but a
+            # button press names the chat by its number, so every decision would be "Not authorised"
+            log.error("TELEGRAM_CHAT_ID must be the numeric chat id, not a @name - Telegram approvals disabled")
+            self.tg_token = ""
+            self.problems["telegram"] = "Off: the chat id must be numeric (e.g. -1001234567890), not a @name."
 
     def describe(self) -> dict:
         return {
