@@ -166,7 +166,7 @@ aiohttp==3.14.5 \
     --hash=sha256:fbdc5ec49f9ca3cd24955cf3520b10a4d4c901ba2572094c84274e9e7eb30534 \
     --hash=sha256:fce9523df31cea6284f3e2c479876750d7687cf671d7b25d32b19effc0e86441 \
     --hash=sha256:ff75a7537413a86e7cafe98e0e1d6e3dc4b15c6349896e7d5c6b881bfdb6d550
-    # via -r requirements.in
+    # via -r gateway/requirements.in
 aioquic==1.2.0 \
     --hash=sha256:1de513772fd04ff38028fdf748a9e2dec33d7aa2fbf67fda3011d9a85b620c54 \
     --hash=sha256:2466499759b31ea4f1d17f4aeb1f8d4297169e05e3c1216d618c9757f4dd740d \
@@ -1073,7 +1073,7 @@ markupsafe==3.0.4 \
     #   werkzeug
 mitmproxy==12.3.1 \
     --hash=sha256:87afb808ac8d55383dbe6aa30eadeb0fedaeffd26210e7e23c25c9cd43bdb36a
-    # via -r requirements.in
+    # via -r gateway/requirements.in
 mitmproxy-linux==0.12.16 ; sys_platform == 'linux' \
     --hash=sha256:2e661e5e0c7cf37e0d100b22126180ec07c619de96093f06ad655160a5f35f53 \
     --hash=sha256:87409215261b56ea7ccfedb0fe37b0f4accdd5e84d32596f6bdbabd0f42e5a9f \
@@ -1393,10 +1393,10 @@ publicsuffix2==2.20191221 \
     --hash=sha256:00f8cc31aa8d0d5592a5ced19cccba7de428ebca985db26ac852d920ddd6fe7b \
     --hash=sha256:786b5e36205b88758bd3518725ec8cfe7a8173f5269354641f581c6b80a99893
     # via mitmproxy
-publicsuffixlist==1.1.2.20261114 \
-    --hash=sha256:1ffcf243dfdbd379cda190d63788cca3245511c81294f4761b6222daab50736f \
-    --hash=sha256:67dc369c63c7b6bfa62554a016972997a17a8eb37950d328099e476949642e84
-    # via -r requirements.in
+publicsuffixlist==1.1.2.20261115 \
+    --hash=sha256:fb4eab5a45685f3b4c44495d2fff52b8e625bb6e60c3f1920e7916ae5c0a09e6 \
+    --hash=sha256:ffad5c498cfe331181ab051b994978e639418e7d9bd24336b9d2f4cba8455343
+    # via -r gateway/requirements.in
 pyasn1==0.6.5 \
     --hash=sha256:4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587 \
     --hash=sha256:6b11616a6bcf3a40e635f082bb232fa57b5e0dd7f517bd7ddd69ec3794508a47
@@ -1511,7 +1511,7 @@ pyyaml==6.0.3 \
     --hash=sha256:f7057c9a337546edc7973c0d3ba84ddcdf0daa14533c2065749c9075001090e6 \
     --hash=sha256:fa160448684b4e94d80416c0fa4aac48967a969efe22931448d853ada8baf926 \
     --hash=sha256:fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0
-    # via -r requirements.in
+    # via -r gateway/requirements.in
 ruamel-yaml==0.19.1 \
     --hash=sha256:27592957fedf6e0b62f281e96effd28043345e0e66001f97683aa9a40c667c93 \
     --hash=sha256:53eb66cd27849eff968ebf8f0bf61f46cdac2da1d1f3576dd4ccee9b25c31993
