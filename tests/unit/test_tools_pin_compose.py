@@ -311,3 +311,14 @@ def test_the_release_job_attaches_the_pinned_files_not_the_one_from_the_checkout
     for spec in jobs.values():  # every action is pinned by commit
         for s in spec["steps"]:
             assert "uses" not in s or re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", s["uses"]), s["uses"]
+
+
+def test_control_gets_the_stacks_networks_and_the_host_name_setting():
+    """Control refuses notification channel URLs that point into the stack (#240) only for the networks it is
+    told about, and ALLOWED_HOSTS (#246) is a setting like the others: both reach the control service, and
+    the networks are the same list the gateway locks."""
+    services = yaml.safe_load(COMPOSE)["services"]
+    control, gateway = services["control"]["environment"], services["egress-gw"]["environment"]
+    assert control["GW_INTERNAL_NETS"] == gateway["GW_INTERNAL_NETS"] != ""
+    assert control["ALLOWED_HOSTS"] == "${ALLOWED_HOSTS:-}"
+

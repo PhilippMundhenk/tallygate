@@ -2,7 +2,8 @@
 """Status, isolation self-test and setup actions for the setup wizard (agent network only, port 7680).
 
 NOTE: results come from inside the agent, so a compromised agent could lie. They are a setup
-aid. The authoritative check is tests/integration/bypass.sh, run by the admin via `docker compose exec`.
+aid. The authoritative check is tests/integration/bypass.sh, which the admin runs on the host and which
+probes from an independent container on the agent network.
 
 The setup actions (POST /setup/...) only do what the agent user can already do in its own container:
 start `claude auth login` in a tmux session and type the code into it, set the git identity, and record
