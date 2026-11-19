@@ -10,6 +10,40 @@ Fixes for the findings of the security review of 0.4.0. One of them changes how 
 [Upgrading from 0.4.0](#upgrading-from-040) before you update.
 
 ### Security
+- **Control plane hardening after the review of 0.4.0 (#242, #243, #245, #246; Low and Info).**
+  - **The idle timeout works while a tab is open (#242).** Every request counted as activity, and the page
+    polls the server every 30 s, so a visible tab was never logged out before the 12 h limit. Now only what
+    you do counts (a key, a click, scrolling, typing in a console). What the page sends by itself is marked
+    (`X-Tallygate-Poll: 1`) and does not count, nor do the event stream and console output. This protects a
+    tab left open and unattended; someone sitting at your browser can still use it.
+  - **The agent cannot break the Setup and Overview tabs with odd answers (#243).** Its status and setup
+    answers are reduced to known keys with their expected types before the UI sees them; a number where a
+    text belongs stopped the Setup tab before the notification settings. JSON nested too deeply is a `502`
+    instead of an internal error.
+  - **Without a login only the login page's own files are served (#245):** an exact list instead of the
+    prefix `/static/login`, which also matched `/static/login/../app.js`.
+  - **Smaller points (#246):** a session cookie with non-ASCII characters is "not logged in" instead of an
+    internal error; a workspace download is refused when the browser says the request comes from another
+    site; secret files in the data volume are created with mode 0600 instead of being tightened after
+    writing; `COOKIE_SECURE=auto` also marks the cookie `Secure` when `PUBLIC_URL` is `https://`; a held key
+    no longer decides the next approval card too; a notification can only open a page of the UI itself; a
+    Telegram chat id that is a `@name` is refused with a clear message (its buttons never worked); and
+    `ALLOWED_HOSTS` (new, optional) limits the host names the UI answers under, against DNS rebinding of the
+    login form. The Setup tab warns when the UI is opened under a name with neither `PUBLIC_URL` nor
+    `ALLOWED_HOSTS` set. Threat T55 in [docs/threat-model.md](docs/threat-model.md).
+
+  **Check after upgrading:**
+  - A `SESSION_SECRET` in `.env` shorter than 32 characters now stops the control plane with
+    `SESSION_SECRET must be at least 32 characters`. Remove the line or use `openssl rand -hex 32`.
+  - A UI tab you do not touch for `SESSION_IDLE` (2 h) is logged out, even if it stayed open. Raise
+    `SESSION_IDLE` for a wall display.
+  - `TELEGRAM_CHAT_ID=@name` switches Telegram off with a reason under **Setup → Notifications**: use the
+    numeric chat id.
+  - With `PUBLIC_URL=https://…` and `COOKIE_SECURE=auto`, the UI can no longer be used over plain HTTP by
+    address at the same time (the cookie is `Secure`); changes from there were already refused.
+  - Scripts: a download with a `Sec-Fetch-Site: cross-site` header is refused; scripts that poll the API
+    keep their session alive as before unless they send `X-Tallygate-Poll: 1`.
+  See [troubleshooting](docs/operations.md#troubleshooting).
 - **A chat approver can only decide the prompts shown, and the relay cannot leave its routes (#239, #244,
   Low).** Found by the security review of v0.4.0. The id in a Telegram button's callback data went into the
   gateway API path unchecked, and the HTTP client normalised `..` and took `?` as the start of a query. An

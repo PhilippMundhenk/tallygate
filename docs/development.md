@@ -34,6 +34,7 @@
 │       ├── main.py           #   auth, CSRF, gateway relay, terminal proxy, agent status
 │       ├── bootstrap.py      #   secrets and UI password on first start
 │       ├── passwd.py         #   `python -m app.passwd`: change the stored UI password
+│       ├── agentschema.py    #   the agent's answers reduced to known keys and types before the UI sees them
 │       ├── notify.py         #   Telegram + Matrix bots, Web Push, ntfy, Gotify, Pushover
 │       ├── notifyconfig.py   #   notification settings saved in the UI (write-only secrets, ADR-0018)
 │       ├── webpush.py        #   Web Push: VAPID, RFC 8291 encryption, subscriptions, action tokens
