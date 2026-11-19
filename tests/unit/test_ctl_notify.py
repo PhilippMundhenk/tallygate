@@ -1190,7 +1190,7 @@ class Push:
             serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
         )
         self.real = webpush.WebPush(pem, tmp_path / "subs.json", "https://tally.example", b"secret")
-        self.subs = [{"id": "dev1", "label": "phone"}]
+        self.subs = self.real.subs = [{"id": "dev1", "label": "phone"}]  # a token needs its device (#241)
         self.mint, self.redeem = self.real.mint, self.real.redeem
 
 

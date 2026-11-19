@@ -85,7 +85,8 @@ base_url_placeholder = "http://127.0.0.1"  # PUBLIC_URL: only the click link in 
 
 
 def act(api, token, **headers):
-    return api.anon.call("POST", "/api/push/act", {"token": token}, headers=headers)
+    """Like the service worker: a POST with the CSRF header and the page's Origin (required, #241)."""
+    return api.anon.call("POST", "/api/push/act", {"token": token}, headers={"Origin": base_url_placeholder, **headers})
 
 
 def test_allow_from_the_notification_without_a_session(gateway, mockbots, ui):
@@ -107,6 +108,8 @@ def test_allow_from_the_notification_without_a_session(gateway, mockbots, ui):
     # the CSRF rule holds without a session too
     assert act(ui, m["tokens"]["once"], **{"X-Tallygate": ""})[0] == 403
     assert act(ui, m["tokens"]["once"], Origin="https://evil.example")[0] == 403
+    status, r, _ = ui.anon.call("POST", "/api/push/act", {"token": m["tokens"]["once"]})  # no Origin at all
+    assert status == 403 and r == {"error": "csrf check failed"}
     status, r, _ = act(ui, m["tokens"]["once"])
     assert status == 200 and r == {"ok": True, "decision": "once", "message": "Allowed other.test for 2 min"}
     t.join(10)
@@ -220,7 +223,12 @@ def test_a_button_token_cannot_be_widened_and_dies_with_its_button(gateway, mock
     assert status == 403 and "switched off" in r["error"]
     assert rules(gateway, port) == []
     # extra fields next to a Deny token do not change what it decides
-    status, r, _ = ui.anon.call("POST", "/api/push/act", {"token": deny, "scope": "always", "decision": "always"})
+    status, r, _ = ui.anon.call(
+        "POST",
+        "/api/push/act",
+        {"token": deny, "scope": "always", "decision": "always"},
+        headers={"Origin": base_url_placeholder},
+    )
     assert status == 200 and r["decision"] == "deny"
     t.join(10)
     assert res["r"][0] == 502  # refused by the gateway
@@ -275,6 +283,50 @@ def test_grant_request_offers_only_read_from_the_notification(gateway, mockbots,
         gateway["api"].call("DELETE", f"/active-grants/{a['id']}?by=e2e")
 
 
+def test_buttons_end_with_their_device_and_at_a_restart(gateway, mockbots, control_with, tmp_path):
+    """#241: the buttons of a removed device stop working at once, and no button from before a restart of
+    control works afterwards (the memory of used tokens is gone, so the tokens carry a boot id)."""
+    mockbots.received.clear()
+    env = dict(
+        PUSH_TEST_ALLOW_HTTP="1",
+        PUSH_ALLOWED_HOSTS="127.0.0.1",
+        PUBLIC_URL=base_url_placeholder,
+        CONTROL_DATA=tmp_path / "kept-data",  # the volume both runs of control share
+    )
+    ui = Api(control_with(**env), csrf_header="X-Tallygate")
+    assert ui.call("POST", "/login", form={"password": CONTROL_PASSWORD})[0] == 302
+    ui.anon = Api(ui.base, csrf_header="X-Tallygate")
+    phone, lost = Device(mockbots, "kept"), Device(mockbots, "lost")
+    ids = {}
+    for dev in (phone, lost):
+        ids[dev.name] = ui.call("POST", "/api/push/subscribe", {"subscription": dev.sub, "label": dev.name})[1]["id"]
+
+    port = start_echo()
+    t, res, m = ask(gateway, phone, "other.test", port)
+    stale = lost.wait(lambda m: m.get("tokens") is not None and f"other.test:{port} " in m.get("body", ""))
+    assert ui.call("DELETE", f"/api/push/{ids['lost']}")[0] == 200
+    for _ in range(2):
+        status, r, _ = act(ui, stale["tokens"]["once"])
+        assert status == 403 and r == {"error": "this device was removed from tallygate: open tallygate to decide"}
+    assert rules(gateway, port) == []  # nothing was decided
+
+    # control restarts on the same data volume: the kept device is still subscribed, its old button is dead
+    again = Api(control_with(**env), csrf_header="X-Tallygate")
+    again.anon = again
+    status, r, _ = act(again, m["tokens"]["once"])
+    assert status == 403 and r == {"error": "tallygate was restarted since this notification: open tallygate to decide"}
+    assert rules(gateway, port) == []
+    assert again.call("POST", "/login", form={"password": CONTROL_PASSWORD})[0] == 302
+    assert [s["label"] for s in again.call("GET", "/api/push")[1]["subscriptions"]] == ["kept"]
+
+    # the run that sent the button still takes it, once
+    status, r, _ = act(ui, m["tokens"]["once"])
+    assert status == 200 and r["decision"] == "once"
+    t.join(10)
+    assert res["r"][0] == 200
+    assert act(ui, m["tokens"]["once"])[1] == {"error": "this action was already used"}
+
+
 def test_devices_test_message_and_expired_subscriptions(mockbots, ui):
     assert ui.call("POST", "/api/push/test", {})[0] == 400  # nobody subscribed
     keep, gone = Device(mockbots, "keep"), Device(mockbots, "gone")
@@ -324,7 +376,7 @@ def test_web_push_is_off_when_the_data_volume_is_not_writable(control_with, tmp_
     api.call("POST", "/login", form={"password": CONTROL_PASSWORD})
     assert api.call("GET", "/api/push")[1] == {"enabled": False, "subscriptions": []}
     assert api.call("POST", "/api/push/subscribe", {"subscription": {}})[0] == 503
-    assert api.call("POST", "/api/push/act", {"token": "x"})[0] == 503
+    assert api.call("POST", "/api/push/act", {"token": "x"}, headers={"Origin": base})[0] == 503
 
 
 def test_digest_goes_to_the_notification_channels(mockbots, ui, gateway):

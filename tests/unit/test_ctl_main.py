@@ -156,6 +156,8 @@ async def started(main, world: World | None = None, login: bool = True):
 
 
 CSRF = {"X-Tallygate": "1"}
+webpush_removed = "this device was removed from tallygate: open tallygate to decide"
+webpush_restarted = "tallygate was restarted since this notification: open tallygate to decide"
 
 
 def run(coro):
@@ -918,8 +920,10 @@ def test_a_notification_button_decides_exactly_what_its_token_says(load, notify_
             push.subs.append({"id": "dev1", "label": "phone", "endpoint": "https://fcm.googleapis.com/x"})
             exp = time.time() + 60
 
+            origin = {**CSRF, "Origin": f"http://127.0.0.1:{c.server.port}"}  # as the service worker sends it
+
             async def act(token, **extra):
-                r = await c.post("/api/push/act", json={"token": token, **extra}, headers=CSRF)
+                r = await c.post("/api/push/act", json={"token": token, **extra}, headers=origin)
                 return r.status, await r.json()
 
             # a Deny token with everything a client could add to ask for more: it still only denies
@@ -938,10 +942,12 @@ def test_a_notification_button_decides_exactly_what_its_token_says(load, notify_
             domain = push.mint("ask", "abc123", "domain", "dev1", exp)
             status, data = await act(always)
             assert status == 403 and "switched off" in data["error"] and len(world.seen) == 1
-            # no session and no CSRF header, or a foreign origin: refused before the token is looked at
-            assert (await c.post("/api/push/act", json={"token": always})).status == 403
-            evil = {**CSRF, "Origin": "https://evil.example"}
-            assert (await c.post("/api/push/act", json={"token": always}, headers=evil)).status == 403
+            # no CSRF header, a foreign origin, or no Origin at all (#241): refused before the token is looked at
+            for headers in ({}, {"Origin": origin["Origin"]}, {**CSRF, "Origin": "https://evil.example"}, CSRF):
+                r = await c.post("/api/push/act", json={"token": always}, headers=headers)
+                assert r.status == 403 and await r.json() == {"error": "csrf check failed"}
+            r = await c.post("/api/push/act", json={"token": always}, headers={**CSRF, "Origin": "null"})
+            assert r.status == 403
 
             cfg.set_actions(["always", "domain", "deny_always", "hour"])
             status, data = await act(always)
@@ -966,18 +972,43 @@ def test_a_notification_button_decides_exactly_what_its_token_says(load, notify_
             # a signed token for a request id that is not one is refused, as before
             assert (await act(push.mint("ask", "../policy", "deny", "dev1", exp)))[0] == 403
             assert (await act("forged.token"))[1] == {"error": "invalid action"}
-            assert (await act(None))[0] == 403 and (await c.post("/api/push/act", json=[1], headers=CSRF)).status == 403
+            assert (await act(None))[0] == 403 and (
+                await c.post("/api/push/act", json=[1], headers=origin)
+            ).status == 403
 
             # grants: their own decisions and texts
-            status, data = await act(push.mint("grant", "ab12", "read", "gone", exp))
+            status, data = await act(push.mint("grant", "ab12", "read", "dev1", exp))
             assert status == 200 and data["message"] == "Approved"
             assert world.seen[-1] == (
                 "POST",
                 "/gw/grant-requests/ab12/decide",
                 {},
-                {"decision": "read", "by": "push:removed device"},
+                {"decision": "read", "by": "push:phone"},
             )
             assert (await act(push.mint("grant", "ab12", "deny", "dev1", exp)))[1]["message"] == "Denied"
+
+            # a removed device's buttons are dead at once (#241): the reviewer's reproduction, through the app
+            push.subs.append({"id": "dev2", "label": "lost phone", "endpoint": "https://fcm.googleapis.com/y"})
+            lost = [
+                push.mint("ask", "abc123", "once", "dev2", exp),
+                push.mint("grant", "abc124", "approve", "dev2", exp),
+            ]
+            seen = len(world.seen)
+            assert push.remove("dev2")
+            for token in lost:
+                status, data = await act(token)
+                assert status == 403 and data == {"error": webpush_removed}
+            # ... and after a restart of control no button from before works, used or not
+            push.subs.append({"id": "dev2", "label": "lost phone", "endpoint": "https://fcm.googleapis.com/y"})
+            spent = push.mint("ask", "abc123", "deny", "dev1", exp)
+            assert (await act(spent))[0] == 200
+            seen += 1
+            push.used.clear()
+            push.boot = "0badc0de"  # what a new process would have: another boot id, no memory of used tokens
+            for token in (spent, *lost):
+                status, data = await act(token)
+                assert status == 403 and data == {"error": webpush_restarted}
+            assert len(world.seen) == seen  # the gateway was not asked once
 
             # the gateway no longer knows the request, or cannot be reached
             world.status = 404
