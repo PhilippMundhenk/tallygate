@@ -250,3 +250,67 @@ def test_ui_can_apply_and_undo_templates(ui):
     assert ui.call("DELETE", "/api/gw/destinations/node:dist")[0] == 200  # one template rule, id <preset>:<id>
     status, data, _ = ui.call("DELETE", "/api/gw/presets/node")
     assert status == 200 and "node:npm" in data["removed"] and "node:dist" not in data["removed"]
+
+
+def test_only_the_login_files_are_served_without_a_session(control):
+    """#245: the exemption was the prefix /static/login, which let /static/login/../app.js through."""
+    import http.client
+    import urllib.parse
+
+    u = urllib.parse.urlsplit(control["base"])
+
+    def get(path, **headers):  # the path exactly as written: urllib would normalise it
+        conn = http.client.HTTPConnection(u.hostname, u.port, timeout=10)
+        conn.request("GET", path, headers=headers)
+        r = conn.getresponse()
+        body = r.read()
+        conn.close()
+        return r.status, body
+
+    for path in ("/static/login.html", "/static/login.js", "/static/logo.svg", "/static/favicon.svg"):
+        assert get(path)[0] == 200, path
+    for path in (
+        "/static/login/../app.js",
+        "/static/login/../index.html",
+        "/static/login%2f..%2fwizard.js",
+        "/static/loginx",
+    ):
+        status, body = get(path)
+        assert status == 302 and b"use strict" not in body, path
+    # #246: a session cookie that is not ASCII is "not logged in", not an internal error
+    status, body = get("/api/meta", Cookie="tallygate_session=a.\u00e9".encode().decode("latin-1"))
+    assert status == 401 and b"login required" in body
+
+
+def test_allowed_hosts_and_a_short_session_secret(control_with, tmp_path):
+    """#246: with ALLOWED_HOSTS the UI answers under those names, by address and as localhost only; a
+    SESSION_SECRET of a few characters stops the start with a clear message."""
+    import subprocess
+    import sys
+
+    from .conftest import ROOT, clean_env
+
+    base = control_with(ALLOWED_HOSTS="tallygate.lan")
+    a = Api(base)
+    evil = {"Host": "evil.example:8080", "Origin": "http://evil.example:8080"}
+    status, body, _ = a.call("POST", "/login", form={"password": CONTROL_PASSWORD}, headers=evil)
+    assert status == 421 and b"ALLOWED_HOSTS" in body
+    named = {"Host": "tallygate.lan:8080", "Origin": "http://tallygate.lan:8080"}
+    status, _, headers = a.call("POST", "/login", form={"password": CONTROL_PASSWORD}, headers=named)
+    assert status == 302 and headers["Location"] == "/"
+    assert Api(base).call("POST", "/login", form={"password": CONTROL_PASSWORD})[0] == 302  # by address
+
+    env = clean_env(
+        GW_API_TOKEN="x" * 32,
+        CONTROL_BIND_HOST="127.0.0.1",
+        CONTROL_PORT=free_port(),
+        CONTROL_PASSWORD=CONTROL_PASSWORD,
+        SESSION_SECRET="short",
+        TTYD_CREDENTIAL="a:b",
+        PYTHONPATH=ROOT / "control",
+        CONTROL_DATA=tmp_path / "data",
+    )
+    r = subprocess.run(
+        [sys.executable, "-m", "app.main"], cwd=ROOT, env=env, capture_output=True, text=True, timeout=30
+    )
+    assert r.returncode != 0 and "SESSION_SECRET must be at least 32 characters" in r.stderr
