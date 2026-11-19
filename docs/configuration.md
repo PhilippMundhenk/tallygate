@@ -14,6 +14,10 @@ Configuration lives in three places:
 
 All variables are optional. Secrets are created on first start when they are not set.
 
+This table has what you set in `.env`. Variables that `compose.yaml` or the images fix themselves, such as
+`GW_INTERNAL_NETS` (the locked ranges), the listener addresses and ports, and the test switches, are listed
+under [Component environment](#component-environment).
+
 | Variable | Default | Description |
 |---|---|---|
 | `TALLYGATE_VERSION` | the release the `compose.yaml` belongs to | Image tag of all three images. The `compose.yaml` attached to a release defaults to that release, so normally leave it unset and [upgrade by replacing the file](operations.md#upgrading-and-rolling-back). Set it for a release up to 0.4.0 (`0.4.0`), or to follow a minor version (`0.4`); it overrides the version in the file. The `compose.yaml` on the `main` branch defaults to `latest`. See [versions and pinning](operations.md#versions-and-pinning). |
@@ -448,6 +452,7 @@ one that `compose.yaml` does not list, add it to that service's `environment:` b
 | egress-gw | `GW_EXTRA_ARGS` | Extra mitmdump arguments (advanced). |
 | egress-gw, control | `GW_API_TOKEN_FILE` | Token file in the `gw-token` volume (`/run/tallygate/gw/api-token`), used when `GW_API_TOKEN` is not set. |
 | egress-gw | `GW_TEST_STATIC_HOSTS` | **Test suite only.** Never set in production (logged as a warning). |
+| egress-gw | `GW_TEST_DNS_DOWN_FILE` | **Test suite only.** While the file it names exists, every lookup of the gateway fails as in a network outage (tests of the connectivity hint). Never set in production. |
 | egress-gw | `GW_TEST_NO_INTERNAL_NETS` | **Test suite and development only.** `1` = start although `GW_INTERNAL_NETS` is empty, for a gateway run outside the compose stack, where there are no networks of a stack to lock. Never set in production (logged as a warning): nothing of the stack is locked then. |
 | egress-gw | `GW_TEST_FLOOR_REPLACE` | **Test suite only.** `1` = with `never` entries in the config, the built-in blocks are not seeded (the e2e upstreams run on loopback). Never set in production (logged as a warning). |
 | control | `CONTROL_BIND_HOST` / `CONTROL_PORT` | UI bind address (mgmt network only) / port. |
@@ -466,3 +471,11 @@ one that `compose.yaml` does not list, add it to that service's `environment:` b
 | agent | `STATUS_PORT` | Status server port (7680); must match control's `AGENT_STATUS_PORT`. |
 | agent | `SELFTEST_BLOCKED_PROBES` | Management endpoints the self-test expects to be unreachable. |
 | agent | `TALLYGATE_URL` | Grant API for the `tallygate` CLI (`http://172.31.10.2:8079`). |
+| agent | `GH_TOKEN` | A placeholder (`injected-by-egress-gateway`) so that `gh` and git attempt authenticated requests. The real GitHub token never enters the agent: the gateway replaces the header in flight. Do not set a real token here. |
+| agent | `RC_RESTART_DELAY` | Seconds between two starts of `claude remote-control` in the restart loop (10). |
+| agent | `RC_MIN_RUN` | A run of Remote Control shorter than this many seconds counts as a failed start (60). |
+| agent | `RC_POINTER_TRIES` | Failed starts with the kept environment record before one start is made without it, which registers a new environment if the Claude service no longer knows the old one (5). See [operations](operations.md#updates). |
+| agent | `RC_KEEP_INTERVAL` | Seconds between two copies of Remote Control's environment record to the home volume while it runs (30). |
+| agent | `RC_POINTER_KEEP` | Where that copy is kept (`~/.claude/tallygate-rc-pointer.json`). Delete the file to start over with a new environment. |
+| agent | `RC_DIR`, `RC_POINTER` | Directory Remote Control serves (`/workspace`) and the record Claude Code keeps for it (derived from the directory). |
+| agent | `RC_LOOP_MAX` | **Test suite only.** Stop the restart loop after this many starts (0 = never). |

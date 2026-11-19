@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Every option is documented, and CI checks it**: `docs/configuration.md` now also lists the settings of
+  the Remote Control restart loop (`RC_RESTART_DELAY`, `RC_MIN_RUN`, `RC_POINTER_TRIES`, `RC_KEEP_INTERVAL`,
+  `RC_POINTER_KEEP`, `RC_DIR`, `RC_POINTER`), the agent's `GH_TOKEN` placeholder and one test switch, and the
+  `.env` section points to *Component environment* for what `compose.yaml` fixes itself (`GW_INTERNAL_NETS`).
+  The consistency check fails when the code reads an environment variable or a `gateway.yaml` key, or
+  `compose.yaml` sets one, that the configuration reference does not name.
+
 ## [0.4.1] - 2026-11-19
 
 Fixes for the findings of the security review of 0.4.0. One of them changes how you reach the UI: read
