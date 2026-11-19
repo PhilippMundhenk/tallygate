@@ -5,9 +5,28 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const fmtTime = (ts) => new Date(ts * 1000).toLocaleTimeString();
 const fmtDate = (ts) => new Date(ts * 1000).toLocaleString();
 
+/* Idle timeout (#242): only what you do keeps the session alive. The page also asks the server on its own
+   (timers every 30 s, reloads after stream events, reconnects), and those requests must not count, or a tab
+   left open would never be logged out. A request counts as activity when you pressed a key, clicked, tapped
+   or scrolled in the last ACTIVE_MS; every other request says "X-Tallygate-Poll: 1" and the server leaves the
+   idle clock alone. If you are active but nothing you do sends a request (reading, scrolling), one small
+   request per PING_MS says so. */
+const ACTIVE_MS = 10000, PING_MS = 60000;
+let lastInput = 0, lastCounted = 0;
+const userActive = () => Date.now() - lastInput < ACTIVE_MS;
+for (const type of ["pointerdown", "keydown", "wheel", "touchstart"]) {
+  window.addEventListener(type, (e) => {
+    if (!e.isTrusted) return;
+    lastInput = Date.now();
+    if (lastInput - lastCounted > PING_MS) api("GET", "/api/meta").catch(() => {});
+  }, { capture: true, passive: true });
+}
+
 async function api(method, path, body) {
+  const headers = { "Content-Type": "application/json", "X-Tallygate": "1" };
+  if (userActive()) lastCounted = Date.now(); else headers["X-Tallygate-Poll"] = "1";
   const r = await fetch(path, {
-    method, headers: { "Content-Type": "application/json", "X-Tallygate": "1" },
+    method, headers,
     body: body === undefined ? undefined : JSON.stringify(body), credentials: "same-origin",
   });
   if (r.status === 401) { location.href = "/login"; throw new Error("login required"); }

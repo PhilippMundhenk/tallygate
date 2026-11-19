@@ -50,8 +50,19 @@ async function act(note, action) {
   await self.registration.showNotification("tallygate", { body: msg, tag: note.tag, silent: true, icon: "/static/icon-192.png" });
 }
 
+// Where a tap may lead: a path of this UI, never another site (#246). The server only sends "/#approvals";
+// anything that does not resolve to this origin (an absolute URL, "//host", "javascript:") opens the approvals.
+function uiUrl(raw) {
+  const home = new URL("/#approvals", self.location.origin);
+  if (typeof raw !== "string" || !raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\")) return home.href;
+  try {
+    const u = new URL(raw, self.location.origin);
+    return u.origin === self.location.origin ? u.href : home.href;
+  } catch (_) { return home.href; }
+}
+
 async function openUi(note) {
-  const url = new URL((note.data && note.data.url) || "/#approvals", self.location.origin).href;
+  const url = uiUrl(note.data && note.data.url);
   const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
   for (const w of wins) {
     if (new URL(w.url).origin === self.location.origin) { await w.focus(); if ("navigate" in w) await w.navigate(url); return; }

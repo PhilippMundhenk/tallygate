@@ -74,7 +74,7 @@ def test_short_proxy_secret_is_refused():
             CONTROL_BIND_HOST="127.0.0.1",
             CONTROL_PORT=free_port(),
             GW_API_TOKEN=API_TOKEN,
-            SESSION_SECRET="e2e",
+            SESSION_SECRET="e2e-session-secret-" * 2,
             TTYD_CREDENTIAL="agent:x",
             CONTROL_PASSWORD="x",
             TRUSTED_PROXIES=f"{PROXY}/32",

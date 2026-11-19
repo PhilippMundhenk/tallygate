@@ -77,6 +77,25 @@ def test_event_stream_closes_on_idle_expiry_and_does_not_keep_the_session_alive(
     assert a.call("GET", "/api/meta")[0] == 401
 
 
+def test_background_polls_do_not_keep_an_idle_session_alive(control_at):
+    """#242: what the page asks by itself (marked X-Tallygate-Poll: 1) is answered but is not activity."""
+    a = login(control_at(SESSION_RECHECK="1", SESSION_IDLE="3"))
+    t0, statuses = time.time(), []
+    while time.time() - t0 < 4.5:
+        statuses.append(a.call("GET", "/api/gw/info", headers={"X-Tallygate-Poll": "1"})[0])
+        time.sleep(0.5)
+    assert statuses[0] == 200 and statuses[-1] == 401
+    assert a.call("GET", "/api/meta")[0] == 401
+
+
+def test_requests_of_the_user_keep_the_session_alive(control_at):
+    a = login(control_at(SESSION_RECHECK="1", SESSION_IDLE="3"))
+    t0 = time.time()
+    while time.time() - t0 < 4.5:
+        assert a.call("GET", "/api/gw/info")[0] == 200
+        time.sleep(0.5)
+
+
 def _ws(a: Api):
     session = aiohttp.ClientSession(headers={"Cookie": cookie(a)}, trust_env=False)
     url = a.base.replace("http", "ws") + "/term/bash/ws"

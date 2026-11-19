@@ -133,6 +133,9 @@ def test_deployment_checks(ui, control_with):
     )
     other = login(base)
     hdrs = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "tally.example"}
+    # PUBLIC_URL is https, so the cookie is Secure (#246) and this plain-HTTP test client would not send it
+    hdrs["Cookie"] = "; ".join(f"{c.name}={c.value}" for c in other.jar)
+    assert all(c.secure for c in other.jar)
     r = other.call("GET", "/api/setup/checks?origin=https://tally.example", headers=hdrs)[1]
     states = {c["id"]: c["state"] for c in r["checks"]}
     assert states == {"https": "ok", "cookie": "ok", "proxy": "ok", "public_url": "ok", "reach": "info"}
