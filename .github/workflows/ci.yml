@@ -133,6 +133,9 @@ jobs:
     # builds linux/amd64 only and pushes nothing, which tests the Dockerfiles and these actions.
     # Pushed images are signed by digest with cosign (keyless: the certificate names this workflow and the
     # ref), see docs/operations.md#verifying-the-images. Nothing is signed where nothing is pushed.
+    # Before anything is pushed, the linux/amd64 image is built into the local Docker and scanned (Trivy): a
+    # CRITICAL vulnerability for which a fix exists fails the job, so the image is neither pushed nor signed
+    # and, on a tag, nothing is released (docs/development.md#image-scan). This also runs for pull requests.
     needs: [integration]
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -172,6 +175,33 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+      - name: Build linux/amd64 into the local Docker for the scan (not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false   # attestations cannot be loaded into the local Docker
+          sbom: false
+          tags: scan.local/${{ matrix.image }}:scan
+          cache-from: type=gha,scope=${{ matrix.image }}
+      - name: Report CRITICAL and HIGH findings that have a fix (never fails)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: scan.local/${{ matrix.image }}:scan
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+      - name: Gate, a CRITICAL finding with a fix fails (accepted ones are in .trivyignore)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: scan.local/${{ matrix.image }}:scan
+          severity: CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: "1"
       - id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -204,54 +234,9 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: echo "${KEY}=${DIGEST}" >> "$GITHUB_OUTPUT"
 
-  image-scan:
-    # Known vulnerabilities in the published images. A CRITICAL finding for which a fix exists fails this job:
-    # on main the run turns red, on a tag there is no release (the release job needs this one; the images are
-    # pushed and signed by then, see docs/development.md#image-scan). Findings that were looked at and
-    # accepted are listed with a reason in .trivyignore. HIGH findings are reported and never fail the job.
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
-    needs: [images]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      packages: read
-    strategy:
-      fail-fast: false
-      matrix:
-        image: [tallygate-gateway, tallygate-control, tallygate-agent]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1   (for .trivyignore)
-      - id: ref
-        # image names must be lower case; the images job tags type=sha as sha-<7 characters>
-        env:
-          IMAGE: ${{ matrix.image }}
-        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-      - name: Report CRITICAL and HIGH findings that have a fix (never fails)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ steps.ref.outputs.image }}
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "0"
-        env:
-          TRIVY_USERNAME: ${{ github.actor }}
-          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-      - name: Gate, a CRITICAL finding with a fix fails (accepted ones are in .trivyignore)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ steps.ref.outputs.image }}
-          severity: CRITICAL
-          ignore-unfixed: true
-          trivyignores: .trivyignore
-          exit-code: "1"
-        env:
-          TRIVY_USERNAME: ${{ github.actor }}
-          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [images, image-scan, consistency]   # no release with a CRITICAL fixable finding in an image
+    needs: [images, consistency]   # images: nothing is pushed or released with a CRITICAL fixable finding
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

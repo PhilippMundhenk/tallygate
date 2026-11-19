@@ -125,8 +125,8 @@ Fixes for the findings of the security review of 0.4.0. One of them changes how 
     integrity hashes. The GitHub CLI apt keyring is pinned by SHA-256 and by its exact set of keys; the old
     check passed a keyring that contained the pinned key *and any other*.
   - CI: no tag or branch name is pasted into a workflow script any more, and the image scan now fails on a
-    CRITICAL vulnerability that has a fix, which also blocks the release
-    ([development](docs/development.md#image-scan)).
+    CRITICAL vulnerability that has a fix. It runs before an image is pushed or signed (#256), so such an
+    image is not published and there is no release ([development](docs/development.md#image-scan)).
   - The documented backup command wrote a world-readable archive with the GitHub token and the CA key, using
     an unpinned image. It now runs under `umask 077` with an image pinned by digest and no network
     ([backup and restore](docs/operations.md#backup-and-restore)). **Check the permissions of backups you

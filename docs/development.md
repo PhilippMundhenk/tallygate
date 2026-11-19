@@ -166,18 +166,22 @@ the fingerprints with GitHub's announcement, then update both build arguments.
 
 ## Image scan
 
-The `image-scan` job (Trivy) runs on `main` and on tags, against the images the `images` job has just pushed.
-A **CRITICAL** vulnerability for which a fixed version exists fails the job: `main` turns red, and on a tag
-the `release` job does not run, so there is no GitHub release and no pinned `compose.yaml` for that version.
-HIGH findings are listed in the job log and do not fail it (base images carry too many that do not apply).
+The `images` job scans every image with Trivy **before it pushes anything**: it builds the linux/amd64
+image into the runner's local Docker, scans that, and only then runs the build that pushes and the signing.
+A **CRITICAL** vulnerability for which a fixed version exists fails the job. Then the image is not pushed
+and not signed, `main` turns red, and on a tag the `release` job does not run: no image tags, no GitHub
+release, no pinned `compose.yaml` for that version. HIGH findings are listed in the job log and do not fail
+it (base images carry too many that do not apply).
 
-- The images are pushed and signed *before* the scan, also on a tag (`:X.Y.Z`, `:X.Y`, `:latest`): the gate
-  stops the release, not the push. After a failed scan on a tag, fix, and release the next patch version.
+- The three images are scanned independently. If one fails on a tag, the other two are still pushed under
+  the version tag, but there is no release that points at them. Fix, and release the next patch version.
+- Only the linux/amd64 image is scanned. The linux/arm64 image is built from the same Dockerfile, lock files
+  and package versions, so a finding there without one on amd64 would be an architecture-specific package.
+- Pull requests are scanned too, so a finding shows up before the merge. With a new vulnerability database
+  it can also appear without any change at all.
 - First fix: a newer base image digest, `make lock` for a Python package, a newer Claude Code. A finding
   that does not apply can be accepted in `.trivyignore`: the ID, and above it a comment with the image and
   package, the reason and when to look again. Remove the entry when the fix is in.
-- Pull requests are not scanned (nothing is pushed for them), so a finding shows up on `main` after the
-  merge, or with a new vulnerability database without any change at all.
 
 ## Releases
 
