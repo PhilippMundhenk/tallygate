@@ -160,8 +160,14 @@ def test_request_encrypts_for_the_subscription(push):
 
 
 # ---------------------------------------------------------------- action tokens
+def devices(p, *ids):
+    """The subscriptions the tokens of these tests are minted for (a token needs its device, #241)."""
+    p.subs.extend({"id": i, "label": i, "endpoint": "https://fcm.googleapis.com/x"} for i in (ids or ("sub1", "s")))
+    return p
+
+
 def test_tokens_are_single_use_bound_and_short_lived(push):
-    p = push()
+    p = devices(push())
     t = p.mint("ask", "abc123", "once", "sub1", time.time() + 3600)
     claims = p.redeem(t)
     assert claims["k"] == "ask" and claims["i"] == "abc123" and claims["d"] == "once" and claims["s"] == "sub1"
@@ -173,7 +179,7 @@ def test_tokens_are_single_use_bound_and_short_lived(push):
 
 
 def test_forged_or_foreign_tokens_are_refused(push, tmp_path):
-    p = push()
+    p = devices(push())
     t = p.mint("grant", "ab", "read", "s", time.time() + 60)
     raw, sig = t.split(".")
     forged = b64u(json.dumps({**json.loads(unb64u(raw)), "d": "approve"}).encode())
@@ -208,7 +214,7 @@ def signed(p, **claims):
     import hashlib
     import hmac
 
-    base = {"k": "ask", "i": "ab", "d": "deny", "s": "s", "e": int(time.time()) + 60, "n": "feed"}
+    base = {"k": "ask", "i": "ab", "d": "deny", "s": "s", "e": int(time.time()) + 60, "n": "feed", "b": p.boot}
     raw = b64u(json.dumps({**base, **claims}).encode())
     return f"{raw}.{b64u(hmac.new(p.action_key, raw.encode(), hashlib.sha256).digest())}"
 
@@ -218,7 +224,7 @@ ALL = ("once", "hour", "always", "domain", "deny", "deny_always")
 
 
 def test_every_button_has_its_own_token_and_it_decides_only_that(push):
-    p = push()
+    p = devices(push())
     tokens = {d: p.mint("ask", "abc123", d, "sub1", time.time() + 60) for d in ALL}
     assert len(set(tokens.values())) == len(ALL)
     for d, t in tokens.items():
@@ -231,7 +237,7 @@ def test_every_button_has_its_own_token_and_it_decides_only_that(push):
 @pytest.mark.parametrize("target", ["always", "domain", "hour", "once"])
 def test_a_deny_token_cannot_be_turned_into_an_allow(push, target):
     """The decision is inside the signed claims: swapping it breaks the signature, whatever is switched on."""
-    p = push()
+    p = devices(push())
     for source in ("deny", "deny_always"):
         raw, sig = p.mint("ask", "abc123", source, "sub1", time.time() + 60).split(".")
         swapped = b64u(json.dumps({**json.loads(unb64u(raw)), "d": target}, separators=(",", ":")).encode())
@@ -245,7 +251,7 @@ def test_a_deny_token_cannot_be_turned_into_an_allow(push, target):
 
 
 def test_a_token_is_bound_to_its_request_and_device(push):
-    p = push()
+    p = devices(push())
     raw, sig = p.mint("ask", "abc123", "always", "sub1", time.time() + 60).split(".")
     for change in ({"i": "ffff"}, {"s": "sub2"}, {"k": "grant"}, {"e": int(time.time()) + 9999}, {"n": "0" * 16}):
         forged = b64u(json.dumps({**json.loads(unb64u(raw)), **change}, separators=(",", ":")).encode())
@@ -254,7 +260,7 @@ def test_a_token_is_bound_to_its_request_and_device(push):
 
 
 def test_a_button_that_is_switched_off_is_refused_and_not_used_up(push):
-    p = push()
+    p = devices(push())
     t = p.mint("ask", "abc123", "always", "sub1", time.time() + 60)
     with pytest.raises(ValueError, match="switched off"):
         p.redeem(t)  # the default: Allow once and Deny
@@ -268,12 +274,74 @@ def test_a_button_that_is_switched_off_is_refused_and_not_used_up(push):
 
 
 def test_an_expired_permanent_allow_token_is_refused(push):
-    p = push()
+    p = devices(push())
     with pytest.raises(ValueError, match="expired"):
         p.redeem(p.mint("ask", "abc123", "always", "sub1", time.time() - 1), ask=ALL)
     assert json.loads(unb64u(p.mint("ask", "a", "always", "s", time.time() + 86400).split(".")[0]))["e"] <= (
         time.time() + webpush.ACTION_TTL + 1
     )
+
+
+# ---------------------------------------------------------------- tokens end with their device and at a restart (#241)
+def test_a_token_stops_working_when_its_device_is_removed(push):
+    """The reviewer's reproduction: remove the device, then press the button of a notification it still shows."""
+    p = push()
+    phone, tablet = p.add(sub(), "lost phone"), p.add(sub("https://fcm.googleapis.com/fcm/send/other"), "tablet")
+    exp = time.time() + 600
+    ask = p.mint("ask", "abc123", "once", phone["id"], exp)
+    grant = p.mint("grant", "abc124", "approve", phone["id"], exp)
+    kept = p.mint("ask", "abc123", "once", tablet["id"], exp)
+    assert p.remove(phone["id"])
+    for token in (ask, grant):
+        for _ in range(2):  # refused every time, and not for being "used"
+            with pytest.raises(ValueError, match="this device was removed from tallygate: open tallygate to decide"):
+                p.redeem(token)
+    assert p.used == {}
+    assert p.redeem(kept)["s"] == tablet["id"]  # the other device's button is untouched
+    # the same browser subscribing again is a new device with a new id: the old token stays dead
+    again = p.add(sub(), "lost phone")
+    assert again["id"] != phone["id"]
+    with pytest.raises(ValueError, match="removed"):
+        p.redeem(ask)
+
+
+def test_a_token_for_a_device_that_never_existed_is_refused(push):
+    p = push()
+    with pytest.raises(ValueError, match="removed"):
+        p.redeem(p.mint("ask", "abc123", "deny", "nope", time.time() + 60))
+
+
+def test_a_used_token_stays_used_across_a_restart(push):
+    """The used-token set is memory only. A second WebPush on the same files and session secret is control
+    after a restart: before the fix it took the used token again."""
+    before = push()
+    sid = before.add(sub(), "phone")["id"]
+    exp = time.time() + 600
+    used, unused = before.mint("ask", "abc123", "once", sid, exp), before.mint("ask", "abc123", "deny", sid, exp)
+    assert before.redeem(used)["d"] == "once"
+    after = push()
+    assert [s["id"] for s in after.subs] == [sid] and after.boot != before.boot
+    for token in (used, unused):  # neither the replay nor a button that was never pressed
+        with pytest.raises(ValueError, match="tallygate was restarted since this notification: open tallygate"):
+            after.redeem(token)
+    assert after.used == {}
+    assert after.redeem(after.mint("ask", "abc123", "once", sid, exp))["d"] == "once"  # new prompts work
+    assert before.redeem(unused)["d"] == "deny"  # and the boot id is all that differs
+
+
+def test_the_boot_id_is_signed_and_a_token_without_one_is_refused(push):
+    p = devices(push())
+    raw, sig = p.mint("ask", "abc123", "once", "sub1", time.time() + 60).split(".")
+    claims = json.loads(unb64u(raw))
+    assert claims["b"] == p.boot and len(p.boot) == 8
+    other = devices(push())
+    forged = b64u(json.dumps({**claims, "b": other.boot}, separators=(",", ":")).encode())
+    with pytest.raises(ValueError, match="invalid action"):
+        other.redeem(f"{forged}.{sig}")  # rewriting the boot id breaks the signature
+    for missing in (None, "", 0):  # e.g. minted by a version before the boot id existed
+        with pytest.raises(ValueError, match="restarted"):
+            p.redeem(signed(p, s="sub1", b=missing))
+    assert p.label("sub1") == "sub1" and p.label("nope") == "removed device"
 
 
 def test_host_allowed():
