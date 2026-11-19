@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-19
+
 Fixes for the findings of the security review of 0.4.0. One of them changes how you reach the UI: read
 [Upgrading from 0.4.0](#upgrading-from-040) before you update.
 
@@ -842,7 +844,8 @@ Security release. Full report: [docs/security-review.md](docs/security-review.md
   isolation test (`tests/integration/bypass.sh`), CI workflow.
 - Documentation: architecture, ADRs, threat model, configuration, API, operations, user guide.
 
-[Unreleased]: https://github.com/PhilippMundhenk/tallygate/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/PhilippMundhenk/tallygate/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/PhilippMundhenk/tallygate/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/PhilippMundhenk/tallygate/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/PhilippMundhenk/tallygate/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/PhilippMundhenk/tallygate/compare/v0.1.0...v0.2.0
