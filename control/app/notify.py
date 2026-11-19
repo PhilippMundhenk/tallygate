@@ -36,7 +36,7 @@ import uuid
 
 import aiohttp
 
-from app.notifyconfig import ASK_ACTIONS, NotifyConfig, ask_label, destination_problem
+from app.notifyconfig import ASK_ACTIONS, NotifyConfig, allow_local_for_tests, ask_label, destination_problem
 
 log = logging.getLogger("notify")
 QUEUE_SIZE = 1000  # gateway events waiting for delivery; beyond that new events are dropped (logged)
@@ -235,6 +235,8 @@ class Notifier:
         self.mx_blocked = False  # the bot's own account is an allowed user: no Matrix event is a decision
         self.mx_own: dict[str, None] = {}  # event ids control sent itself, oldest first (bounded)
         self.mx_senders: set[str] = set()  # senders seen on those events: the bot, whatever whoami said
+        if allow_local_for_tests():
+            log.warning("NOTIFY_TEST_ALLOW_LOCAL is set - channel URLs may point at loopback and the stack (test only)")
         self._load()
         # pending id -> {"tg": message_id, "mx": event_id, "short": n, "text": str}
         self.msgs: dict[str, dict] = {}
