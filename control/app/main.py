@@ -192,8 +192,9 @@ def make_session(user: str, fingerprint: str | None = None) -> str:
 def _session_id(request: web.Request) -> str | None:
     raw = request.cookies.get(COOKIE, "")
     sid, _, sig = raw.partition(".")
-    # bytes: compare_digest raises TypeError for a str with non-ASCII characters (a 500 for any visitor)
-    if not sid or not hmac.compare_digest(sig.encode(), _sign(sid).encode()):
+    # A real cookie is ASCII. Anything else is refused here: compare_digest raises TypeError for a str with
+    # non-ASCII characters, and encoding undecodable header bytes raises too (a 500 for any visitor, #246).
+    if not sid or not raw.isascii() or not hmac.compare_digest(sig.encode(), _sign(sid).encode()):
         return None
     return sid
 
