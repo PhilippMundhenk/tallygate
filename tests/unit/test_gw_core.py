@@ -722,3 +722,39 @@ def test_default_config_keeps_installs_and_pulls_working_and_refuses_publishing(
         assert hf.refuses(method, path) is refused, (method, path)
     assert ro["ghcr.io"].refuses("POST", "/v2/o/i/blobs/uploads/") and not ro["ghcr.io"].refuses("GET", "/token")
     assert ro["crates.io"].refuses("PUT", "/api/v1/crates/new")
+
+
+def test_a_request_whose_client_gave_up_is_removed_when_its_time_is_over(make):
+    """The timeout of a request runs in the connection that waits for the answer. A client that gives up
+    earlier (curl -m 20 against a 60 s timeout) cancels that wait, and the request stayed listed for ever as
+    "denied in 0 s", holding one of the max_pending places. Housekeeping ends it."""
+    g = make(policy={"default": "ask", "ask_timeout": 5, "seeded": [], "rules": []})
+    seen = []
+    g.publish = seen.append
+
+    async def go(host="gone.example"):
+        task = asyncio.create_task(g.ask(host, 443, [], "regular", "172.31.10.10"))
+        await asyncio.sleep(0.05)
+        task.cancel()  # the client hangs up: mitmproxy cancels the handler
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(go())
+    (p,) = g.pending.values()
+    assert not p.future.done()  # nothing ended it
+    g._expire_pending(p.created + p.timeout)  # not yet: a live connection gets its own timeout first
+    assert g.pending
+    g._expire_pending(p.created + p.timeout + 1)
+    assert g.pending == {} and p.future.result().reason == "approval timed out"
+    assert {"type": "resolved", "id": p.id, "action": "deny", "reason": "timeout"} in seen  # the UI drops the card
+    last = g.events.recent(1)[0]
+    assert (last["host"], last["action"]) == ("gone.example", "deny") and "client had given up" in last["reason"]
+    assert g.neg_cache[("gone.example", 443)] > time.time()  # not asked again at once
+    # the regular housekeeping does it, and a request that is still in time is left alone
+    asyncio.run(go("later.example"))  # another name: the first one is not asked about again for a while
+    (q,) = g.pending.values()
+    g._housekeep()
+    assert list(g.pending.values()) == [q]
+    q.created -= q.timeout + 2
+    g._housekeep()
+    assert g.pending == {}

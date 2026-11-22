@@ -552,6 +552,7 @@ class Gateway:
             self.save_policy("gateway", "expired rules removed")
         now = time.time()
         self.neg_cache = {k: v for k, v in self.neg_cache.items() if v > now}
+        self._expire_pending(now)
         self._flush_dups(now)
         self.flush_hits()
         if self.learning.expired():
@@ -901,12 +902,36 @@ class Gateway:
         try:
             return await asyncio.wait_for(asyncio.shield(p.future), timeout=p.timeout - (time.time() - p.created))
         except TimeoutError:
-            if self.pending.pop(key, None) is p:
-                self.neg_cache[key] = time.time() + NEG_CACHE_SECONDS
-                if not p.future.done():
-                    p.future.set_result(Decision("deny", "approval timed out"))
-                self.publish({"type": "resolved", "id": p.id, "action": "deny", "reason": "timeout"})
+            self._time_out(key, p)
             return p.future.result()
+
+    def _time_out(self, key: tuple[str, int], p: Pending) -> bool:
+        """End a request nobody answered in time: denied, gone from the list, not asked again for a while."""
+        if self.pending.pop(key, None) is not p:
+            return False
+        self.neg_cache[key] = time.time() + NEG_CACHE_SECONDS
+        if p.future is not None and not p.future.done():
+            p.future.set_result(Decision("deny", "approval timed out"))
+        self.publish({"type": "resolved", "id": p.id, "action": "deny", "reason": "timeout"})
+        return True
+
+    def _expire_pending(self, now: float) -> None:
+        """Requests whose time is over but which are still listed. The timeout above runs in the connection
+        that waits for the answer; when the client gives up first (`curl -m 20` against a 60 s timeout), that
+        wait is cancelled and nothing ever removed the request: it stayed in the list as "denied in 0 s" and
+        kept one of the `max_pending` places. A second of grace leaves a live connection its own timeout."""
+        for key, p in list(self.pending.items()):
+            if now >= p.created + p.timeout + 1 and self._time_out(key, p):
+                self.record(
+                    kind="conn",
+                    proto=p.proto,
+                    client=p.client,
+                    host=p.host,
+                    port=p.port,
+                    ips=p.ips,
+                    action="deny",
+                    reason="approval timed out (the client had given up waiting)",
+                )
 
     def answer(self, pending_id: str, scope: str, by: str, ttl: int | None = None) -> dict:
         for key, p in list(self.pending.items()):
