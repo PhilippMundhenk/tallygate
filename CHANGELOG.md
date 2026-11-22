@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Approval requests that never went away**: a request stayed in the list as "denied in 0 s" for ever when
+  the program that caused it had given up before the approval timeout (for example `curl -m 20` against the
+  default 60 s). The timeout only ran in the waiting connection, which was gone. Such requests also kept one
+  of the `max_pending` places, so a few of them made the gateway refuse every new destination with "too many
+  pending approvals". The gateway now ends them itself when their time is over.
+
 ### Changed
 - **Every option is documented, and CI checks it**: `docs/configuration.md` now also lists the settings of
   the Remote Control restart loop (`RC_RESTART_DELAY`, `RC_MIN_RUN`, `RC_POINTER_TRIES`, `RC_KEEP_INTERVAL`,
