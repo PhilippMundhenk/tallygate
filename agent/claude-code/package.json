@@ -4,6 +4,6 @@
   "private": true,
   "description": "Pins Claude Code for the agent image. package-lock.json carries the integrity hashes npm ci checks.",
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.325"
+    "@anthropic-ai/claude-code": "2.1.330"
   }
 }
