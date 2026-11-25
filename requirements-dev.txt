@@ -1533,9 +1533,9 @@ publicsuffix2==2.20191221 \
     --hash=sha256:00f8cc31aa8d0d5592a5ced19cccba7de428ebca985db26ac852d920ddd6fe7b \
     --hash=sha256:786b5e36205b88758bd3518725ec8cfe7a8173f5269354641f581c6b80a99893
     # via mitmproxy
-publicsuffixlist==1.1.2.20261115 \
-    --hash=sha256:fb4eab5a45685f3b4c44495d2fff52b8e625bb6e60c3f1920e7916ae5c0a09e6 \
-    --hash=sha256:ffad5c498cfe331181ab051b994978e639418e7d9bd24336b9d2f4cba8455343
+publicsuffixlist==1.1.2.20261121 \
+    --hash=sha256:c5596c7ce4d834bf7672c4c8dd9487d4ff0d7ad0392e381eaf80dbb101475d54 \
+    --hash=sha256:dee741484ac02e7400af29724b258b09d3734d26468de42af9a267dcdcb82086
     # via -r gateway/requirements.in
 pyasn1==0.6.5 \
     --hash=sha256:4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587 \
