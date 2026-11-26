@@ -97,6 +97,19 @@ flowchart LR
 Details: [docs/architecture.md](docs/architecture.md) · Security: [docs/threat-model.md](docs/threat-model.md) ·
 [security review](docs/security-review.md) · Grants: [docs/grants.md](docs/grants.md)
 
+### Compared with Anthropic's dev container
+
+Anthropic's [reference dev container](https://docs.anthropic.com/en/docs/claude-code/devcontainer) limits
+egress with an `iptables` script inside the agent's own container: a fixed allowlist of domains, resolved to
+IP addresses once at start. It is simple, works per project in VS Code and is a good fit at the desk. The
+differences are where the check runs and what it can decide. The firewall sits in the container it restricts
+and needs `NET_ADMIN` there to set up; tallygate's agent has no capabilities and no route at all, and the
+decision is made in a separate gateway. An IP snapshot cannot follow a CDN and says nothing about names, so
+DNS stays open; tallygate decides on the name at connect time and the agent's DNS answers nothing. And a
+destination that is not on the list simply fails there, while tallygate holds the connection and asks you.
+The price is three containers and a proxy that every tool has to use. A table with other projects is in
+[docs/related-work.md](docs/related-work.md).
+
 ## Quick start
 
 Requirements: Linux (amd64 or arm64) with Docker Engine ≥ 25 and the Compose plugin, a claude.ai
